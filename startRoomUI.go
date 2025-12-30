@@ -9,7 +9,7 @@ import (
 
 func handleStartInput() {
 	if rl.IsKeyPressed(rl.KeySpace) {
-		// BLOCK STARTING if in tutorial
+		// prevents starting a run if in tutorial
 		if meta.TutorialStep == TutorialNone || meta.TutorialStep == TutorialReady {
 			if HasSaveFile() {
 				LoadGame()
