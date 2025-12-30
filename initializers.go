@@ -6,10 +6,11 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"path/filepath"
 )
 
-const SaveFileName = "savegame.json"
-const MetaSaveFile = "meta.json"
+const SaveFileName = "saveData/savegame.json"
+const MetaSaveFile = "saveData/meta.json"
 
 func initGame() {
 	//load up last save state for meta prog or init a default otherwise.
@@ -63,6 +64,7 @@ func SaveMetaProg() {
 		return
 	}
 
+	err = os.MkdirAll(filepath.Dir(MetaSaveFile), 0644)
 	err = os.WriteFile(MetaSaveFile, data, 0644)
 	if err != nil {
 		fmt.Println("Error writing meta file:", err)
@@ -97,6 +99,7 @@ func SaveGame() {
 		return
 	}
 
+	err = os.MkdirAll(filepath.Dir(SaveFileName), 0644)
 	err = os.WriteFile(SaveFileName, data, 0644)
 	if err != nil {
 		fmt.Println("Error writing save file:", err)

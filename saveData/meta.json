@@ -1,0 +1,52 @@
+{
+  "ResearchPoints": 0,
+  "DmgLevel": 0,
+  "ASLevel": 0,
+  "RegenLevel": 0,
+  "ArmorLevel": 0,
+  "RangeLevel": 0,
+  "ThornsLevel": 0,
+  "MultishotCountLevel": 0,
+  "ChainCountLevel": 0,
+  "MusicVolume": 0.5,
+  "SFXVolume": 0.5,
+  "TutorialStep": 5,
+  "RapidFireUnlocked": false,
+  "DeathRayUnlocked": false,
+  "GravityFieldUnlocked": false,
+  "BombardmentUnlocked": false,
+  "StaticDischargeUnlocked": false,
+  "ChronoFieldUnlocked": false,
+  "MinesUnlocked": false,
+  "SatellitesUnlocked": false,
+  "Speed3xUnlocked": false,
+  "OpeningSprintUnlocked": false,
+  "EquippedAbilities": [
+    "",
+    "",
+    "",
+    ""
+  ],
+  "EquippedItemsByIndex": [
+    -1,
+    -1,
+    -1,
+    -1
+  ],
+  "Inventory": [
+    {
+      "Name": "Data Chip",
+      "Type": 3,
+      "Stats": [
+        {
+          "StatType": "RPGain",
+          "Value": 0.11678081,
+          "BaseValue": 0.11678081,
+          "Growth": 0.02335616
+        }
+      ],
+      "Description": "Data Mining",
+      "SalvageValue": 20
+    }
+  ]
+}

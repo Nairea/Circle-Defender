@@ -1,4 +1,4 @@
-module testGame
+module CircleDefender
 
 go 1.25
 
