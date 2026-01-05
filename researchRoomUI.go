@@ -12,6 +12,11 @@ func handleResearchInput() {
 		state.CurrentScreen = ScreenStart
 	}
 
+	if meta.TutorialStep == TutorialGoToResearch {
+		meta.TutorialStep = TutorialBuyAbility
+		SaveMetaProg()
+	}
+
 	const startY = 220
 	const itemHeight = 40
 	const margin = 10
@@ -57,17 +62,34 @@ func handleResearchInput() {
 			rect := rl.Rectangle{X: x, Y: y, Width: 250, Height: 40}
 
 			if rl.CheckCollisionPointRec(mousePos, rect) {
+				if meta.TutorialStep == TutorialBuyAbility && ability.Name != AbilityRapidFire {
+					continue
+				}
+				if meta.TutorialStep == TutorialEquipAbility && ability.Name != AbilityRapidFire {
+					continue
+				}
 				//unlocks if not unlocked.
 				if !*ability.Unlocked {
 					playButtonSound()
 					if meta.ResearchPoints >= ability.Cost {
 						meta.ResearchPoints -= ability.Cost
 						*ability.Unlocked = true
+
+						if meta.TutorialStep == TutorialBuyAbility && ability.Name == AbilityRapidFire {
+							meta.TutorialStep = TutorialEquipAbility
+							SaveMetaProg()
+						}
 					}
 				} else {
 					//equips if there is space on your bar. unequips if currently equipped.
 					if !HasSaveFile() {
 						toggleEquip(ability.Name)
+						// Tutorial Advance: Equip -> Go To Gear
+						if meta.TutorialStep == TutorialEquipAbility && ability.Name == AbilityRapidFire {
+							meta.TutorialStep = TutorialGoToGear
+							SaveMetaProg()
+							state.CurrentScreen = ScreenStart // Auto-exit to guide them
+						}
 					}
 				}
 			}
@@ -95,9 +117,18 @@ func handleResearchInput() {
 			}
 		}
 
+		shockRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 260, Y: passivesY + 50, Width: 250, Height: 40}
+		if rl.CheckCollisionPointRec(mousePos, shockRect) {
+			if !meta.ShockwaveUnlocked && meta.ResearchPoints >= 150 {
+				playButtonSound()
+				meta.ResearchPoints -= 150
+				meta.ShockwaveUnlocked = true
+			}
+		}
+
 		//speed unlock (later probably multiple utility/time saving unlocks.)
 		speedButtonX := float32(ScreenWidth)/2 - 125
-		speedButtonY := passivesY + 60
+		speedButtonY := passivesY + 110
 		speedRect := rl.Rectangle{X: speedButtonX, Y: speedButtonY, Width: 250, Height: 40}
 
 		if rl.CheckCollisionPointRec(mousePos, speedRect) {
@@ -183,6 +214,10 @@ func performRespec() {
 	if meta.SatellitesUnlocked {
 		refund += 150
 		meta.SatellitesUnlocked = false
+	}
+	if meta.ShockwaveUnlocked {
+		refund += 150
+		meta.ShockwaveUnlocked = false
 	}
 
 	if meta.Speed3xUnlocked {
@@ -320,6 +355,16 @@ func drawResearchMenu() {
 			tooltipText = ability.Desc
 		}
 
+		if ability.Name == AbilityRapidFire {
+			if meta.TutorialStep == TutorialBuyAbility {
+				rl.DrawRectangleLinesEx(rect, 3, rl.Yellow)
+				rl.DrawText("UNLOCK ME!", int32(rect.X)+10, int32(rect.Y)-25, 20, rl.Yellow)
+			} else if meta.TutorialStep == TutorialEquipAbility {
+				rl.DrawRectangleLinesEx(rect, 3, rl.Green)
+				rl.DrawText("EQUIP ME!", int32(rect.X)+10, int32(rect.Y)-25, 20, rl.Green)
+			}
+		}
+
 		rl.DrawRectangleRec(rect, color)
 		rl.DrawRectangleLinesEx(rect, 1, rl.White)
 		rl.DrawText(text, int32(rect.X)+10, int32(rect.Y)+10, 16, rl.White)
@@ -357,9 +402,11 @@ func drawResearchMenu() {
 
 	satRect := rl.Rectangle{X: float32(ScreenWidth)/2 + 10, Y: passivesY, Width: 250, Height: 40}
 	drawPassiveBtn(satRect, "Satellites", 150, meta.SatellitesUnlocked, "Permanent orbiting orbs that damage enemies on contact.")
+	shockRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 260, Y: passivesY + 50, Width: 250, Height: 40}
+	drawPassiveBtn(shockRect, "Shockwave", 150, meta.ShockwaveUnlocked, "Periodically releases a stunning shockwave.")
 
 	// Utility buttons
-	speedBtnY := float32(passivesY + 60)
+	speedBtnY := float32(passivesY + 110)
 	speedBtnX := float32(ScreenWidth)/2 - 125
 	speedRect := rl.Rectangle{X: speedBtnX, Y: speedBtnY, Width: 250, Height: 40}
 

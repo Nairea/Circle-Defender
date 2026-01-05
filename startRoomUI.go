@@ -48,7 +48,7 @@ func handleStartInput() {
 		}
 		if rl.CheckCollisionPointRec(mousePos, resRect) {
 			//checks for tutuorial state before letting you in. prevents spending the tutorial RP here.
-			if meta.TutorialStep == TutorialNone || meta.TutorialStep == TutorialReady {
+			if meta.TutorialStep == TutorialNone || meta.TutorialStep == TutorialReady || meta.TutorialStep == TutorialGoToResearch {
 				playButtonSound()
 				state.CurrentScreen = ScreenResearch
 			}
@@ -131,7 +131,7 @@ func drawStartMenu() {
 	resRect := rl.Rectangle{X: resButtonX, Y: resButtonY, Width: resButtonWidth, Height: resButtonHeight}
 	resColor := rl.Purple
 
-	if meta.TutorialStep != TutorialNone && meta.TutorialStep != TutorialReady {
+	if meta.TutorialStep != TutorialNone && meta.TutorialStep != TutorialReady && meta.TutorialStep != TutorialGoToResearch {
 		resColor = rl.DarkGray
 	} else if rl.CheckCollisionPointRec(rl.GetMousePosition(), resRect) {
 		resColor = rl.NewColor(200, 100, 255, 255)
@@ -143,9 +143,17 @@ func drawStartMenu() {
 	resText := "RESEARCH LAB"
 	resTextColor := rl.White
 
-	if meta.TutorialStep != TutorialNone && meta.TutorialStep != TutorialReady {
+	if meta.TutorialStep != TutorialNone && meta.TutorialStep != TutorialReady && meta.TutorialStep != TutorialGoToResearch {
 		resText = "LOCKED"
 		resTextColor = rl.Gray
+	}
+
+	//flashing for tutorial
+	if meta.TutorialStep == TutorialGoToResearch {
+		if math.Mod(float64(rl.GetTime())*4, 2) < 1 {
+			rl.DrawRectangleLinesEx(resRect, 3, rl.Yellow)
+		}
+		rl.DrawText("CLICK HERE!", int32(resButtonX)+240, int32(resButtonY)+15, 20, rl.Yellow)
 	}
 
 	resTextW := rl.MeasureText(resText, 20)

@@ -17,12 +17,15 @@ const (
 	ScreenItems    = 3
 
 	//Tutorial state tracker
-	TutorialNone        = 0
-	TutorialGoToGear    = 1
-	TutorialOpenFab     = 2
-	TutorialCraftWeapon = 3
-	TutorialEquipItem   = 4
-	TutorialReady       = 5
+	TutorialNone         = 0
+	TutorialGoToResearch = 1
+	TutorialBuyAbility   = 2
+	TutorialEquipAbility = 3
+	TutorialGoToGear     = 4
+	TutorialOpenFab      = 5
+	TutorialCraftWeapon  = 6
+	TutorialEquipItem    = 7
+	TutorialReady        = 8
 
 	//Item type flags.
 	ItemWeapon  = 0
@@ -43,10 +46,15 @@ const (
 	SortType    = 2
 
 	//Enemy type flag.
-	EnemyStandard = 0
-	EnemyDodger   = 1
-	EnemyRanger   = 2
-	EnemyShielder = 3
+	EnemyStandard  = 0
+	EnemyDodger    = 1
+	EnemyRanger    = 2
+	EnemyShielder  = 3
+	EnemyPhaser    = 4
+	EnemyReflector = 5
+	EnemyDivider   = 6
+	EnemyBerserker = 7
+	EnemyFragment  = 8
 
 	//Bullet info.
 	BulletSpeed      = 480
@@ -74,6 +82,17 @@ const (
 	//Boss enemy things.
 	BossScaling = 10
 	BossSize    = 30
+	//Phaser
+	PhaserBaseSpeed = 110
+	PhaserPhaseCD   = 3.0
+	PhaserPhaseDur  = 2.0
+	//Reflector
+	ReflectorBaseSpeed = 60
+	ReflectorChance    = 0.60
+	//Divider
+	DividerBaseSpeed = 50
+	//Berserker
+	BerserkerBaseSpeed = 80
 
 	//Some ability constants. Mostly CD's. but also gravity pull rate and the bombardment rate.
 	RapidFireBaseCD  = 15
@@ -130,7 +149,7 @@ const (
 
 	//RP drop rates. honestly may be a bit high right now.
 	//gotta keep people on that grind T_T.
-	ResearchDropChance     = 0.05
+	ResearchDropChance     = 0.10
 	ResearchDropChanceBoss = 1.00
 
 	//Action bar info
@@ -146,15 +165,19 @@ const (
 
 // enemy color globals
 var (
-	DefenderColor      = rl.Blue
-	EnemyColor         = rl.Red
-	EnemyDodgerColor   = rl.Orange
-	EnemyRangerColor   = rl.Green
-	EnemyShielderColor = rl.NewColor(0, 228, 255, 255)
-	ShieldZoneColor    = rl.NewColor(0, 228, 255, 40)
-	BulletColor        = rl.SkyBlue
-	EnemyBulletColor   = rl.Pink
-	SatelliteColor     = rl.DarkBlue
+	DefenderColor       = rl.Blue
+	EnemyColor          = rl.Red
+	EnemyDodgerColor    = rl.Orange
+	EnemyRangerColor    = rl.Green
+	EnemyShielderColor  = rl.NewColor(0, 228, 255, 255)
+	EnemyPhaserColor    = rl.Purple
+	EnemyReflectorColor = rl.LightGray
+	EnemyDividerColor   = rl.Magenta
+	EnemyBerserkerColor = rl.Maroon
+	ShieldZoneColor     = rl.NewColor(0, 228, 255, 40)
+	BulletColor         = rl.SkyBlue
+	EnemyBulletColor    = rl.Pink
+	SatelliteColor      = rl.DarkBlue
 )
 
 // Buncha structs time. LETS GO.
@@ -187,6 +210,7 @@ type MetaProgression struct {
 	ChronoFieldUnlocked     bool
 	MinesUnlocked           bool
 	SatellitesUnlocked      bool
+	ShockwaveUnlocked       bool
 
 	//Speed Unlocks.
 	Speed3xUnlocked       bool
@@ -217,6 +241,14 @@ type Item struct {
 	Stats        []ItemStat
 	Description  string
 	SalvageValue int
+}
+
+type GravityZone struct {
+	X, Y      float32
+	Radius    float32
+	Duration  float32
+	PullForce float32
+	Damage    float32 // Damage per second
 }
 
 // Player struct, who'd have thought.
@@ -288,12 +320,14 @@ type Player struct {
 	RapidFireDuration   float32
 	RapidFireMultiplier float32
 
+	DeathRayPath       int
 	DeathRayDuration   float32
 	DeathRayDamageMult float32
 	DeathRayCount      int
 	DeathRayScaling    float32
 	DeathRaySpinCount  int
 	DeathRaySpinAngle  float32
+	DeathRaySpinSpeed  float32
 
 	GravityDuration     float32
 	GravityRadius       float32
@@ -326,12 +360,13 @@ type Player struct {
 	DeathRayCooldown  float32
 	DeathRayTargetIDs []int
 
-	GravityFieldUnlocked bool
-	IsGravityActive      bool
-	IsGravityTargeting   bool
-	GravityX, GravityY   float32
-	GravityTimer         float32
-	GravityCooldown      float32
+	GravityFieldUnlocked   bool
+	GravityAnomalyUnlocked bool
+	IsGravityActive        bool
+	IsGravityTargeting     bool
+	GravityX, GravityY     float32
+	GravityTimer           float32
+	GravityCooldown        float32
 
 	BombardmentUnlocked bool
 	IsBombardmentActive bool
@@ -375,6 +410,12 @@ type Enemy struct {
 	KnockbackVelX      float32
 	KnockbackVelY      float32
 	SatelliteHitTimers map[int]float32
+	DeathRayHitStatus  map[int]bool
+	PhasedTimer        float32
+	IsPhased           bool
+	RageStacks         int
+	DamageAccumulator  map[string]float32
+	DamageShowTimer    float32
 }
 
 type Projectile struct {
@@ -423,6 +464,14 @@ type SpawnQueueEntry struct {
 	IsBoss bool
 }
 
+type FloatingText struct {
+	X, Y        float32
+	Text        string
+	Color       rl.Color
+	Timer       float32
+	MaxDuration float32
+}
+
 type GameState struct {
 	CurrentScreen int
 	Player        Player
@@ -431,6 +480,8 @@ type GameState struct {
 	Mines         []*Mine
 	Explosions    []*Explosion
 	LightningArcs []*LightningArc
+	GravityZones  []*GravityZone
+	FloatingTexts []*FloatingText
 	Wave          int
 	WaveTimer     float32
 	SpawnTimer    float32

@@ -153,12 +153,32 @@ func handleItemsInput() {
 				//cheesing things.
 				if !HasSaveFile() {
 					playButtonSound()
-					buyItem(state.ShopBidAmount, fabricatorTargetType)
-					// Proceed to Equip Step
+					// Special Tutorial Logic: Force a specific fixed weapon
 					if meta.TutorialStep == TutorialCraftWeapon {
-						meta.TutorialStep = TutorialEquipItem
-						SaveMetaProg()
-						showFabricatorPopup = false
+						if meta.ResearchPoints >= state.ShopBidAmount {
+							// Deduct cost manually since we bypass buyItem
+							meta.ResearchPoints -= state.ShopBidAmount
+
+							// Create Tutorial Blaster
+							tutorialItem := &Item{
+								Name:        "Tutorial Blaster",
+								Type:        ItemWeapon,
+								Description: "Standard Issue Training Weapon",
+								Stats: []ItemStat{
+									{StatType: "Damage", Value: 0.5, BaseValue: 0.5, Growth: 0.1},
+								},
+								SalvageValue: state.ShopBidAmount / 5,
+							}
+							state.Player.Inventory = append(state.Player.Inventory, tutorialItem)
+
+							// Proceed to Equip Step
+							meta.TutorialStep = TutorialEquipItem
+							SaveMetaProg()
+							showFabricatorPopup = false
+						}
+					} else {
+						// Standard gameplay logic
+						buyItem(state.ShopBidAmount, fabricatorTargetType)
 					}
 				}
 			}
@@ -718,7 +738,7 @@ func drawItemCard(item *Item, x, y float32, isEquipped bool) {
 			statLabel = "Boom"
 		}
 
-		text := fmt.Sprintf("+%.2f %s", stat.Value, statLabel)
+		text := fmt.Sprintf("+%.2f %s", stat.BaseValue, statLabel)
 		rl.DrawText(text, int32(x+8), statY, 14, rl.Green)
 		statY += 16
 	}
@@ -763,7 +783,7 @@ func drawItemTooltip(item *Item) {
 		if label == "RPGain" {
 			label = "Research Gain"
 		}
-		valText := fmt.Sprintf("%s: +%.2f", label, stat.Value)
+		valText := fmt.Sprintf("%s: +%.2f", label, stat.BaseValue)
 		rl.DrawText(valText, tipX+10, currentY, 10, rl.Green)
 		currentY += 20
 	}

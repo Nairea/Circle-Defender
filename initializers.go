@@ -18,6 +18,19 @@ func initGame() {
 
 	startingPlayer := initBasePlayer()
 
+	if len(meta.Inventory) > 0 {
+		for i := range meta.Inventory {
+			item := meta.Inventory[i]
+			startingPlayer.Inventory = append(startingPlayer.Inventory, &item)
+		}
+	}
+
+	for i, idx := range meta.EquippedItemsByIndex {
+		if idx != -1 && idx < len(startingPlayer.Inventory) {
+			startingPlayer.EquippedItems[i] = startingPlayer.Inventory[idx]
+		}
+	}
+
 	state = GameState{
 		CurrentScreen:           ScreenStart,
 		GameSpeedMultiplier:     1.0,
@@ -28,21 +41,27 @@ func initGame() {
 		RunTime:                 0.0,
 		MusicVolume:             meta.MusicVolume,
 		SFXVolume:               meta.SFXVolume,
+		Enemies:                 make([]*Enemy, 0),
+		Projectiles:             make([]*Projectile, 0),
+		Mines:                   make([]*Mine, 0),
+		Explosions:              make([]*Explosion, 0),
+		LightningArcs:           make([]*LightningArc, 0),
+		GravityZones:            make([]*GravityZone, 0),
+		FloatingTexts:           make([]*FloatingText, 0),
 	}
 }
 
 // Saves current state of player progression/items
 func SaveMetaProg() {
-	//convert []*Item to []Item for saving
-	if state.Player.Inventory != nil && len(state.Player.Inventory) > 0 {
-		storedItems := make([]Item, 0)
+	meta.Inventory = make([]Item, 0)
+	if state.Player.Inventory != nil {
 		for _, ptr := range state.Player.Inventory {
 			if ptr != nil {
-				storedItems = append(storedItems, *ptr)
+				meta.Inventory = append(meta.Inventory, *ptr)
 			}
 		}
-		meta.Inventory = storedItems
 	}
+
 	meta.EquippedItemsByIndex = [4]int{-1, -1, -1, -1}
 	for slot, equippedItem := range state.Player.EquippedItems {
 		if equippedItem != nil {
@@ -79,8 +98,8 @@ func LoadMetaProgression() {
 		state.SFXVolume = 0.5
 		//tutorial amount  of RP, enough for a single weapon.
 		//move tutorial forward a step.
-		meta.ResearchPoints = 100
-		meta.TutorialStep = TutorialGoToGear
+		meta.ResearchPoints = 125
+		meta.TutorialStep = TutorialGoToResearch
 		SaveMetaProg()
 		return
 	}
@@ -195,11 +214,13 @@ func initBasePlayer() Player {
 
 		RapidFireDuration:   6.0,
 		RapidFireMultiplier: 3.0,
+		DeathRayPath:        0,
 		DeathRayDuration:    5.0,
 		DeathRayDamageMult:  10.0,
 		DeathRayCount:       1,
 		DeathRayScaling:     0.0,
 		DeathRaySpinCount:   0,
+		DeathRaySpinSpeed:   1.0,
 
 		GravityDuration:     4.0,
 		GravityRadius:       175.0,
@@ -247,16 +268,19 @@ func initBasePlayer() Player {
 	p.Armor += float32(meta.ArmorLevel) * 0.01
 	p.Range += float32(meta.RangeLevel) * 15.0
 	p.ThornsDamage += float32(meta.ThornsLevel) * 2.0
-	if meta.MinesUnlocked {
-		p.MinesUnlocked = true
-		p.MineMaxCooldown = MineBaseCD
-		p.MineCount = MinesToPlace
-		p.MinesCooldown = 2.0
-	}
-	if meta.SatellitesUnlocked {
-		p.SatelliteCount = 1
-		p.SatelliteDamage = 5.0
-	}
+	//if meta.MinesUnlocked {
+	//	p.MinesUnlocked = true
+	//	p.MineMaxCooldown = MineBaseCD
+	//	p.MineCount = MinesToPlace
+	//	p.MinesCooldown = 2.0
+	//}
+	//if meta.SatellitesUnlocked {
+	//	p.SatelliteCount = 1
+	//	p.SatelliteDamage = 5.0
+	//}
+	//if meta.ShockwaveUnlocked {
+	//	p.ShockwaveUnlocked = true
+	//}
 
 	for _, ability := range meta.EquippedAbilities {
 		switch ability {
@@ -327,41 +351,73 @@ func initEnemy(wave int) *Enemy {
 		dmgScale *= extraScale
 	}
 
-	//roll for type of enemy spawned.
-	//current rates:
-	//70% normal enemy, 15% fast guy, 5% ranged, 5% shielder, 5% boss (tank? since no real boss enemy anymore.)
 	r := rand.Float32()
 	enemyType := EnemyStandard
 	baseSpeed := float32(120.0)
 	//may be a deprecated var, or at least may need renaming.
 	isBoss := false
 
-	if r < 0.70 {
+	// Probability table
+	// Standard: 50%
+	// Dodger: 10%
+	// Ranger: 5%
+	// Shielder: 5% (Wave 4+)
+	// Phaser: 5% (Wave 6+)
+	// Reflector: 5% (Wave 8+)
+	// Divider: 5% (Wave 10+)
+	// Berserker: 5% (Wave 12+)
+	// Remainder: Standard or Boss (if rare roll)
+
+	if r < 0.50 {
 		enemyType = EnemyStandard
-	} else if r < 0.85 {
+	} else if r < 0.60 {
 		enemyType = EnemyDodger
-	} else if r < 0.90 {
+	} else if r < 0.65 {
 		enemyType = EnemyRanger
-	} else if r < 0.95 && wave >= 4 { // Only spawn after wave 4
+	} else if r < 0.70 && wave >= 4 {
 		enemyType = EnemyShielder
-	} else {
+	} else if r < 0.75 && wave >= 6 {
+		enemyType = EnemyPhaser
+	} else if r < 0.80 && wave >= 8 {
+		enemyType = EnemyReflector
+	} else if r < 0.85 && wave >= 10 {
+		enemyType = EnemyDivider
+	} else if r < 0.90 && wave >= 12 {
+		enemyType = EnemyBerserker
+	} else if r > 0.98 {
 		enemyType = EnemyStandard
 		isBoss = true
+	} else {
+		enemyType = EnemyStandard
 	}
 
 	//modify the enemy as needed like a mad scientist.
 	size := float32(20.0)
-	baseHP := 3.5 * hpScale
-	xpGiven := float32(5 + (wave-1)/5)
+	baseHP := 5 * hpScale
+	xpGiven := int32(5 + (wave-1)/5)
 
-	if enemyType == EnemyDodger {
+	switch enemyType {
+	case EnemyDodger:
 		baseSpeed = DodgerBaseSpeed
 		baseHP *= 0.7
-	} else if enemyType == EnemyRanger {
+	case EnemyRanger:
 		baseSpeed = RangerBaseSpeed
-	} else if enemyType == EnemyShielder {
+	case EnemyShielder:
 		baseSpeed = ShielderBaseSpeed
 		baseHP *= 2.0
+	case EnemyPhaser:
+		baseSpeed = PhaserBaseSpeed
+		baseHP *= 0.8
+	case EnemyReflector:
+		baseSpeed = ReflectorBaseSpeed
+		baseHP *= 1.5
+	case EnemyDivider:
+		baseSpeed = DividerBaseSpeed
+		baseHP *= 2.5
+		size = 30.0
+	case EnemyBerserker:
+		baseSpeed = BerserkerBaseSpeed
+		baseHP *= 1.2
 	}
 
 	if isBoss {
@@ -379,7 +435,7 @@ func initEnemy(wave int) *Enemy {
 		MaxHP:              baseHP,
 		Speed:              baseSpeed * speedScale,
 		Damage:             5.0 * dmgScale,
-		XPGiven:            xpGiven,
+		XPGiven:            float32(xpGiven),
 		IsBoss:             isBoss,
 		AttackTimer:        0.0,
 		ConsecutiveHits:    0,
@@ -390,5 +446,11 @@ func initEnemy(wave int) *Enemy {
 		KnockbackVelX:      0.0,
 		KnockbackVelY:      0.0,
 		SatelliteHitTimers: make(map[int]float32),
+		DeathRayHitStatus:  make(map[int]bool),
+		DamageAccumulator:  make(map[string]float32),
+		DamageShowTimer:    0.1,
+		PhasedTimer:        0.0,
+		IsPhased:           false,
+		RageStacks:         0,
 	}
 }

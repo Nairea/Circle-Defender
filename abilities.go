@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 
@@ -132,7 +133,9 @@ func triggerStaticDischarge() {
 		dist := float32(math.Sqrt(float64((e.X-state.Player.X)*(e.X-state.Player.X) + (e.Y-state.Player.Y)*(e.Y-state.Player.Y))))
 		if dist < 400 {
 			if !isEnemyProtected(e) {
-				e.HP -= state.Player.Damage * state.Player.StaticDmgMult * mult
+				dmg := state.Player.Damage * state.Player.StaticDmgMult * mult
+				e.HP -= dmg
+				spawnFloatingText(e.X, e.Y-e.Size, fmt.Sprintf("%.0f", dmg), rl.SkyBlue)
 			}
 			state.LightningArcs = append(state.LightningArcs, &LightningArc{
 				SourceX: state.Player.X, SourceY: state.Player.Y,
@@ -154,33 +157,8 @@ func triggerGravityEffect(dt float32) {
 	centerY := p.GravityY
 	mult := getAutoMult()
 
-	if p.GravityPassiveTimer > 0 {
-		p.GravityPassiveTimer -= dt
-		if p.GravityPassiveTimer <= 0 {
-			targetX := p.X + (rand.Float32()-0.5)*600
-			targetY := p.Y + (rand.Float32()-0.5)*600
-			state.Explosions = append(state.Explosions, &Explosion{
-				X: targetX, Y: targetY, Radius: p.GravityRadius / 2,
-				VisualTimer: 0.5, MaxDuration: 0.5,
-			})
-			for _, enemy := range state.Enemies {
-				if !isEnemyProtected(enemy) {
-					dx := targetX - enemy.X
-					dy := targetY - enemy.Y
-					if dx*dx+dy*dy < (p.GravityRadius/2)*(p.GravityRadius/2) {
-						enemy.HP -= p.Damage * 2.0 * mult
-					}
-				}
-			}
-			p.GravityPassiveTimer = 10.0
-		}
-	}
-
 	for _, enemy := range state.Enemies {
 		if !isEnemyProtected(enemy) {
-			//fun math to get direction to pull enemy etc.
-			//who knew how often i'd use this silly math.
-			//best thing i learned in this class.
 			deltaX := centerX - enemy.X
 			deltaY := centerY - enemy.Y
 			distSq := (deltaX * deltaX) + (deltaY * deltaY)
@@ -194,6 +172,7 @@ func triggerGravityEffect(dt float32) {
 				}
 				dmg := enemy.MaxHP * p.GravityDmgPct * mult * dt
 				enemy.HP -= dmg
+				accumulateDamage(enemy, "Gravity", dmg)
 			}
 		}
 	}
@@ -214,6 +193,74 @@ func triggerGravityEffect(dt float32) {
 			}
 		}
 	}
+}
+
+func updateGravityZones(dt float32) {
+	p := &state.Player
+	mult := getAutoMult()
+
+	// 1. Spawning Logic (Gated by Perk Unlock)
+	if p.GravityAnomalyUnlocked {
+		p.GravityPassiveTimer -= dt
+		if p.GravityPassiveTimer <= 0 {
+			// Spawn a random Gravity Zone
+			rangeDist := float32(400.0)
+			targetX := p.X + (rand.Float32()*2.0-1.0)*rangeDist
+			targetY := p.Y + (rand.Float32()*2.0-1.0)*rangeDist
+
+			state.GravityZones = append(state.GravityZones, &GravityZone{
+				X:         targetX,
+				Y:         targetY,
+				Radius:    p.GravityRadius * 0.8,
+				Duration:  3.0,
+				PullForce: GravityForce * 0.8,
+				Damage:    p.Damage * 1.5, // 1.5x DPS
+			})
+
+			// Reset timer
+			p.GravityPassiveTimer = 5.0
+		}
+	}
+
+	// 2. Zone Update Logic
+	var remainingZones []*GravityZone
+	for _, zone := range state.GravityZones {
+		zone.Duration -= dt
+		if zone.Duration > 0 {
+			for _, enemy := range state.Enemies {
+				if !isEnemyProtected(enemy) {
+					dx := zone.X - enemy.X
+					dy := zone.Y - enemy.Y
+					distSq := dx*dx + dy*dy
+
+					if distSq < zone.Radius*zone.Radius {
+						dist := float32(math.Sqrt(float64(distSq)))
+						if dist > 0 {
+							pull := zone.PullForce * dt
+							enemy.X += (dx / dist) * pull
+							enemy.Y += (dy / dist) * pull
+						}
+						damage := zone.Damage * mult * dt
+						enemy.HP -= damage
+						accumulateDamage(enemy, "Gravity", damage)
+
+						if enemy.HP <= 0 {
+							state.Player.XP += enemy.XPGiven * state.Player.XPRate
+							dropResearchPoint(enemy.X, enemy.Y, enemy.IsBoss)
+							if enemy.Type == EnemyDivider {
+								spawnFragments(enemy.X, enemy.Y, state.Wave)
+							}
+							// Mark dead but cleanup happens in moveEnemies
+							// To prevent double counting, you might set HP slightly below 0 or handle it
+							// But standard logic usually handles < 0 checks fine.
+						}
+					}
+				}
+			}
+			remainingZones = append(remainingZones, zone)
+		}
+	}
+	state.GravityZones = remainingZones
 }
 
 // a neat lil knockback that stuns enemies. meant to buy time for damaged focused builds
@@ -375,10 +422,11 @@ func updateAbilityTimers(dt float32) {
 		//angle path. super cool fun ability to make that didnt make
 		//me want to die at all.
 		if p.DeathRaySpinCount > 0 {
-			p.DeathRaySpinAngle += 1.0 * dt
+			p.DeathRaySpinAngle += p.DeathRaySpinSpeed * dt
+			step := (2.0 * math.Pi) / float64(p.DeathRaySpinCount)
 
-			for i := 0; i < p.DeathRaySpinCount; i++ {
-				offset := float64(i) * (math.Pi / 2.0)
+			for beamIdx := 0; beamIdx < p.DeathRaySpinCount; beamIdx++ {
+				offset := float64(beamIdx) * step
 				angle := float64(p.DeathRaySpinAngle) + offset
 				lx, ly := math.Cos(angle), math.Sin(angle)
 
@@ -387,17 +435,44 @@ func updateAbilityTimers(dt float32) {
 					if !isEnemyProtected(e) {
 						ex, ey := float64(e.X-p.X), float64(e.Y-p.Y)
 						dot := ex*lx + ey*ly
+
+						hit := false
 						if dot > 0 && dot < 600 {
 							dist := math.Abs(ex*(-ly) + ey*lx)
 							if dist < float64(e.Size) {
-								e.HP -= p.Damage * p.DeathRayDamageMult * mult * dt
+								hit = true
+							}
+						}
+
+						// hits if it DIDNT hit last frame. stops it from an "infinite" dmg loop.
+						if hit {
+							if !e.DeathRayHitStatus[beamIdx] {
+								// Deal 0.5s worth of damage instantly
+								baseDps := p.Damage * p.DeathRayDamageMult * mult
+								damage := baseDps * 0.5
+								e.HP -= damage
+
+								// Mark as hit so it doesn't damage again until it leaves
+								// Draw floating dmg
+								e.DeathRayHitStatus[beamIdx] = true
+								spawnFloatingText(e.X, e.Y-e.Size, fmt.Sprintf("%.0f", damage), rl.Purple)
+
 								if e.HP <= 0 {
-									state.Player.XP += e.XPGiven * p.XPRate
-									dropResearchPoint(e.IsBoss)
+									xp := e.XPGiven * p.XPRate
+									state.Player.XP += xp
+									spawnFloatingText(e.X, e.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
+									dropResearchPoint(e.X, e.Y, e.IsBoss)
+									if e.Type == EnemyDivider {
+										spawnFragments(e.X, e.Y, state.Wave)
+									}
+
 									state.Enemies = append(state.Enemies[:i], state.Enemies[i+1:]...)
 									state.EnemiesAlive--
 								}
 							}
+						} else {
+							// Reset status when beam leaves enemy
+							e.DeathRayHitStatus[beamIdx] = false
 						}
 					}
 				}
@@ -475,11 +550,15 @@ func updateAbilityTimers(dt float32) {
 				}
 
 				if !isEnemyProtected(target) {
-					target.HP -= dps * mult * dt
+					dmg := dps * mult * dt
+					target.HP -= dmg
+					accumulateDamage(target, "DeathRay", dmg)
 				}
 
 				if target.HP <= 0 {
-					state.Player.XP += target.XPGiven * p.XPRate
+					xp := target.XPGiven * p.XPRate
+					state.Player.XP += xp
+					spawnFloatingText(target.X, target.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
 					index := -1
 					for i, enm := range state.Enemies {
 						if enm.ID == target.ID {
@@ -488,7 +567,10 @@ func updateAbilityTimers(dt float32) {
 						}
 					}
 					if index != -1 {
-						dropResearchPoint(target.IsBoss)
+						dropResearchPoint(target.X, target.Y, target.IsBoss)
+						if target.Type == EnemyDivider {
+							spawnFragments(target.X, target.Y, state.Wave)
+						}
 						state.Enemies = append(state.Enemies[:index], state.Enemies[index+1:]...)
 						state.EnemiesAlive--
 					}
@@ -542,6 +624,7 @@ func updateAbilityTimers(dt float32) {
 					distSq := dx*dx + dy*dy
 					if distSq < p.BombardRadius*p.BombardRadius {
 						enm.HP -= dmg
+						spawnFloatingText(enm.X, enm.Y-enm.Size, fmt.Sprintf("%.0f", dmg), rl.Orange)
 					}
 				}
 			}

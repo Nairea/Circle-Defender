@@ -70,6 +70,15 @@ var TrinketStatPool = []ItemStats{
 	{"FreeUp", 0.01, 0.005},
 }
 
+func isStatStatic(statType string) bool {
+	switch statType {
+	case "RPGain", "CDR", "Explosive", "FreeUp", "WaveSkip", "XPGain":
+		return true
+	default:
+		return false
+	}
+}
+
 func buyItem(amount int, targetType int) {
 	if meta.ResearchPoints < amount || amount < 100 {
 		return
@@ -123,11 +132,12 @@ func buyItem(amount int, targetType int) {
 	//dopamine go Brrrr.
 	variance := (0.9 + rand.Float32()*0.3) * scaleMult
 	primary := template.Stats[0]
+	val := primary.BaseValue * variance
 	newItem.Stats = append(newItem.Stats, ItemStat{
 		StatType:  primary.StatType,
-		BaseValue: primary.BaseValue * variance,
-		Value:     primary.BaseValue * variance,
-		Growth:    primary.Growth * variance,
+		BaseValue: val,
+		Value:     val,
+		Growth:    val,
 	})
 
 	extraStats := 0
@@ -168,11 +178,12 @@ func buyItem(amount int, targetType int) {
 		usedTypes[randStat.Type] = true
 
 		variance = (0.8 + rand.Float32()*0.4) * scaleMult
+		val = randStat.Base * variance
 		newItem.Stats = append(newItem.Stats, ItemStat{
 			StatType:  randStat.Type,
-			BaseValue: randStat.Base * variance,
-			Value:     randStat.Base * variance,
-			Growth:    randStat.GrowthRate * variance,
+			BaseValue: val,
+			Value:     val,
+			Growth:    val,
 		})
 	}
 
@@ -214,6 +225,17 @@ func unequipItem(p *Player, item *Item) {
 			applyStat(p, stat, false)
 		}
 	}
+}
+
+func spawnFloatingText(x, y float32, text string, color rl.Color) {
+	state.FloatingTexts = append(state.FloatingTexts, &FloatingText{
+		X:           x + rand.Float32()*20 - 10,
+		Y:           y,
+		Text:        text,
+		Color:       color,
+		Timer:       1.0, // Lasts 1 second
+		MaxDuration: 1.0,
+	})
 }
 
 // updates atksp for meta investment/item alterations.
@@ -290,6 +312,18 @@ func startRun() {
 	for _, item := range savedInventory {
 		if item != nil {
 			for i := range item.Stats {
+				// Legacy items fix: If BaseValue is 0, use current Value
+				if item.Stats[i].BaseValue == 0 && item.Stats[i].Value > 0 {
+					item.Stats[i].BaseValue = item.Stats[i].Value
+				}
+
+				if isStatStatic(item.Stats[i].StatType) {
+					item.Stats[i].Growth = 0
+				} else {
+					item.Stats[i].Growth = item.Stats[i].BaseValue
+				}
+
+				// Reset current run value to the BaseValue
 				item.Stats[i].Value = item.Stats[i].BaseValue
 			}
 		}
@@ -423,7 +457,7 @@ func getClosestPointOnSegment(pos1X, pos1Y, pos2X, pos2Y, charX, charY float32) 
 	return pos1X + normalizedDist*aX, pos1Y + normalizedDist*aY
 }
 
-func dropResearchPoint(isBoss bool) {
+func dropResearchPoint(x, y float32, isBoss bool) {
 	chance := ResearchDropChance
 	if isBoss {
 		chance = ResearchDropChanceBoss
@@ -438,6 +472,8 @@ func dropResearchPoint(isBoss bool) {
 			points++
 		}
 		meta.ResearchPoints += points
+		// RP Pop-up
+		spawnFloatingText(x, y+20, fmt.Sprintf("+%d RP", points), rl.Gold)
 	}
 }
 
@@ -645,9 +681,33 @@ func moveProjectiles(dt float32) {
 				distSq := dx*dx + dy*dy
 				collisionRadius := p.Radius + enemy.Size/2.0
 				if distSq < collisionRadius*collisionRadius {
+					//phased check
+					if enemy.Type == EnemyPhaser && enemy.IsPhased {
+						continue
+					}
+					//deflection check
+					if enemy.Type == EnemyReflector && !isEnemyProtected(enemy) {
+						if rand.Float32() < ReflectorChance {
+							// Play a "clink" effect?
+							state.Explosions = append(state.Explosions, &Explosion{
+								X: p.X, Y: p.Y, Radius: 5,
+								VisualTimer: 0.1, MaxDuration: 0.1,
+							})
+							// Deflect bullet (reverse velocity, harmless)
+							p.VelX = -p.VelX
+							p.VelY = -p.VelY
+							p.Damage = 0
+							hit = true
+							break
+						}
+					}
 					hit = true
 					hitEnemyID = enemy.ID
 					p.Hits++
+					//berserk stacks logic
+					if enemy.Type == EnemyBerserker {
+						enemy.RageStacks++
+					}
 					if isEnemyProtected(enemy) {
 						state.Explosions = append(state.Explosions, &Explosion{
 							X: p.X, Y: p.Y, Radius: 10,
@@ -656,10 +716,23 @@ func moveProjectiles(dt float32) {
 					} else {
 						if !isEnemyProtected(enemy) {
 							enemy.HP -= p.Damage
+							color := rl.White
+							text := fmt.Sprintf("%.0f", p.Damage)
+							if p.IsCrit {
+								color = rl.Yellow
+								text += "!"
+							}
+							spawnFloatingText(enemy.X, enemy.Y-enemy.Size, text, color)
 						}
 						if enemy.HP <= 0 {
-							state.Player.XP += enemy.XPGiven * state.Player.XPRate
-							dropResearchPoint(enemy.IsBoss)
+							xp := enemy.XPGiven * state.Player.XPRate
+							state.Player.XP += xp
+							spawnFloatingText(enemy.X, enemy.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
+							dropResearchPoint(enemy.X, enemy.Y, enemy.IsBoss)
+							//divider logic. should pop out lil guys
+							if enemy.Type == EnemyDivider {
+								spawnFragments(enemy.X, enemy.Y, state.Wave)
+							}
 							state.Enemies = append(state.Enemies[:i], state.Enemies[i+1:]...)
 							state.EnemiesAlive--
 						}
@@ -683,6 +756,7 @@ func moveProjectiles(dt float32) {
 						if distSq < colRad*colRad {
 							if !isEnemyProtected(e) {
 								e.HP -= bombDmg
+								spawnFloatingText(e.X, e.Y-e.Size, fmt.Sprintf("%.0f", bombDmg), rl.Orange)
 							}
 						}
 					}
@@ -783,6 +857,9 @@ func moveMines(dt float32) {
 		}
 		mineHit := false
 		for j := len(state.Enemies) - 1; j >= 0; j-- {
+			if j >= len(state.Enemies) {
+				continue
+			}
 			enemy := state.Enemies[j]
 			dx := mine.X - enemy.X
 			dy := mine.Y - enemy.Y
@@ -800,11 +877,18 @@ func moveMines(dt float32) {
 						MaxDuration: 0.4,
 					})
 					enemy.HP -= mine.Damage
+					spawnFloatingText(enemy.X, enemy.Y-enemy.Size, fmt.Sprintf("%.0f", mine.Damage), rl.Red)
 				}
 				if enemy.HP <= 0 {
-					state.Player.XP += enemy.XPGiven * state.Player.XPRate
-					dropResearchPoint(enemy.IsBoss)
-					state.Enemies = append(state.Enemies[:j], state.Enemies[j+1:]...)
+					xp := enemy.XPGiven * state.Player.XPRate
+					state.Player.XP += xp
+					spawnFloatingText(enemy.X, enemy.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
+					dropResearchPoint(enemy.X, enemy.Y, enemy.IsBoss)
+					//divider logic. should pop out lil guys
+					if enemy.Type == EnemyDivider {
+						spawnFragments(enemy.X, enemy.Y, state.Wave)
+					}
+					state.Enemies = append(state.Enemies[:i], state.Enemies[i+1:]...)
 					state.EnemiesAlive--
 				}
 				break
@@ -834,6 +918,16 @@ func updateVisuals(dt float32) {
 		}
 	}
 	state.LightningArcs = remainingArcs
+
+	var remainingTexts []*FloatingText
+	for _, ft := range state.FloatingTexts {
+		ft.Timer -= dt
+		ft.Y -= 30 * dt // Move up at 30 pixels/sec
+		if ft.Timer > 0 {
+			remainingTexts = append(remainingTexts, ft)
+		}
+	}
+	state.FloatingTexts = remainingTexts
 }
 
 func moveEnemies(dt float32) {
@@ -878,7 +972,51 @@ func moveEnemies(dt float32) {
 			continue
 		}
 
+		//more phaser logic
+		if enemy.Type == EnemyPhaser {
+			enemy.PhasedTimer -= dt
+			if enemy.PhasedTimer <= 0 {
+				enemy.IsPhased = !enemy.IsPhased
+				if enemy.IsPhased {
+					enemy.PhasedTimer = PhaserPhaseDur
+				} else {
+					enemy.PhasedTimer = PhaserPhaseCD
+				}
+			}
+		}
+
 		speedMult := float32(1.0)
+
+		enemy.DamageShowTimer -= dt
+		if enemy.DamageShowTimer <= 0 {
+			enemy.DamageShowTimer = 0.1
+
+			for source, damage := range enemy.DamageAccumulator {
+				if damage >= 1.0 {
+					color := rl.White
+
+					switch source {
+					case "Gravity":
+						color = rl.Violet
+					case "DeathRay":
+						color = rl.Purple
+					case "Chrono":
+						color = rl.Gold
+					}
+
+					text := fmt.Sprintf("%.0f", damage)
+					// Randomize position slightly so multiple sources don't stack perfectly
+					spawnFloatingText(enemy.X, enemy.Y-enemy.Size-20, text, color)
+				}
+				// Reset accumulator for this source
+				enemy.DamageAccumulator[source] = 0
+			}
+		}
+
+		//berserker logic too
+		if enemy.Type == EnemyBerserker {
+			speedMult += float32(enemy.RageStacks) * 0.10 // +10% speed per stack
+		}
 		if !state.Player.IsChronoActive && state.Player.ChronoPassiveSlow > 0 {
 			speedMult -= state.Player.ChronoPassiveSlow
 		} else if state.Player.IsChronoActive {
@@ -1025,6 +1163,7 @@ func moveEnemies(dt float32) {
 						if !isEnemyProtected(enemy) {
 							enemy.HP -= state.Player.SatelliteDamage
 							enemy.SatelliteHitTimers[k] = SatelliteDamageRate
+							spawnFloatingText(enemy.X, enemy.Y-enemy.Size, fmt.Sprintf("%.0f", state.Player.SatelliteDamage), rl.SkyBlue)
 						}
 					}
 				}
@@ -1038,6 +1177,7 @@ func moveEnemies(dt float32) {
 			if enemy.AttackTimer <= 0 {
 				if state.Player.ThornsDamage > 0 {
 					enemy.HP -= state.Player.ThornsDamage
+					spawnFloatingText(enemy.X, enemy.Y-enemy.Size, fmt.Sprintf("%.0f", state.Player.ThornsDamage), rl.Green)
 				}
 				if state.Player.ShockwaveUnlocked && state.Player.ShockwaveCooldown <= 0 {
 					triggerShockwave()
@@ -1079,10 +1219,17 @@ func moveEnemies(dt float32) {
 			}
 		}
 		if enemy.HP <= 0 {
-			state.Player.XP += enemy.XPGiven * state.Player.XPRate
-			dropResearchPoint(enemy.IsBoss)
+			xp := enemy.XPGiven * state.Player.XPRate
+			state.Player.XP += xp
+			spawnFloatingText(enemy.X, enemy.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
+			dropResearchPoint(enemy.X, enemy.Y, enemy.IsBoss)
+			//divider logic. should pop out lil guys
+			if enemy.Type == EnemyDivider {
+				spawnFragments(enemy.X, enemy.Y, state.Wave)
+			}
 			state.Enemies = append(state.Enemies[:i], state.Enemies[i+1:]...)
 			state.EnemiesAlive--
+			i--
 		}
 	}
 }
@@ -1129,6 +1276,13 @@ func isEnemyProtected(target *Enemy) bool {
 		}
 	}
 	return false
+}
+
+func accumulateDamage(e *Enemy, source string, amount float32) {
+	if e.DamageAccumulator == nil {
+		e.DamageAccumulator = make(map[string]float32)
+	}
+	e.DamageAccumulator[source] += amount
 }
 
 func checkXP() {
@@ -1219,16 +1373,37 @@ func setupLevelUpOptions() {
 			addOpt("RapidFireFrenzy", 5, "Rapid Fire: Frenzy", "+0.2% Frenzy Chance", func(p *Player) { p.FrenzyChance += 0.002 })
 			addOpt("RapidFireSpeed", 10, "Rapid Fire: Overclock", "+0.5x Speed Multiplier", func(p *Player) { p.RapidFireMultiplier += 0.5 })
 		case AbilityDeathRay:
-			addOpt("DeathRayDuration", 5, "Death Ray: Focus", "+1.0s Duration", func(p *Player) { p.DeathRayDuration += 1.0 })
-			addOpt("DeathRayDmg", 5, "Death Ray: Intensity", "+2.0x Damage Multiplier", func(p *Player) { p.DeathRayDamageMult += 2.0 })
-			addOpt("DeathRayCount", 5, "Death Ray: Prism", "+1 Beam", func(p *Player) { p.DeathRayCount++ })
-			addOpt("DeathRayScale", 5, "Death Ray: Escalation", "Damage ramps up over time", func(p *Player) { p.DeathRayScaling += 0.5 })
-			addOpt("DeathRaySpin", 4, "Death Ray: Disco", "Adds spinning beam", func(p *Player) { p.DeathRaySpinCount++ })
+			if p.DeathRayPath == 0 {
+				addOpt("DeathRayPathIntensity", 1, "Death Ray: Intensity Protocol", "Focuses beams on targets (Targeted Path)", func(p *Player) {
+					p.DeathRayPath = 1
+					p.DeathRayDamageMult += 2.0
+				})
+				addOpt("DeathRayPathDisco", 1, "Death Ray: Disco Protocol", "Beams spin around you (Spin Path)", func(p *Player) {
+					p.DeathRayPath = 2
+					p.DeathRayCount = 0
+					p.DeathRaySpinCount = 1
+					p.DeathRaySpinSpeed = 1.0
+				})
+			} else if p.DeathRayPath == 1 {
+				addOpt("DeathRayDuration", 5, "Death Ray: Focus", "+1.0s Duration", func(p *Player) { p.DeathRayDuration += 1.0 })
+				addOpt("DeathRayDmg", 5, "Death Ray: Intensity", "+2.0x Damage Multiplier", func(p *Player) { p.DeathRayDamageMult += 2.0 })
+				addOpt("DeathRayCount", 5, "Death Ray: Prism", "+1 Beam", func(p *Player) { p.DeathRayCount++ })
+				addOpt("DeathRayScale", 5, "Death Ray: Escalation", "Damage ramps up over time", func(p *Player) { p.DeathRayScaling += 0.5 })
+			} else if p.DeathRayPath == 2 {
+				addOpt("DeathRayDuration", 5, "Death Ray: Focus", "+1.0s Duration", func(p *Player) { p.DeathRayDuration += 1.0 })
+				addOpt("DeathRaySpinCount", 4, "Death Ray: Party Light", "+1 Spinning Beam", func(p *Player) { p.DeathRaySpinCount++ })
+				addOpt("DeathRaySpinSpeed", 5, "Death Ray: Strobe", "+50% Spin Speed", func(p *Player) { p.DeathRaySpinSpeed += 0.5 })
+			}
 
 		case AbilityGravity:
 			addOpt("GravityRadius", 4, "Gravity: Horizon", "+25 Radius", func(p *Player) { p.GravityRadius += 25.0 })
 			addOpt("GravityDmg", -1, "Gravity: Crush", "+5% Max HP Damage", func(p *Player) { p.GravityDmgPct += 0.05 })
-			addOpt("GravityPassive", 5, "Gravity: Anomaly", "Random gravity zones appear", func(p *Player) { p.GravityPassiveTimer = 5.0 })
+			addOpt("GravityPassive", 5, "Gravity: Anomaly", "Random gravity zones appear", func(p *Player) {
+				p.GravityAnomalyUnlocked = true
+				if p.GravityPassiveTimer > 5.0 {
+					p.GravityPassiveTimer = 5.0 // Cap start timer if it was high
+				}
+			})
 			addOpt("GravityExplode", 1, "Gravity: Collapse", "Explodes at end", func(p *Player) { p.GravityExplode = true })
 
 		case AbilityBombard:
@@ -1251,44 +1426,60 @@ func setupLevelUpOptions() {
 	}
 
 	//generalized passives added to list of possible upgrades.
-	if p.SatelliteCount > 0 {
-		addOpt("Satellite", 8, "Satellite Upgrade", fmt.Sprintf("Adds orb (%.0f dmg)", p.SatelliteDamage), func(p *Player) { p.SatelliteCount++; p.SatelliteDamage += 2.0 })
+	if meta.SatellitesUnlocked {
+		if p.SatelliteCount == 0 {
+			// Base Skill Unlock
+			addOpt("UnlockSat", 1, "Unlock: Satellites", "Gain a permanent orbiting damage orb.", func(p *Player) {
+				p.SatelliteCount = 1
+				p.SatelliteDamage = 5.0
+			})
+		} else {
+			// Upgrades
+			addOpt("Satellite", 8, "Satellite Upgrade", fmt.Sprintf("Adds orb (%.0f dmg)", p.SatelliteDamage), func(p *Player) { p.SatelliteCount++; p.SatelliteDamage += 2.0 })
 
-		if !p.SatelliteShooting {
-			addOpt("SatSentry", 1, "Satellites: Sentry Mode", "Stops orbit, fires at enemies", func(p *Player) {
-				p.SatelliteShooting = true
+			if !p.SatelliteShooting {
+				addOpt("SatSentry", 1, "Satellites: Sentry Mode", "Stops orbit, fires at enemies", func(p *Player) {
+					p.SatelliteShooting = true
+				})
+			}
+		}
+	}
+
+	if meta.ShockwaveUnlocked {
+		if !p.ShockwaveUnlocked {
+			// Base Skill Unlock
+			addOpt("UnlockShock", 1, "Unlock: Shockwave", "Periodically release a stunning blast.", func(p *Player) {
+				p.ShockwaveUnlocked = true
+				p.ShockwaveCooldown = 0 // Ready immediately
+			})
+		} else {
+			// Upgrades
+			addOpt("ShockwaveCD", 5, "Shockwave: Faster", "Reduces Cooldown", func(p *Player) {
+				if p.ShockwaveCooldown > 2.0 {
+					p.ShockwaveCooldown -= 1.0
+				}
 			})
 		}
 	}
 
-	if !p.ShockwaveUnlocked {
-		addOpt("ShockwaveUnlock", 1, "Shockwave", "Stun blast on hit", func(p *Player) {
-			p.ShockwaveUnlocked = true
-			if p.ShockwaveCooldown > 2.0 {
-				p.ShockwaveCooldown -= 1.0
-			}
-		})
-	} else {
-		addOpt("ShockwaveCD", 5, "Shockwave: Faster", "Reduces Cooldown", func(p *Player) {
-			if p.ShockwaveCooldown > 2.0 {
-				p.ShockwaveCooldown -= 1.0
-			}
-		})
-	}
-	if p.MinesUnlocked {
-		addOpt("MinesCD", 5, "Mines: Fabricator", "15% Faster Production", func(p *Player) {
-			p.MineMaxCooldown *= 0.85
-		})
-		addOpt("MinesCount", 5, "Mines: Stockpile", "+1 Mine per batch", func(p *Player) {
-			p.MineCount++
-		})
-	} else {
-		addOpt("MinesCD", 5, "Mines: Fabricator", "15% Faster Production", func(p *Player) {
-			p.MineMaxCooldown *= 0.85
-		})
-		addOpt("MinesCount", 5, "Mines: Stockpile", "+1 Mine per batch", func(p *Player) {
-			p.MineCount++
-		})
+	if meta.MinesUnlocked {
+		if !p.MinesUnlocked {
+			// Base Skill Unlock
+			addOpt("UnlockMines", 1, "Unlock: Prox. Mines", "Periodically drop explosive mines.", func(p *Player) {
+				p.MinesUnlocked = true
+				p.MineMaxCooldown = MineBaseCD
+				p.MineCount = MinesToPlace
+				p.MinesCooldown = 2.0
+			})
+		} else {
+			// Upgrades
+			addOpt("MinesCD", 5, "Mines: Fabricator", "15% Faster Production", func(p *Player) {
+				p.MineMaxCooldown *= 0.85
+			})
+			addOpt("MinesCount", 5, "Mines: Stockpile", "+1 Mine per batch", func(p *Player) {
+				p.MineCount++
+			})
+		}
 	}
 
 	//utility/general upgrades.
@@ -1316,6 +1507,23 @@ func setupLevelUpOptions() {
 		state.LevelUpOptions = allOptions[:3]
 	} else {
 		state.LevelUpOptions = allOptions
+	}
+}
+
+func spawnFragments(x, y float32, wave int) {
+	// Spawns 3 mini enemies
+	for i := 0; i < 3; i++ {
+		frag := initEnemy(wave)
+		frag.Type = EnemyFragment
+		frag.Size = 10
+		frag.HP = frag.MaxHP * 0.3
+		frag.MaxHP = frag.HP
+		frag.Speed *= 1.5
+		// Scatters them slightly
+		frag.X = x + float32(rand.Intn(40)-20)
+		frag.Y = y + float32(rand.Intn(40)-20)
+		state.Enemies = append(state.Enemies, frag)
+		state.EnemiesAlive++
 	}
 }
 
@@ -1364,6 +1572,7 @@ func updateGame(dt float32) {
 	effectiveDt := dt * speedMult
 
 	updateAbilityTimers(effectiveDt)
+	updateGravityZones(effectiveDt)
 	handleAbilityInput()
 
 	if state.Player.AutoAbilityEnabled {

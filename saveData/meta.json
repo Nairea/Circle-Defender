@@ -1,5 +1,5 @@
 {
-  "ResearchPoints": 0,
+  "ResearchPoints": 6793,
   "DmgLevel": 0,
   "ASLevel": 0,
   "RegenLevel": 0,
@@ -8,44 +8,101 @@
   "ThornsLevel": 0,
   "MultishotCountLevel": 0,
   "ChainCountLevel": 0,
-  "MusicVolume": 0.5,
+  "MusicVolume": 0,
   "SFXVolume": 0.5,
-  "TutorialStep": 5,
-  "RapidFireUnlocked": false,
-  "DeathRayUnlocked": false,
-  "GravityFieldUnlocked": false,
-  "BombardmentUnlocked": false,
+  "TutorialStep": 8,
+  "RapidFireUnlocked": true,
+  "DeathRayUnlocked": true,
+  "GravityFieldUnlocked": true,
+  "BombardmentUnlocked": true,
   "StaticDischargeUnlocked": false,
   "ChronoFieldUnlocked": false,
-  "MinesUnlocked": false,
-  "SatellitesUnlocked": false,
-  "Speed3xUnlocked": false,
-  "OpeningSprintUnlocked": false,
+  "MinesUnlocked": true,
+  "SatellitesUnlocked": true,
+  "ShockwaveUnlocked": true,
+  "Speed3xUnlocked": true,
+  "OpeningSprintUnlocked": true,
   "EquippedAbilities": [
-    "",
-    "",
-    "",
-    ""
+    "Rapid Fire",
+    "Death Ray",
+    "Gravity Field",
+    "Bombardment"
   ],
   "EquippedItemsByIndex": [
-    -1,
-    -1,
-    -1,
-    -1
+    4,
+    2,
+    0,
+    1
   ],
   "Inventory": [
+    {
+      "Name": "Sapphire Band",
+      "Type": 2,
+      "Stats": [
+        {
+          "StatType": "CritChance",
+          "Value": 0.43474144,
+          "BaseValue": 0.054342676,
+          "Growth": 0.054342676
+        }
+      ],
+      "Description": "Critical Focus",
+      "SalvageValue": 20
+    },
+    {
+      "Name": "Blast Module",
+      "Type": 3,
+      "Stats": [
+        {
+          "StatType": "Explosive",
+          "Value": 0.11882955,
+          "BaseValue": 0.11882955,
+          "Growth": 0
+        }
+      ],
+      "Description": "Explosive Hits",
+      "SalvageValue": 20
+    },
+    {
+      "Name": "Iron Plating",
+      "Type": 1,
+      "Stats": [
+        {
+          "StatType": "Armor",
+          "Value": 0.1449431,
+          "BaseValue": 0.018117886,
+          "Growth": 0.018117886
+        }
+      ],
+      "Description": "Solid Defense",
+      "SalvageValue": 20
+    },
     {
       "Name": "Data Chip",
       "Type": 3,
       "Stats": [
         {
           "StatType": "RPGain",
-          "Value": 0.11678081,
-          "BaseValue": 0.11678081,
-          "Growth": 0.02335616
+          "Value": 0.090494044,
+          "BaseValue": 0.090494044,
+          "Growth": 0
         }
       ],
       "Description": "Data Mining",
+      "SalvageValue": 20
+    },
+    {
+      "Name": "Laser Cutter",
+      "Type": 0,
+      "Stats": [
+        {
+          "StatType": "Damage",
+          "Value": 32.363934,
+          "BaseValue": 4.0454917,
+          "Growth": 4.0454917
+        }
+      ],
+      "Description": "High Power",
       "SalvageValue": 20
     }
   ]

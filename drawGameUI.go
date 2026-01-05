@@ -36,6 +36,7 @@ func handlePauseMenuInput() {
 				val = 1
 			}
 			state.MusicVolume = val
+			meta.MusicVolume = val
 		}
 
 		//effects slider
@@ -50,6 +51,7 @@ func handlePauseMenuInput() {
 				val = 1
 			}
 			state.SFXVolume = val
+			meta.SFXVolume = val
 		}
 
 	} else {
@@ -548,6 +550,19 @@ func drawGame() {
 			rl.DrawCircleGradient(int32(state.Player.GravityX), int32(state.Player.GravityY), state.Player.GravityRadius, rl.Fade(rl.Violet, 0.4), rl.Fade(rl.Purple, 0.0))
 			rl.DrawCircleLines(int32(state.Player.GravityX), int32(state.Player.GravityY), state.Player.GravityRadius, rl.Violet)
 			rl.DrawCircle(int32(state.Player.GravityX), int32(state.Player.GravityY), 10, rl.Black)
+			pct := state.Player.GravityTimer / state.Player.GravityDuration
+			rl.DrawCircleLines(int32(state.Player.GravityX), int32(state.Player.GravityY), state.Player.GravityRadius*pct, rl.Fade(rl.White, 0.5))
+		}
+		for _, zone := range state.GravityZones {
+			// Pulsing effect
+			pulse := float32(math.Sin(float64(rl.GetTime())*10)) * 5.0
+
+			rl.DrawCircleGradient(int32(zone.X), int32(zone.Y), zone.Radius+pulse, rl.Fade(rl.DarkPurple, 0.4), rl.Fade(rl.Black, 0.0))
+			rl.DrawCircleLines(int32(zone.X), int32(zone.Y), zone.Radius, rl.NewColor(200, 100, 255, 150))
+
+			// Timer indicator (ring shrinking)
+			pct := zone.Duration / 3.0
+			rl.DrawCircleLines(int32(zone.X), int32(zone.Y), zone.Radius*pct, rl.NewColor(255, 255, 255, 50))
 		}
 		//targetting reticle. not sure if i'll keep this. maybe yes for computer
 		//if i port to mobile like i want i'll probably remove this for that, so that it doesnt
@@ -661,6 +676,22 @@ func drawGame() {
 					color = EnemyRangerColor
 				} else if enm.Type == EnemyShielder {
 					color = EnemyShielderColor
+				} else if enm.Type == EnemyPhaser {
+					color = EnemyPhaserColor
+					// Make transparent if phased
+					if enm.IsPhased {
+						color = rl.Fade(color, 0.3)
+					}
+				} else if enm.Type == EnemyReflector {
+					color = EnemyReflectorColor
+				} else if enm.Type == EnemyDivider {
+					color = EnemyDividerColor
+				} else if enm.Type == EnemyBerserker {
+					color = EnemyBerserkerColor
+					// Make make mo red cause angee
+					if enm.RageStacks > 0 {
+						color = rl.Red
+					}
 				} else if enm.StunTimer > 0 {
 					color = rl.Gray
 				}
@@ -668,6 +699,7 @@ func drawGame() {
 				angleRad := math.Atan2(float64(state.Player.Y-enm.Y), float64(state.Player.X-enm.X))
 				angleDeg := float32(angleRad * 180 / math.Pi)
 
+				// Draw Shapes based on type
 				if enm.Type == EnemyDodger {
 					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 3, enm.Size/2.0*1.5, angleDeg, color)
 					rl.DrawPolyLinesEx(rl.NewVector2(enm.X, enm.Y), 3, enm.Size/2.0*1.5, angleDeg, 2.0, rl.White)
@@ -677,7 +709,26 @@ func drawGame() {
 				} else if enm.Type == EnemyShielder {
 					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 5, enm.Size/2.0+5, angleDeg, color)
 					rl.DrawPolyLinesEx(rl.NewVector2(enm.X, enm.Y), 5, enm.Size/2.0+5, angleDeg, 2.0, rl.White)
+				} else if enm.Type == EnemyPhaser {
+					// Draw a "Ghost" circle
+					rl.DrawCircle(int32(enm.X), int32(enm.Y), enm.Size/2, color)
+					if !enm.IsPhased {
+						rl.DrawCircleLines(int32(enm.X), int32(enm.Y), enm.Size/2, rl.White)
+					}
+				} else if enm.Type == EnemyReflector {
+					// Draw a shiny square
+					rl.DrawRectanglePro(rl.Rectangle{X: enm.X, Y: enm.Y, Width: enm.Size, Height: enm.Size}, rl.NewVector2(enm.Size/2, enm.Size/2), angleDeg, color)
+					rl.DrawRectangleLinesEx(rl.Rectangle{X: enm.X - enm.Size/2, Y: enm.Y - enm.Size/2, Width: enm.Size, Height: enm.Size}, 2, rl.White)
+				} else if enm.Type == EnemyDivider {
+					// Hexagon
+					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 6, enm.Size/2.0, angleDeg, color)
+					rl.DrawPolyLinesEx(rl.NewVector2(enm.X, enm.Y), 6, enm.Size/2.0, angleDeg, 2.0, rl.White)
+				} else if enm.Type == EnemyBerserker {
+					// Spiky star shape
+					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 4, enm.Size/2.0*1.5, angleDeg, color)    // Diamond
+					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 4, enm.Size/2.0*1.5, angleDeg+45, color) // 2nd Diamond
 				} else {
+					// Standard
 					polyRadius := (enm.Size / 2.0) * float32(math.Sqrt(2))
 					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 4, polyRadius, angleDeg-45, color)
 					rl.DrawPolyLinesEx(rl.NewVector2(enm.X, enm.Y), 4, polyRadius, angleDeg-45, 2.0, rl.White)
@@ -731,6 +782,18 @@ func drawGame() {
 			radius := ShockwaveBaseRadius * (1.0 - (state.Player.ShockwaveVisualTimer / 0.5))
 			rl.DrawCircleLines(int32(state.Player.X), int32(state.Player.Y), radius, rl.NewColor(255, 255, 255, alpha))
 			rl.DrawCircleLines(int32(state.Player.X), int32(state.Player.Y), radius-5, rl.NewColor(255, 255, 255, alpha/2))
+		}
+
+		for _, ft := range state.FloatingTexts {
+			// Fade out based on time left
+			alpha := uint8(255 * (ft.Timer / ft.MaxDuration))
+			color := ft.Color
+			color.A = alpha
+
+			// Center text
+			fontSize := int32(16) // Small pop up size
+			textWidth := rl.MeasureText(ft.Text, fontSize)
+			rl.DrawText(ft.Text, int32(ft.X)-textWidth/2, int32(ft.Y), fontSize, color)
 		}
 
 		rl.EndMode2D()
