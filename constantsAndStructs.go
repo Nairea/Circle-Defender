@@ -63,7 +63,7 @@ const (
 
 	//Originally ran off waves. now this tracks difficulty scaling...may go back to waves
 	//#todo. delete this or rename it depending on that decision.
-	WaveTimeLimit = 30
+	WaveTimeLimit = 15
 
 	//Some enemy stats.
 	//dodging type

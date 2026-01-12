@@ -175,7 +175,7 @@ func initBasePlayer() Player {
 		MaxHP:     100.0,
 		Level:     1,
 		XP:        0.0,
-		NextLvlXP: 100.0,
+		NextLvlXP: 200.0,
 		Damage:    5.0,
 		Range:     BaseRange,
 
@@ -224,7 +224,7 @@ func initBasePlayer() Player {
 
 		GravityDuration:     4.0,
 		GravityRadius:       175.0,
-		GravityDmgPct:       0.20,
+		GravityDmgPct:       0.00,
 		GravityPassiveTimer: 10.0,
 		GravityExplode:      false,
 
@@ -268,19 +268,6 @@ func initBasePlayer() Player {
 	p.Armor += float32(meta.ArmorLevel) * 0.01
 	p.Range += float32(meta.RangeLevel) * 15.0
 	p.ThornsDamage += float32(meta.ThornsLevel) * 2.0
-	//if meta.MinesUnlocked {
-	//	p.MinesUnlocked = true
-	//	p.MineMaxCooldown = MineBaseCD
-	//	p.MineCount = MinesToPlace
-	//	p.MinesCooldown = 2.0
-	//}
-	//if meta.SatellitesUnlocked {
-	//	p.SatelliteCount = 1
-	//	p.SatelliteDamage = 5.0
-	//}
-	//if meta.ShockwaveUnlocked {
-	//	p.ShockwaveUnlocked = true
-	//}
 
 	for _, ability := range meta.EquippedAbilities {
 		switch ability {
@@ -394,7 +381,7 @@ func initEnemy(wave int) *Enemy {
 	//modify the enemy as needed like a mad scientist.
 	size := float32(20.0)
 	baseHP := 5 * hpScale
-	xpGiven := int32(5 + (wave-1)/5)
+	xpGiven := int32(10 + (wave-1)/5)
 
 	switch enemyType {
 	case EnemyDodger:

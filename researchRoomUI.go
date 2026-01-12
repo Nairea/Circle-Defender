@@ -33,6 +33,9 @@ func handleResearchInput() {
 	//back button
 	backRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight) - 100, Width: 200, Height: 50}
 	if rl.IsMouseButtonReleased(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(rl.GetMousePosition(), backRect) {
+		if meta.TutorialStep < 4 {
+			return
+		}
 		playButtonSound()
 		state.CurrentScreen = ScreenStart
 	}

@@ -888,7 +888,7 @@ func moveMines(dt float32) {
 					if enemy.Type == EnemyDivider {
 						spawnFragments(enemy.X, enemy.Y, state.Wave)
 					}
-					state.Enemies = append(state.Enemies[:i], state.Enemies[i+1:]...)
+					state.Enemies = append(state.Enemies[:j], state.Enemies[j+1:]...)
 					state.EnemiesAlive--
 				}
 				break
@@ -1007,9 +1007,9 @@ func moveEnemies(dt float32) {
 					text := fmt.Sprintf("%.0f", damage)
 					// Randomize position slightly so multiple sources don't stack perfectly
 					spawnFloatingText(enemy.X, enemy.Y-enemy.Size-20, text, color)
+					// Reset accumulator for this source
+					enemy.DamageAccumulator[source] = 0
 				}
-				// Reset accumulator for this source
-				enemy.DamageAccumulator[source] = 0
 			}
 		}
 
@@ -1397,7 +1397,7 @@ func setupLevelUpOptions() {
 
 		case AbilityGravity:
 			addOpt("GravityRadius", 4, "Gravity: Horizon", "+25 Radius", func(p *Player) { p.GravityRadius += 25.0 })
-			addOpt("GravityDmg", -1, "Gravity: Crush", "+5% Max HP Damage", func(p *Player) { p.GravityDmgPct += 0.05 })
+			addOpt("GravityDmg", -1, "Gravity: Crush", "+5% Player Max HP Damage per second", func(p *Player) { p.GravityDmgPct += 0.05 })
 			addOpt("GravityPassive", 5, "Gravity: Anomaly", "Random gravity zones appear", func(p *Player) {
 				p.GravityAnomalyUnlocked = true
 				if p.GravityPassiveTimer > 5.0 {
@@ -1415,7 +1415,7 @@ func setupLevelUpOptions() {
 			addOpt("StaticDmg", -1, "Static: Voltage", "+0.5x Damage Multiplier", func(p *Player) { p.StaticDmgMult += 0.5 })
 			addOpt("StaticShield", 20, "Static: Capacitor", "Consume Shield for +Targets", func(p *Player) { p.StaticShieldCost += 5.0 })
 			addOpt("StaticFree", 10, "Static: Efficiency", "+10% Free Cast Chance", func(p *Player) { p.StaticFreeChance += 0.1 })
-			addOpt("StaticCDR", 7, "Static: Overcharge", "+CDR when Shield Full", func(p *Player) { p.StaticPassiveCDR += 0.1 })
+			addOpt("StaticCDR", 7, "Static: Overcharge", "+CDR while Ready", func(p *Player) { p.StaticPassiveCDR += 0.1 })
 
 		case AbilityChrono:
 			addOpt("ChronoDuration", 5, "Chrono: Dilation", "+1.0s Duration", func(p *Player) { p.ChronoDuration += 1.0 })

@@ -1,5 +1,5 @@
 {
-  "ResearchPoints": 6793,
+  "ResearchPoints": 146,
   "DmgLevel": 0,
   "ASLevel": 0,
   "RegenLevel": 0,
@@ -9,27 +9,27 @@
   "MultishotCountLevel": 0,
   "ChainCountLevel": 0,
   "MusicVolume": 0,
-  "SFXVolume": 0.5,
+  "SFXVolume": 0,
   "TutorialStep": 8,
   "RapidFireUnlocked": true,
   "DeathRayUnlocked": true,
   "GravityFieldUnlocked": true,
   "BombardmentUnlocked": true,
-  "StaticDischargeUnlocked": false,
-  "ChronoFieldUnlocked": false,
+  "StaticDischargeUnlocked": true,
+  "ChronoFieldUnlocked": true,
   "MinesUnlocked": true,
   "SatellitesUnlocked": true,
-  "ShockwaveUnlocked": true,
+  "ShockwaveUnlocked": false,
   "Speed3xUnlocked": true,
-  "OpeningSprintUnlocked": true,
+  "OpeningSprintUnlocked": false,
   "EquippedAbilities": [
     "Rapid Fire",
     "Death Ray",
-    "Gravity Field",
-    "Bombardment"
+    "Static Discharge",
+    "Gravity Field"
   ],
   "EquippedItemsByIndex": [
-    4,
+    3,
     2,
     0,
     1
@@ -41,40 +41,12 @@
       "Stats": [
         {
           "StatType": "CritChance",
-          "Value": 0.43474144,
-          "BaseValue": 0.054342676,
-          "Growth": 0.054342676
+          "Value": 0.49611872,
+          "BaseValue": 0.049611878,
+          "Growth": 0.049611878
         }
       ],
       "Description": "Critical Focus",
-      "SalvageValue": 20
-    },
-    {
-      "Name": "Blast Module",
-      "Type": 3,
-      "Stats": [
-        {
-          "StatType": "Explosive",
-          "Value": 0.11882955,
-          "BaseValue": 0.11882955,
-          "Growth": 0
-        }
-      ],
-      "Description": "Explosive Hits",
-      "SalvageValue": 20
-    },
-    {
-      "Name": "Iron Plating",
-      "Type": 1,
-      "Stats": [
-        {
-          "StatType": "Armor",
-          "Value": 0.1449431,
-          "BaseValue": 0.018117886,
-          "Growth": 0.018117886
-        }
-      ],
-      "Description": "Solid Defense",
       "SalvageValue": 20
     },
     {
@@ -83,12 +55,26 @@
       "Stats": [
         {
           "StatType": "RPGain",
-          "Value": 0.090494044,
-          "BaseValue": 0.090494044,
+          "Value": 0.18487933,
+          "BaseValue": 0.18487933,
           "Growth": 0
         }
       ],
       "Description": "Data Mining",
+      "SalvageValue": 60
+    },
+    {
+      "Name": "Force Field",
+      "Type": 1,
+      "Stats": [
+        {
+          "StatType": "MaxHP",
+          "Value": 463.02686,
+          "BaseValue": 46.30269,
+          "Growth": 46.30269
+        }
+      ],
+      "Description": "Energy Shield",
       "SalvageValue": 20
     },
     {
@@ -97,9 +83,9 @@
       "Stats": [
         {
           "StatType": "Damage",
-          "Value": 32.363934,
-          "BaseValue": 4.0454917,
-          "Growth": 4.0454917
+          "Value": 44.359394,
+          "BaseValue": 4.435939,
+          "Growth": 4.435939
         }
       ],
       "Description": "High Power",

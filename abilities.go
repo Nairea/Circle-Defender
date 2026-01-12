@@ -170,7 +170,7 @@ func triggerGravityEffect(dt float32) {
 					enemy.X += (deltaX / dist) * pullStrength
 					enemy.Y += (deltaY / dist) * pullStrength
 				}
-				dmg := enemy.MaxHP * p.GravityDmgPct * mult * dt
+				dmg := p.MaxHP * p.GravityDmgPct * mult * dt
 				enemy.HP -= dmg
 				accumulateDamage(enemy, "Gravity", dmg)
 			}
@@ -214,11 +214,11 @@ func updateGravityZones(dt float32) {
 				Radius:    p.GravityRadius * 0.8,
 				Duration:  3.0,
 				PullForce: GravityForce * 0.8,
-				Damage:    p.Damage * 1.5, // 1.5x DPS
+				Damage:    p.MaxHP * p.GravityDmgPct,
 			})
 
 			// Reset timer
-			p.GravityPassiveTimer = 5.0
+			p.GravityPassiveTimer = 10.0 + rand.Float32()*10.0
 		}
 	}
 
@@ -306,7 +306,7 @@ func updateAbilityTimers(dt float32) {
 	if p.Overshield < p.MaxHP*MaxOvershieldRatio {
 		p.Overshield += p.OvershieldRate * dt
 	}
-	if p.StaticPassiveCDR > 0 && p.Overshield >= p.MaxHP*MaxOvershieldRatio*0.9 {
+	if p.StaticPassiveCDR > 0 && p.StaticCooldown <= 0 {
 		//may need to adjust this passive CDR, but i like balance atm.
 		bonus := p.StaticPassiveCDR * dt
 		if p.RapidFireCooldown > 0 {
