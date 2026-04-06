@@ -1,5 +1,5 @@
 {
-  "ResearchPoints": 146,
+  "ResearchPoints": 150,
   "DmgLevel": 0,
   "ASLevel": 0,
   "RegenLevel": 0,
@@ -41,7 +41,7 @@
       "Stats": [
         {
           "StatType": "CritChance",
-          "Value": 0.49611872,
+          "Value": 0.5457306,
           "BaseValue": 0.049611878,
           "Growth": 0.049611878
         }
@@ -69,7 +69,7 @@
       "Stats": [
         {
           "StatType": "MaxHP",
-          "Value": 463.02686,
+          "Value": 509.32953,
           "BaseValue": 46.30269,
           "Growth": 46.30269
         }
@@ -83,7 +83,7 @@
       "Stats": [
         {
           "StatType": "Damage",
-          "Value": 44.359394,
+          "Value": 48.795334,
           "BaseValue": 4.435939,
           "Growth": 4.435939
         }
