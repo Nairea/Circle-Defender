@@ -628,7 +628,7 @@ func drawGame() {
 			if arc.Delay > 0 {
 				continue
 			}
-			alpha := float32(arc.VisualTimer / 0.4)
+			alpha := float32(arc.VisualTimer / 2.0)
 			if alpha > 1.0 {
 				alpha = 1.0
 			}
@@ -708,8 +708,8 @@ func drawGame() {
 					offset := float64(b) * step
 					angle := float64(state.Player.DeathRaySpinAngle) + offset
 
-					endX := state.Player.X + float32(math.Cos(angle))*600
-					endY := state.Player.Y + float32(math.Sin(angle))*600
+					endX := state.Player.X + float32(math.Cos(angle))*900
+					endY := state.Player.Y + float32(math.Sin(angle))*900
 
 					rl.DrawLineEx(startPos, rl.NewVector2(endX, endY), 4.0, rl.NewColor(200, 0, 200, 150))
 				}
@@ -726,16 +726,6 @@ func drawGame() {
 				color = rl.Green
 			}
 			rl.DrawCircle(int32(p.X), int32(p.Y), p.Radius, color)
-		}
-
-		// Draw death particles
-		for _, dp := range state.DeathParticles {
-			t := dp.Timer / dp.MaxDuration
-			alpha := uint8(255 * t)
-			size := dp.Size * t
-			c := dp.Color
-			c.A = alpha
-			rl.DrawPoly(rl.NewVector2(dp.X, dp.Y), dp.Sides, size, dp.Rotation, c)
 		}
 
 		for _, enm := range state.Enemies {
@@ -880,7 +870,7 @@ func drawGame() {
 			color.A = alpha
 
 			// Center text
-			fontSize := int32(16) // Small pop up size
+			fontSize := int32(FloatTextFontSize) // Small pop up size
 			textWidth := rl.MeasureText(ft.Text, fontSize)
 			rl.DrawText(ft.Text, int32(ft.X)-textWidth/2, int32(ft.Y), fontSize, color)
 		}

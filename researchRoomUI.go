@@ -14,6 +14,25 @@ var researchScrollY float32
 const researchMenuHeaderH = 170 // pixels reserved for fixed header
 const researchMenuFooterH = 70  // pixels reserved for fixed back button
 
+// researchLayout holds all derived layout values for the talent grid.
+// Computed once per frame/input tick so input and draw always agree.
+type researchLayout struct {
+	cardW   float32 // width of each talent card
+	cardH   float32 // row height (card + gap)
+	colGap  float32 // gap between columns
+	branchW float32 // width of each branch button
+	originX float32 // X of the left column card
+}
+
+func calcResearchLayout() researchLayout {
+	cardW := float32(ScreenWidth) * 0.26  // ~390px at 1500
+	colGap := float32(ScreenWidth) * 0.02 // ~30px gap between columns
+	cardH := float32(130)
+	originX := float32(ScreenWidth)/2 - cardW - colGap/2
+	branchW := (cardW - 8) / 2
+	return researchLayout{cardW, cardH, colGap, branchW, originX}
+}
+
 // talentDef describes one ability/passive row in the Talent Lab UI.
 type talentDef struct {
 	Name         string
@@ -131,9 +150,10 @@ func buildPassiveTalentList() []talentDef {
 
 // researchMenuContentBottom returns the Y pixel where the last scrollable element ends.
 func researchMenuContentBottom() int {
+	lay := calcResearchLayout()
 	passiveRows := 2 // 3 passives in a 2-col grid = 2 rows
-	passiveStartY := float32(researchMenuHeaderH + 3*130 + 18)
-	utilY := passiveStartY + float32(passiveRows)*130
+	passiveStartY := float32(researchMenuHeaderH) + 3*lay.cardH + 18
+	utilY := passiveStartY + float32(passiveRows)*lay.cardH
 	return int(utilY) + 40 + 50 + 40 + 20 // two util buttons + padding
 }
 
@@ -189,29 +209,24 @@ func handleResearchInput() {
 		playButtonSound()
 		researchScrollY = 0
 		state.CurrentScreen = ScreenStart
-		return
 	}
 
-	if !rl.IsMouseButtonReleased(rl.MouseButtonLeft) {
+	if !rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
 		return
 	}
 	mousePos := rl.GetMousePosition()
 
-	// Don't process content clicks if mouse is over the back button area
-	if rl.CheckCollisionPointRec(mousePos, backRect) {
-		return
-	}
-
+	lay := calcResearchLayout()
 	actives := buildTalentList()
 	passives := buildPassiveTalentList()
 
 	for i, t := range actives {
 		col := i % 2
 		row := i / 2
-		x := float32(ScreenWidth)/2 - 270 + float32(col)*280
-		y := float32(researchMenuHeaderH+row*130) - researchScrollY
+		x := lay.originX + float32(col)*(lay.cardW+lay.colGap)
+		y := float32(researchMenuHeaderH) + float32(row)*lay.cardH - researchScrollY
 
-		unlockRect := rl.Rectangle{X: x, Y: y, Width: 260, Height: 40}
+		unlockRect := rl.Rectangle{X: x, Y: y, Width: lay.cardW, Height: 40}
 		if rl.CheckCollisionPointRec(mousePos, unlockRect) {
 			if meta.TutorialStep == TutorialBuyAbility && t.Name != AbilityRapidFire {
 				continue
@@ -240,8 +255,8 @@ func handleResearchInput() {
 		}
 
 		if *t.Unlocked && *t.Branch == "" && !HasSaveFile() {
-			branchARect := rl.Rectangle{X: x, Y: y + 44, Width: 126, Height: 36}
-			branchBRect := rl.Rectangle{X: x + 134, Y: y + 44, Width: 126, Height: 36}
+			branchARect := rl.Rectangle{X: x, Y: y + 44, Width: lay.branchW, Height: 36}
+			branchBRect := rl.Rectangle{X: x + lay.branchW + 8, Y: y + 44, Width: lay.branchW, Height: 36}
 			if rl.CheckCollisionPointRec(mousePos, branchARect) && meta.ResearchPoints >= t.BranchCost {
 				playButtonSound()
 				meta.ResearchPoints -= t.BranchCost
@@ -257,21 +272,21 @@ func handleResearchInput() {
 		}
 	}
 
-	passiveStartY := float32(researchMenuHeaderH+3*130+18) - researchScrollY
+	passiveStartY := float32(researchMenuHeaderH) + 3*lay.cardH + 20 - researchScrollY
 	for i, t := range passives {
 		var x, y float32
 		if len(passives) > 1 && i == len(passives)-1 && len(passives)%2 == 1 {
 			row := i / 2
-			x = float32(ScreenWidth)/2 - 130
-			y = passiveStartY + float32(row)*130
+			x = float32(ScreenWidth)/2 - lay.cardW/2
+			y = passiveStartY + float32(row)*lay.cardH
 		} else {
 			col := i % 2
 			row := i / 2
-			x = float32(ScreenWidth)/2 - 270 + float32(col)*280
-			y = passiveStartY + float32(row)*130
+			x = lay.originX + float32(col)*(lay.cardW+lay.colGap)
+			y = passiveStartY + float32(row)*lay.cardH
 		}
 
-		unlockRect := rl.Rectangle{X: x, Y: y, Width: 260, Height: 40}
+		unlockRect := rl.Rectangle{X: x, Y: y, Width: lay.cardW, Height: 40}
 		if rl.CheckCollisionPointRec(mousePos, unlockRect) {
 			if !*t.Unlocked && meta.ResearchPoints >= t.Cost {
 				playButtonSound()
@@ -281,8 +296,8 @@ func handleResearchInput() {
 		}
 
 		if *t.Unlocked && *t.Branch == "" && !HasSaveFile() {
-			branchARect := rl.Rectangle{X: x, Y: y + 44, Width: 126, Height: 36}
-			branchBRect := rl.Rectangle{X: x + 134, Y: y + 44, Width: 126, Height: 36}
+			branchARect := rl.Rectangle{X: x, Y: y + 44, Width: lay.branchW, Height: 36}
+			branchBRect := rl.Rectangle{X: x + lay.branchW + 8, Y: y + 44, Width: lay.branchW, Height: 36}
 			if rl.CheckCollisionPointRec(mousePos, branchARect) && meta.ResearchPoints >= t.BranchCost {
 				playButtonSound()
 				meta.ResearchPoints -= t.BranchCost
@@ -298,8 +313,8 @@ func handleResearchInput() {
 		}
 	}
 
-	passiveRows := (len(passives) + 1) / 2
-	utilY := passiveStartY + float32(passiveRows)*130
+	passiveRows2 := (len(passives) + 1) / 2
+	utilY := passiveStartY + float32(passiveRows2)*lay.cardH
 	speedRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 125, Y: utilY, Width: 250, Height: 40}
 	if rl.CheckCollisionPointRec(mousePos, speedRect) && !meta.Speed3xUnlocked && meta.ResearchPoints >= 200 {
 		meta.ResearchPoints -= 200
@@ -393,7 +408,7 @@ func calcRefund(lvl, base, inc int) int {
 
 // drawTalentEntry renders the unlock button and branch picker for one talent.
 // Returns tooltip text if the mouse is hovering something informative.
-func drawTalentEntry(t talentDef, x, y float32, mousePos rl.Vector2, isTutorialLocked bool) string {
+func drawTalentEntry(t talentDef, x, y float32, mousePos rl.Vector2, isTutorialLocked bool, lay researchLayout) string {
 	tooltip := ""
 	isEquipped := false
 	for _, eq := range meta.EquippedAbilities {
@@ -404,7 +419,7 @@ func drawTalentEntry(t talentDef, x, y float32, mousePos rl.Vector2, isTutorialL
 	}
 
 	// -- Unlock / equip button --
-	unlockRect := rl.Rectangle{X: x, Y: y, Width: 260, Height: 40}
+	unlockRect := rl.Rectangle{X: x, Y: y, Width: lay.cardW, Height: 40}
 	btnColor := rl.DarkGray
 	if *t.Unlocked {
 		if isEquipped {
@@ -438,7 +453,7 @@ func drawTalentEntry(t talentDef, x, y float32, mousePos rl.Vector2, isTutorialL
 	}
 	rl.DrawText(labelText, int32(x)+8, int32(y)+12, 15, rl.White)
 	if costText != "" {
-		rl.DrawText(costText, int32(x+260)-rl.MeasureText(costText, 15)-8, int32(y)+12, 15, rl.Green)
+		rl.DrawText(costText, int32(x+lay.cardW)-rl.MeasureText(costText, 15)-8, int32(y)+12, 15, rl.Green)
 	}
 
 	// Tutorial highlights
@@ -467,8 +482,8 @@ func drawTalentEntry(t talentDef, x, y float32, mousePos rl.Vector2, isTutorialL
 			if HasSaveFile() {
 				rl.DrawText("Branch locked during run", int32(x)+4, int32(y)+46, 13, rl.Gray)
 			} else {
-				branchARect := rl.Rectangle{X: x, Y: y + 44, Width: 126, Height: 36}
-				branchBRect := rl.Rectangle{X: x + 134, Y: y + 44, Width: 126, Height: 36}
+				branchARect := rl.Rectangle{X: x, Y: y + 44, Width: lay.branchW, Height: 36}
+				branchBRect := rl.Rectangle{X: x + lay.branchW + 8, Y: y + 44, Width: lay.branchW, Height: 36}
 				canAfford := meta.ResearchPoints >= t.BranchCost
 
 				colA := rl.NewColor(30, 30, 80, 255)
@@ -499,7 +514,7 @@ func drawTalentEntry(t talentDef, x, y float32, mousePos rl.Vector2, isTutorialL
 				rl.DrawRectangleLinesEx(branchBRect, 2, borderB)
 
 				rl.DrawText("[A] "+trimLabel(t.BranchAName, 13), int32(x)+4, int32(y)+51, 13, rl.White)
-				rl.DrawText("[B] "+trimLabel(t.BranchBName, 13), int32(x)+138, int32(y)+51, 13, rl.White)
+				rl.DrawText("[B] "+trimLabel(t.BranchBName, 13), int32(x+lay.branchW+8)+4, int32(y)+51, 13, rl.White)
 
 				costLabel := fmt.Sprintf("%d RP each", t.BranchCost)
 				costColor := rl.Gold
@@ -518,7 +533,7 @@ func drawTalentEntry(t talentDef, x, y float32, mousePos rl.Vector2, isTutorialL
 				chosenDesc = t.BranchBDesc
 				lineColor = rl.Orange
 			}
-			tagRect := rl.Rectangle{X: x, Y: y + 44, Width: 260, Height: 36}
+			tagRect := rl.Rectangle{X: x, Y: y + 44, Width: lay.cardW, Height: 36}
 			rl.DrawRectangleRec(tagRect, rl.NewColor(15, 15, 25, 220))
 			rl.DrawRectangleLinesEx(tagRect, 2, lineColor)
 			rl.DrawText("Branch: "+chosenName, int32(x)+6, int32(y)+48, 14, lineColor)
@@ -548,9 +563,10 @@ func drawResearchMenu() {
 	rl.DrawText(rpText, ScreenWidth/2-rl.MeasureText(rpText, 20)/2, 62, 20, rl.Gold)
 
 	// Equipped loadout slots
-	rl.DrawText("Active Loadout (Max 4):", ScreenWidth/2-110, 90, 18, rl.White)
+	loadoutLabel := "Active Loadout (Max 4):"
+	rl.DrawText(loadoutLabel, ScreenWidth/2-rl.MeasureText(loadoutLabel, 18)/2, 90, 18, rl.White)
 	for i, name := range meta.EquippedAbilities {
-		x := int32(ScreenWidth/2 - 110 + i*60)
+		x := int32(ScreenWidth/2 - 115 + i*60)
 		y := int32(112)
 		rl.DrawRectangleLines(x, y, 50, 50, rl.Gray)
 		if name != "" {
@@ -583,12 +599,13 @@ func drawResearchMenu() {
 	activeLabel := "ACTIVE ABILITIES"
 	rl.DrawText(activeLabel, ScreenWidth/2-rl.MeasureText(activeLabel, 18)/2, int32(float32(researchMenuHeaderH-17)-researchScrollY), 18, rl.SkyBlue)
 
+	lay := calcResearchLayout()
 	actives := buildTalentList()
 	for i, t := range actives {
 		col := i % 2
 		row := i / 2
-		x := float32(ScreenWidth)/2 - 270 + float32(col)*280
-		y := float32(researchMenuHeaderH+row*130) - researchScrollY
+		x := lay.originX + float32(col)*(lay.cardW+lay.colGap)
+		y := float32(researchMenuHeaderH) + float32(row)*lay.cardH - researchScrollY
 
 		isTutLocked := false
 		if meta.TutorialStep == TutorialBuyAbility && t.Name != AbilityRapidFire {
@@ -598,13 +615,13 @@ func drawResearchMenu() {
 			isTutLocked = true
 		}
 
-		if tip := drawTalentEntry(t, x, y, mousePos, isTutLocked); tip != "" {
+		if tip := drawTalentEntry(t, x, y, mousePos, isTutLocked, lay); tip != "" {
 			tooltipText = tip
 		}
 	}
 
 	// ── Passive Modules ───────────────────────────────────────────────────────
-	passiveStartY := float32(researchMenuHeaderH+3*130+18) - researchScrollY
+	passiveStartY := float32(researchMenuHeaderH) + 3*lay.cardH + 18 - researchScrollY
 	passiveLabel := "PASSIVE MODULES"
 	rl.DrawText(passiveLabel, ScreenWidth/2-rl.MeasureText(passiveLabel, 18)/2, int32(passiveStartY-22), 18, rl.SkyBlue)
 
@@ -614,22 +631,22 @@ func drawResearchMenu() {
 		if len(passives) > 1 && i == len(passives)-1 && len(passives)%2 == 1 {
 			// Odd last item — centre it on its own row
 			row := i / 2
-			x = float32(ScreenWidth)/2 - 130
-			y = passiveStartY + float32(row)*130
+			x = float32(ScreenWidth)/2 - lay.cardW/2
+			y = passiveStartY + float32(row)*lay.cardH
 		} else {
 			col := i % 2
 			row := i / 2
-			x = float32(ScreenWidth)/2 - 270 + float32(col)*280
-			y = passiveStartY + float32(row)*130
+			x = lay.originX + float32(col)*(lay.cardW+lay.colGap)
+			y = passiveStartY + float32(row)*lay.cardH
 		}
-		if tip := drawTalentEntry(t, x, y, mousePos, false); tip != "" {
+		if tip := drawTalentEntry(t, x, y, mousePos, false, lay); tip != "" {
 			tooltipText = tip
 		}
 	}
 
 	// ── Utility Unlocks ───────────────────────────────────────────────────────
 	passiveRows := (len(passives) + 1) / 2
-	utilY := passiveStartY + float32(passiveRows)*130
+	utilY := passiveStartY + float32(passiveRows)*lay.cardH
 	utilLabel := "UTILITY"
 	rl.DrawText(utilLabel, ScreenWidth/2-rl.MeasureText(utilLabel, 18)/2, int32(utilY-22), 18, rl.SkyBlue)
 

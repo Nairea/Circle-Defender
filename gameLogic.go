@@ -229,86 +229,13 @@ func unequipItem(p *Player, item *Item) {
 
 func spawnFloatingText(x, y float32, text string, color rl.Color) {
 	state.FloatingTexts = append(state.FloatingTexts, &FloatingText{
-		X:           x + rand.Float32()*20 - 10,
+		X:           x + rand.Float32()*FloatTextJitter - FloatTextJitter/2,
 		Y:           y,
 		Text:        text,
 		Color:       color,
-		Timer:       1.0, // Lasts 1 second
-		MaxDuration: 1.0,
+		Timer:       FloatTextDuration,
+		MaxDuration: FloatTextDuration,
 	})
-}
-
-// spawnDeathBurst creates flying polygon fragments at the death position.
-// sides should match the dead unit's polygon (e.g. 4 for standard, 3 for dodger).
-// count controls how many pieces fly out; isBig spawns a larger burst for bosses/player.
-func spawnDeathBurst(x, y, size float32, color rl.Color, sides int32, isBig bool) {
-	count := 6
-	speed := float32(160.0)
-	lifespan := float32(0.45)
-	partSize := size * 0.70
-	if isBig {
-		count = 14
-		speed = 320.0
-		lifespan = 0.7
-		partSize = size * 1.0
-	}
-	for i := 0; i < count; i++ {
-		angle := rand.Float32() * 2 * math.Pi
-		spd := speed * (0.5 + rand.Float32()*0.8)
-		state.DeathParticles = append(state.DeathParticles, &DeathParticle{
-			X:           x,
-			Y:           y,
-			VelX:        float32(math.Cos(float64(angle))) * spd,
-			VelY:        float32(math.Sin(float64(angle))) * spd,
-			Size:        partSize * (0.6 + rand.Float32()*0.8),
-			Rotation:    rand.Float32() * 360,
-			RotSpeed:    (rand.Float32()*400 - 200),
-			Timer:       lifespan,
-			MaxDuration: lifespan,
-			Color:       color,
-			Sides:       sides,
-		})
-	}
-}
-
-// enemyDeathBurst spawns a death particle burst matching the enemy's color and polygon shape.
-func enemyDeathBurst(e *Enemy) {
-	var color rl.Color
-	var sides int32 = 4
-	switch e.Type {
-	case EnemyDodger:
-		color = EnemyDodgerColor
-		sides = 3
-	case EnemyRanger:
-		color = EnemyRangerColor
-		sides = 6
-	case EnemyShielder:
-		color = EnemyShielderColor
-		sides = 5
-	case EnemyPhaser:
-		color = EnemyPhaserColor
-		sides = 8
-	case EnemyReflector:
-		color = EnemyReflectorColor
-		sides = 4
-	case EnemyDivider:
-		color = EnemyDividerColor
-		sides = 6
-	case EnemyBerserker:
-		color = EnemyBerserkerColor
-		sides = 4
-	case EnemyFragment:
-		color = EnemyColor
-		sides = 3
-	default:
-		color = EnemyColor
-		sides = 4
-	}
-	if e.IsBoss {
-		color = rl.Purple
-		sides = 5
-	}
-	spawnDeathBurst(e.X, e.Y, e.Size, color, sides, e.IsBoss)
 }
 
 // updates atksp for meta investment/item alterations.
@@ -428,7 +355,6 @@ func startRun() {
 		LightningArcs:           make([]*LightningArc, 0),
 		GravityZones:            make([]*GravityZone, 0),
 		LingerZones:             make([]*LingerZone, 0),
-		DeathParticles:          make([]*DeathParticle, 0),
 		Wave:                    1,
 		WaveTimer:               WaveTimeLimit,
 		SpawnTimer:              0.0,
@@ -811,7 +737,6 @@ func moveProjectiles(dt float32) {
 							state.Player.XP += xp
 							spawnFloatingText(enemy.X, enemy.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
 							dropResearchPoint(enemy.X, enemy.Y, enemy.IsBoss)
-							enemyDeathBurst(enemy)
 							//divider logic. should pop out lil guys
 							if enemy.Type == EnemyDivider {
 								spawnFragments(enemy.X, enemy.Y, state.Wave)
@@ -903,9 +828,10 @@ func moveProjectiles(dt float32) {
 				state.Player.HP -= damage
 				if state.Player.HP <= 0 {
 					state.Player.HP = 0
-					spawnDeathBurst(state.Player.X, state.Player.Y, state.Player.Radius*2, rl.Red, 8, true)
-					state.GameOver = true
-					DeleteSaveFile()
+					if state.DeathTimer <= 0 {
+						state.DeathTimer = PlayerDeathDelay
+						DeleteSaveFile()
+					}
 				}
 
 				for _, e := range state.Enemies {
@@ -985,7 +911,6 @@ func moveMines(dt float32) {
 					state.Player.XP += xp
 					spawnFloatingText(enemy.X, enemy.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
 					dropResearchPoint(enemy.X, enemy.Y, enemy.IsBoss)
-					enemyDeathBurst(enemy)
 					if enemy.Type == EnemyDivider {
 						spawnFragments(enemy.X, enemy.Y, state.Wave)
 					}
@@ -1028,26 +953,12 @@ func updateVisuals(dt float32) {
 	var remainingTexts []*FloatingText
 	for _, ft := range state.FloatingTexts {
 		ft.Timer -= dt
-		ft.Y -= 30 * dt // Move up at 30 pixels/sec
+		ft.Y -= FloatTextRiseSpeed * dt // Move up
 		if ft.Timer > 0 {
 			remainingTexts = append(remainingTexts, ft)
 		}
 	}
 	state.FloatingTexts = remainingTexts
-
-	var remainingParticles []*DeathParticle
-	for _, dp := range state.DeathParticles {
-		dp.Timer -= dt
-		if dp.Timer > 0 {
-			dp.X += dp.VelX * dt
-			dp.Y += dp.VelY * dt
-			dp.VelX *= 1 - 4*dt // drag
-			dp.VelY *= 1 - 4*dt
-			dp.Rotation += dp.RotSpeed * dt
-			remainingParticles = append(remainingParticles, dp)
-		}
-	}
-	state.DeathParticles = remainingParticles
 }
 
 func moveEnemies(dt float32) {
@@ -1109,7 +1020,7 @@ func moveEnemies(dt float32) {
 
 		enemy.DamageShowTimer -= dt
 		if enemy.DamageShowTimer <= 0 {
-			enemy.DamageShowTimer = 0.1
+			enemy.DamageShowTimer = DamageAccumInterval
 
 			for source, damage := range enemy.DamageAccumulator {
 				if damage >= 1.0 {
@@ -1340,9 +1251,10 @@ func moveEnemies(dt float32) {
 				enemy.AttackTimer = 1.0
 				if state.Player.HP <= 0 {
 					state.Player.HP = 0
-					spawnDeathBurst(state.Player.X, state.Player.Y, state.Player.Radius*2, rl.Red, 8, true)
-					state.GameOver = true
-					DeleteSaveFile()
+					if state.DeathTimer <= 0 {
+						state.DeathTimer = PlayerDeathDelay
+						DeleteSaveFile()
+					}
 				}
 			}
 		}
@@ -1351,7 +1263,6 @@ func moveEnemies(dt float32) {
 			state.Player.XP += xp
 			spawnFloatingText(enemy.X, enemy.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
 			dropResearchPoint(enemy.X, enemy.Y, enemy.IsBoss)
-			enemyDeathBurst(enemy)
 			//divider logic. should pop out lil guys
 			if enemy.Type == EnemyDivider {
 				spawnFragments(enemy.X, enemy.Y, state.Wave)
@@ -1792,6 +1703,13 @@ func updateGame(dt float32) {
 	if state.IsPaused {
 		handlePauseMenuInput()
 		return
+	}
+
+	if state.DeathTimer > 0 {
+		state.DeathTimer -= dt
+		if state.DeathTimer <= 0 {
+			state.GameOver = true
+		}
 	}
 
 	if state.GameOver {

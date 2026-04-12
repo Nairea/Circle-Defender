@@ -161,7 +161,7 @@ func triggerStaticDischarge() {
 		// bolt reaches them. Visuals are staggered per hop.
 		const maxJumpDist = float32(320)
 		const hopInterval = float32(0.07)
-		const arcDuration = float32(0.30)
+		const arcDuration = float32(2.0)
 		dmg := p.Damage * dmgMult * 0.60 * mult
 
 		usedIDs := make(map[int]bool)
@@ -253,7 +253,7 @@ func triggerStaticDischarge() {
 			dx := e.X - p.X
 			dy := e.Y - p.Y
 			dist := float32(math.Sqrt(float64(dx*dx + dy*dy)))
-			if dist < 400 {
+			if dist < 600 {
 				if !isEnemyProtected(e) {
 					dmg := p.Damage * dmgMult * mult
 					e.HP -= dmg
@@ -550,7 +550,7 @@ func updateAbilityTimers(dt float32) {
 					dy := target.Y - satY
 					dist := float32(math.Sqrt(float64(dx*dx + dy*dy)))
 
-					if dist < 400 { // 400 Range
+					if dist < 600 { // 600 Range
 						vx := (dx / dist) * BulletSpeed
 						vy := (dy / dist) * BulletSpeed
 
@@ -642,7 +642,7 @@ func updateAbilityTimers(dt float32) {
 						dot := ex*lx + ey*ly
 
 						hit := false
-						if dot > 0 && dot < 600 {
+						if dot > 0 && dot < 900 {
 							dist := math.Abs(ex*(-ly) + ey*lx)
 							if dist < float64(e.Size) {
 								hit = true
@@ -652,9 +652,9 @@ func updateAbilityTimers(dt float32) {
 						// hits if it DIDNT hit last frame. stops it from an "infinite" dmg loop.
 						if hit {
 							if !e.DeathRayHitStatus[beamIdx] {
-								// Deal 0.5s worth of damage instantly
-								baseDps := p.Damage * p.DeathRayDamageMult * mult
-								damage := baseDps * 0.5
+								// Each sweep contact deals 0.5x a normal hit at base level.
+								// DeathRayPrismHitMult keeps the scale correct relative to DeathRayDamageMult.
+								damage := p.Damage * p.DeathRayDamageMult * DeathRayPrismHitMult * mult
 								e.HP -= damage
 
 								// Mark as hit so it doesn't damage again until it leaves
@@ -667,7 +667,6 @@ func updateAbilityTimers(dt float32) {
 									state.Player.XP += xp
 									spawnFloatingText(e.X, e.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
 									dropResearchPoint(e.X, e.Y, e.IsBoss)
-									enemyDeathBurst(e)
 									if e.Type == EnemyDivider {
 										spawnFragments(e.X, e.Y, state.Wave)
 									}
@@ -774,7 +773,6 @@ func updateAbilityTimers(dt float32) {
 					}
 					if index != -1 {
 						dropResearchPoint(target.X, target.Y, target.IsBoss)
-						enemyDeathBurst(target)
 						if target.Type == EnemyDivider {
 							spawnFragments(target.X, target.Y, state.Wave)
 						}

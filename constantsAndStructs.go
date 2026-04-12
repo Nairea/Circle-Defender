@@ -5,8 +5,8 @@ import (
 )
 
 const (
-	ScreenWidth  = 1000
-	ScreenHeight = 800
+	ScreenWidth  = 1500
+	ScreenHeight = 1200
 	TargetFPS    = 60
 	WindowName   = "Circle Defender: Polygon Peril"
 
@@ -67,42 +67,43 @@ const (
 
 	//Some enemy stats.
 	//dodging type
-	DodgerBaseSpeed     = 32
+	DodgerBaseSpeed     = 48
 	DodgerDodgeDist     = 80
 	DodgerDodgeCD       = 2
 	DodgerDetectionRad  = 100
 	DodgerSlideDuration = 0.25
 	//ranged shooter
-	RangerBaseSpeed = 18
+	RangerBaseSpeed = 27
 	RangerStopDist  = 250
 	RangerShootCD   = 2.5
 	//Shielder
-	ShielderBaseSpeed = 14
+	ShielderBaseSpeed = 21
 	ShielderRadius    = 180.0
 	//Boss enemy things.
 	BossScaling = 10
 	BossSize    = 30
 	//Phaser
-	PhaserBaseSpeed = 22
+	PhaserBaseSpeed = 33
 	PhaserPhaseCD   = 3.0
 	PhaserPhaseDur  = 2.0
 	//Reflector
-	ReflectorBaseSpeed = 12
+	ReflectorBaseSpeed = 18
 	ReflectorChance    = 0.60
 	//Divider
-	DividerBaseSpeed = 10
+	DividerBaseSpeed = 15
 	//Berserker
-	BerserkerBaseSpeed = 16
+	BerserkerBaseSpeed = 24
 
 	//Some ability constants. Mostly CD's. but also gravity pull rate and the bombardment rate.
-	RapidFireBaseCD  = 15
-	DeathRayBaseCD   = 20
-	GravityForce     = 300
-	GravityBaseCD    = 18
-	BombardSpawnRate = 0.2
-	BombardBaseCD    = 25
-	StaticBaseCD     = 12
-	ChronoBaseCD     = 30
+	RapidFireBaseCD      = 15
+	DeathRayBaseCD       = 20
+	DeathRayPrismHitMult = 0.05 // Prism spin-beam damage factor: keeps hit ~0.5x base damage at DeathRayDamageMult=10
+	GravityForce         = 300
+	GravityBaseCD        = 18
+	BombardSpawnRate     = 0.2
+	BombardBaseCD        = 25
+	StaticBaseCD         = 12
+	ChronoBaseCD         = 30
 
 	//Ability Names
 	AbilityRapidFire = "Rapid Fire"
@@ -193,7 +194,7 @@ const (
 	MaxOvershieldRatio = 0.5
 
 	//player range for attacks.
-	BaseRange = 300
+	BaseRange = 450
 
 	//RP drop rates. honestly may be a bit high right now.
 	//gotta keep people on that grind T_T.
@@ -209,6 +210,16 @@ const (
 	SpeedButtonWidth  = 35
 	SpeedButtonHeight = 20
 	SpeedButtonMargin = 5
+
+	//Floating damage text / "death particles"
+	FloatTextFontSize   = 16   // font size for damage pop-ups
+	FloatTextRiseSpeed  = 30.0 // pixels per second the text drifts upward
+	FloatTextDuration   = 1.0  // seconds a floating text lives
+	FloatTextJitter     = 20.0 // horizontal spawn scatter (+/- half)
+	DamageAccumInterval = 0.1  // seconds between DoT damage number flushes
+
+	// Delay between player death and game over screen appearing.
+	PlayerDeathDelay = 1.2
 )
 
 // enemy color globals
@@ -530,20 +541,6 @@ type LightningArc struct {
 	Seed             int32   // per-arc random seed for stable jitter
 }
 
-// DeathParticle is a small flying fragment spawned when an enemy or the player dies.
-// It moves outward from the death position, shrinks, and fades over its lifetime.
-type DeathParticle struct {
-	X, Y        float32
-	VelX, VelY  float32
-	Size        float32
-	Rotation    float32
-	RotSpeed    float32
-	Timer       float32
-	MaxDuration float32
-	Color       rl.Color
-	Sides       int32 // polygon sides matching the dead enemy's shape
-}
-
 type LevelOption struct {
 	Name        string
 	Description string
@@ -564,21 +561,20 @@ type FloatingText struct {
 }
 
 type GameState struct {
-	CurrentScreen  int
-	Player         Player
-	Enemies        []*Enemy
-	Projectiles    []*Projectile
-	Mines          []*Mine
-	Explosions     []*Explosion
-	LightningArcs  []*LightningArc
-	GravityZones   []*GravityZone
-	LingerZones    []*LingerZone
-	FloatingTexts  []*FloatingText
-	DeathParticles []*DeathParticle
-	Wave           int
-	WaveTimer      float32
-	SpawnTimer     float32
-	SpawnInterval  float32
+	CurrentScreen int
+	Player        Player
+	Enemies       []*Enemy
+	Projectiles   []*Projectile
+	Mines         []*Mine
+	Explosions    []*Explosion
+	LightningArcs []*LightningArc
+	GravityZones  []*GravityZone
+	LingerZones   []*LingerZone
+	FloatingTexts []*FloatingText
+	Wave          int
+	WaveTimer     float32
+	SpawnTimer    float32
+	SpawnInterval float32
 
 	//track runtime in seconds
 	RunTime float32
@@ -589,6 +585,7 @@ type GameState struct {
 	Camera                  rl.Camera2D
 	IsLeveling              bool
 	GameOver                bool
+	DeathTimer              float32 // counts down after death before showing game over
 	LevelUpOptions          []LevelOption
 	GameSpeedMultiplier     float32
 	PreviousSpeedMultiplier float32

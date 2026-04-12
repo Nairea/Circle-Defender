@@ -49,7 +49,6 @@ func initGame() {
 		GravityZones:            make([]*GravityZone, 0),
 		LingerZones:             make([]*LingerZone, 0),
 		FloatingTexts:           make([]*FloatingText, 0),
-		DeathParticles:          make([]*DeathParticle, 0),
 	}
 }
 
@@ -440,7 +439,7 @@ func initEnemy(wave int) *Enemy {
 
 	r := rand.Float32()
 	enemyType := EnemyStandard
-	baseSpeed := float32(24.0)
+	baseSpeed := float32(36.0)
 	// isBoss may be deprecated var, or at least may need renaming.
 	isBoss := false
 
