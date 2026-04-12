@@ -47,7 +47,9 @@ func initGame() {
 		Explosions:              make([]*Explosion, 0),
 		LightningArcs:           make([]*LightningArc, 0),
 		GravityZones:            make([]*GravityZone, 0),
+		LingerZones:             make([]*LingerZone, 0),
 		FloatingTexts:           make([]*FloatingText, 0),
+		DeathParticles:          make([]*DeathParticle, 0),
 	}
 }
 
@@ -261,6 +263,7 @@ func initBasePlayer() Player {
 
 		Inventory:         make([]*Item, 0),
 		DeathRayTargetIDs: make([]int, 0),
+		ShatterDebuffs:    make(map[int]float32),
 	}
 
 	p.Damage += float32(meta.DmgLevel) * 1.0
@@ -287,8 +290,105 @@ func initBasePlayer() Player {
 	}
 
 	recalculateAttackSpeed(&p)
+	applyTalentBranches(&p)
 
 	return p
+}
+
+// applyTalentBranches applies the one-time stat and flag changes granted by
+// each chosen talent branch. Called once when building the player from meta.
+func applyTalentBranches(p *Player) {
+	// --- Rapid Fire ---
+	switch meta.RapidFireBranch {
+	case BranchRapidFireBulletStorm:
+		p.RapidFireMultiplier += 1.5
+		p.RapidFireDuration -= 1.0
+		if p.RapidFireDuration < 2.0 {
+			p.RapidFireDuration = 2.0
+		}
+	case BranchRapidFireOvercharge:
+		p.RapidFireMultiplier += 0.5
+	}
+
+	// --- Death Ray ---
+	switch meta.DeathRayBranch {
+	case BranchDeathRayAnnihilator:
+		p.DeathRayDamageMult += 3.0
+		p.DeathRayScaling = 0.5
+		p.DeathRayPath = 1
+	case BranchDeathRayPrism:
+		p.DeathRayCount = 0
+		p.DeathRaySpinCount = 2
+		p.DeathRaySpinSpeed = 1.5
+		p.DeathRayPath = 2
+	}
+
+	// --- Gravity Field ---
+	switch meta.GravityBranch {
+	case BranchGravitySingularity:
+		p.GravityRadius -= 40.0
+		if p.GravityRadius < 80.0 {
+			p.GravityRadius = 80.0
+		}
+		p.GravityExplode = true
+	case BranchGravityAnomaly:
+		p.GravityRadius += 50.0
+		p.GravityAnomalyUnlocked = true
+		p.GravityPassiveTimer = 5.0
+	}
+
+	// --- Bombardment ---
+	switch meta.BombardBranch {
+	case BranchBombardCarpet:
+		p.BombardRadius -= 15.0
+		if p.BombardRadius < 20.0 {
+			p.BombardRadius = 20.0
+		}
+		p.BombardDuration += 2.0
+	case BranchBombardSiege:
+		p.BombardRadius += 40.0
+		p.BombardDmgMult += 2.0
+	}
+
+	// --- Static Discharge ---
+	switch meta.StaticBranch {
+	case BranchStaticChain:
+		// Chain Lightning arcs are controlled via meta.StaticBranch check in triggerStaticDischarge
+	case BranchStaticOverload:
+		p.StaticDmgMult += 3.0
+	}
+
+	// --- Chrono Field ---
+	switch meta.ChronoBranch {
+	case BranchChronoTimeStop:
+		// default Chrono already freezes non-bosses; no extra flags needed
+	case BranchChronoEntropy:
+		p.ChronoBossSlow = 0.6
+		p.ChronoDoT += 8.0
+	}
+
+	// --- Mines ---
+	switch meta.MinesBranch {
+	case BranchMinesCluster:
+		p.MineCount += 2
+		p.MineMaxCooldown *= 0.75
+	case BranchMinesHellfire:
+		p.MineCount = 1
+		p.MineHellfireRadius = 100.0
+		p.MineLingerDamage = p.Damage * 0.5
+	}
+
+	// --- Satellites ---
+	switch meta.SatellitesBranch {
+	case BranchSatSentry:
+		p.SatelliteShooting = true
+		p.SatelliteOverdrive = false
+	case BranchSatOverdrive:
+		p.SatelliteOverdrive = true
+		p.SatelliteShooting = false
+	}
+
+	// Shockwave handled entirely in triggerShockwave() via meta.ShockwaveBranch.
 }
 
 // Passing wave atm, but (i need to double check)
@@ -340,8 +440,8 @@ func initEnemy(wave int) *Enemy {
 
 	r := rand.Float32()
 	enemyType := EnemyStandard
-	baseSpeed := float32(120.0)
-	//may be a deprecated var, or at least may need renaming.
+	baseSpeed := float32(24.0)
+	// isBoss may be deprecated var, or at least may need renaming.
 	isBoss := false
 
 	// Probability table
@@ -355,32 +455,34 @@ func initEnemy(wave int) *Enemy {
 	// Berserker: 5% (Wave 12+)
 	// Remainder: Standard or Boss (if rare roll)
 
-	if r < 0.50 {
+	if r < 0.60 {
 		enemyType = EnemyStandard
-	} else if r < 0.60 {
+	} else if r < 0.70 {
 		enemyType = EnemyDodger
-	} else if r < 0.65 {
+	} else if r < 0.75 {
 		enemyType = EnemyRanger
-	} else if r < 0.70 && wave >= 4 {
+	} else if r < 0.80 && wave >= 4 {
 		enemyType = EnemyShielder
-	} else if r < 0.75 && wave >= 6 {
+	} else if r < 0.82 && wave >= 6 {
 		enemyType = EnemyPhaser
-	} else if r < 0.80 && wave >= 8 {
+	} else if r < 0.87 && wave >= 8 {
 		enemyType = EnemyReflector
-	} else if r < 0.85 && wave >= 10 {
+	} else if r < 0.92 && wave >= 10 {
 		enemyType = EnemyDivider
-	} else if r < 0.90 && wave >= 12 {
+	} else if r < 0.97 && wave >= 12 {
 		enemyType = EnemyBerserker
-	} else if r > 0.98 {
+	} else if r > 0.97 {
 		enemyType = EnemyStandard
 		isBoss = true
 	} else {
 		enemyType = EnemyStandard
 	}
 
-	//modify the enemy as needed like a mad scientist.
+	// modify the enemy as needed like a mad scientist.
 	size := float32(20.0)
-	baseHP := 5 * hpScale
+	// Base HP raised 5x to compensate for speed being reduced to 1/5 —
+	// enemies take longer to reach the player so need more HP to maintain pressure.
+	baseHP := 25 * hpScale
 	xpGiven := int32(10 + (wave-1)/5)
 
 	switch enemyType {

@@ -564,6 +564,32 @@ func drawGame() {
 			pct := zone.Duration / 3.0
 			rl.DrawCircleLines(int32(zone.X), int32(zone.Y), zone.Radius*pct, rl.NewColor(255, 255, 255, 50))
 		}
+		// Hellfire mine linger zones — pulsing fire rings that fade as they expire
+		for _, zone := range state.LingerZones {
+			// Fade alpha based on remaining duration (zones last 5s)
+			lifePct := zone.Duration / 5.0
+			if lifePct > 1.0 {
+				lifePct = 1.0
+			}
+			baseAlpha := uint8(180 * lifePct)
+			rimAlpha := uint8(220 * lifePct)
+
+			// Slow inward pulse so the zone feels "breathing"
+			pulse := float32(math.Sin(float64(rl.GetTime())*4.0)) * (zone.Radius * 0.06)
+
+			// Filled gradient — hot centre fades to transparent edge
+			rl.DrawCircleGradient(
+				int32(zone.X), int32(zone.Y),
+				zone.Radius+pulse,
+				rl.NewColor(220, 80, 0, baseAlpha/2),
+				rl.NewColor(80, 10, 0, 0),
+			)
+			// Bright rim
+			rl.DrawCircleLines(int32(zone.X), int32(zone.Y), zone.Radius+pulse, rl.NewColor(255, 140, 0, rimAlpha))
+			// Inner flicker ring
+			innerPulse := float32(math.Sin(float64(rl.GetTime())*8.0+1.5)) * (zone.Radius * 0.12)
+			rl.DrawCircleLines(int32(zone.X), int32(zone.Y), (zone.Radius*0.5)+innerPulse, rl.NewColor(255, 60, 0, baseAlpha))
+		}
 		//targetting reticle. not sure if i'll keep this. maybe yes for computer
 		//if i port to mobile like i want i'll probably remove this for that, so that it doesnt
 		//just sit all clunky and weird on screen with no real way to do it. or maybe i can keep it and
@@ -598,8 +624,61 @@ func drawGame() {
 		}
 
 		for _, arc := range state.LightningArcs {
+			// Don't draw arcs that haven't fired yet
+			if arc.Delay > 0 {
+				continue
+			}
 			alpha := float32(arc.VisualTimer / 0.4)
-			rl.DrawLineEx(rl.NewVector2(arc.SourceX, arc.SourceY), rl.NewVector2(arc.TargetX, arc.TargetY), 3.0*alpha, rl.SkyBlue)
+			if alpha > 1.0 {
+				alpha = 1.0
+			}
+
+			if arc.IsChain {
+				// Jagged segmented lightning between two points.
+				// Uses the arc's Seed for stable per-frame jitter so it
+				// crackles without flickering randomly every pixel.
+				const segments = 8
+				dx := arc.TargetX - arc.SourceX
+				dy := arc.TargetY - arc.SourceY
+				length := float32(math.Sqrt(float64(dx*dx + dy*dy)))
+				if length < 1 {
+					continue
+				}
+				// Perpendicular unit vector for jitter
+				perpX := -dy / length
+				perpY := dx / length
+				maxJitter := length * 0.18
+
+				// Build segment points
+				pts := make([]rl.Vector2, segments+1)
+				pts[0] = rl.NewVector2(arc.SourceX, arc.SourceY)
+				pts[segments] = rl.NewVector2(arc.TargetX, arc.TargetY)
+
+				seed := arc.Seed
+				for s := 1; s < segments; s++ {
+					t := float32(s) / float32(segments)
+					midX := arc.SourceX + dx*t
+					midY := arc.SourceY + dy*t
+					// Deterministic jitter from seed + segment index
+					seed = seed*1664525 + 1013904223
+					jitter := (float32(seed%10000)/5000.0 - 1.0) * maxJitter
+					pts[s] = rl.NewVector2(midX+perpX*jitter, midY+perpY*jitter)
+				}
+
+				// Draw bright core and softer glow for each segment
+				for s := 0; s < segments; s++ {
+					// Outer glow
+					rl.DrawLineEx(pts[s], pts[s+1], 4.0*alpha, rl.NewColor(100, 200, 255, uint8(120*alpha)))
+					// Bright core
+					rl.DrawLineEx(pts[s], pts[s+1], 1.5*alpha, rl.NewColor(220, 240, 255, uint8(255*alpha)))
+				}
+
+				// Small spark circle at the target end
+				rl.DrawCircle(int32(arc.TargetX), int32(arc.TargetY), 3.0*alpha, rl.NewColor(180, 220, 255, uint8(200*alpha)))
+			} else {
+				// Plain straight arc for non-chain discharges
+				rl.DrawLineEx(rl.NewVector2(arc.SourceX, arc.SourceY), rl.NewVector2(arc.TargetX, arc.TargetY), 3.0*alpha, rl.SkyBlue)
+			}
 		}
 
 		if state.Player.IsDeathRayActive {
@@ -647,6 +726,16 @@ func drawGame() {
 				color = rl.Green
 			}
 			rl.DrawCircle(int32(p.X), int32(p.Y), p.Radius, color)
+		}
+
+		// Draw death particles
+		for _, dp := range state.DeathParticles {
+			t := dp.Timer / dp.MaxDuration
+			alpha := uint8(255 * t)
+			size := dp.Size * t
+			c := dp.Color
+			c.A = alpha
+			rl.DrawPoly(rl.NewVector2(dp.X, dp.Y), dp.Sides, size, dp.Rotation, c)
 		}
 
 		for _, enm := range state.Enemies {

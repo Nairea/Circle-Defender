@@ -1,5 +1,5 @@
 {
-  "ResearchPoints": 150,
+  "ResearchPoints": 1465,
   "DmgLevel": 0,
   "ASLevel": 0,
   "RegenLevel": 0,
@@ -11,22 +11,31 @@
   "MusicVolume": 0,
   "SFXVolume": 0,
   "TutorialStep": 8,
-  "RapidFireUnlocked": true,
+  "RapidFireUnlocked": false,
   "DeathRayUnlocked": true,
-  "GravityFieldUnlocked": true,
-  "BombardmentUnlocked": true,
-  "StaticDischargeUnlocked": true,
-  "ChronoFieldUnlocked": true,
-  "MinesUnlocked": true,
-  "SatellitesUnlocked": true,
+  "GravityFieldUnlocked": false,
+  "BombardmentUnlocked": false,
+  "StaticDischargeUnlocked": false,
+  "ChronoFieldUnlocked": false,
+  "MinesUnlocked": false,
+  "SatellitesUnlocked": false,
   "ShockwaveUnlocked": false,
-  "Speed3xUnlocked": true,
+  "RapidFireBranch": "",
+  "DeathRayBranch": "Prism",
+  "GravityBranch": "",
+  "BombardBranch": "",
+  "StaticBranch": "",
+  "ChronoBranch": "",
+  "MinesBranch": "",
+  "SatellitesBranch": "",
+  "ShockwaveBranch": "",
+  "Speed3xUnlocked": false,
   "OpeningSprintUnlocked": false,
   "EquippedAbilities": [
-    "Rapid Fire",
     "Death Ray",
-    "Static Discharge",
-    "Gravity Field"
+    "",
+    "",
+    ""
   ],
   "EquippedItemsByIndex": [
     3,
@@ -41,7 +50,7 @@
       "Stats": [
         {
           "StatType": "CritChance",
-          "Value": 0.5457306,
+          "Value": 0.14883563,
           "BaseValue": 0.049611878,
           "Growth": 0.049611878
         }
@@ -69,7 +78,7 @@
       "Stats": [
         {
           "StatType": "MaxHP",
-          "Value": 509.32953,
+          "Value": 138.90807,
           "BaseValue": 46.30269,
           "Growth": 46.30269
         }
@@ -83,7 +92,7 @@
       "Stats": [
         {
           "StatType": "Damage",
-          "Value": 48.795334,
+          "Value": 13.3078165,
           "BaseValue": 4.435939,
           "Growth": 4.435939
         }

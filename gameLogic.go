@@ -238,6 +238,79 @@ func spawnFloatingText(x, y float32, text string, color rl.Color) {
 	})
 }
 
+// spawnDeathBurst creates flying polygon fragments at the death position.
+// sides should match the dead unit's polygon (e.g. 4 for standard, 3 for dodger).
+// count controls how many pieces fly out; isBig spawns a larger burst for bosses/player.
+func spawnDeathBurst(x, y, size float32, color rl.Color, sides int32, isBig bool) {
+	count := 6
+	speed := float32(160.0)
+	lifespan := float32(0.45)
+	partSize := size * 0.70
+	if isBig {
+		count = 14
+		speed = 320.0
+		lifespan = 0.7
+		partSize = size * 1.0
+	}
+	for i := 0; i < count; i++ {
+		angle := rand.Float32() * 2 * math.Pi
+		spd := speed * (0.5 + rand.Float32()*0.8)
+		state.DeathParticles = append(state.DeathParticles, &DeathParticle{
+			X:           x,
+			Y:           y,
+			VelX:        float32(math.Cos(float64(angle))) * spd,
+			VelY:        float32(math.Sin(float64(angle))) * spd,
+			Size:        partSize * (0.6 + rand.Float32()*0.8),
+			Rotation:    rand.Float32() * 360,
+			RotSpeed:    (rand.Float32()*400 - 200),
+			Timer:       lifespan,
+			MaxDuration: lifespan,
+			Color:       color,
+			Sides:       sides,
+		})
+	}
+}
+
+// enemyDeathBurst spawns a death particle burst matching the enemy's color and polygon shape.
+func enemyDeathBurst(e *Enemy) {
+	var color rl.Color
+	var sides int32 = 4
+	switch e.Type {
+	case EnemyDodger:
+		color = EnemyDodgerColor
+		sides = 3
+	case EnemyRanger:
+		color = EnemyRangerColor
+		sides = 6
+	case EnemyShielder:
+		color = EnemyShielderColor
+		sides = 5
+	case EnemyPhaser:
+		color = EnemyPhaserColor
+		sides = 8
+	case EnemyReflector:
+		color = EnemyReflectorColor
+		sides = 4
+	case EnemyDivider:
+		color = EnemyDividerColor
+		sides = 6
+	case EnemyBerserker:
+		color = EnemyBerserkerColor
+		sides = 4
+	case EnemyFragment:
+		color = EnemyColor
+		sides = 3
+	default:
+		color = EnemyColor
+		sides = 4
+	}
+	if e.IsBoss {
+		color = rl.Purple
+		sides = 5
+	}
+	spawnDeathBurst(e.X, e.Y, e.Size, color, sides, e.IsBoss)
+}
+
 // updates atksp for meta investment/item alterations.
 func recalculateAttackSpeed(p *Player) {
 	metaBonus := float32(meta.ASLevel) * 0.05
@@ -353,6 +426,9 @@ func startRun() {
 		Mines:                   make([]*Mine, 0),
 		Explosions:              make([]*Explosion, 0),
 		LightningArcs:           make([]*LightningArc, 0),
+		GravityZones:            make([]*GravityZone, 0),
+		LingerZones:             make([]*LingerZone, 0),
+		DeathParticles:          make([]*DeathParticle, 0),
 		Wave:                    1,
 		WaveTimer:               WaveTimeLimit,
 		SpawnTimer:              0.0,
@@ -715,9 +791,15 @@ func moveProjectiles(dt float32) {
 						})
 					} else {
 						if !isEnemyProtected(enemy) {
-							enemy.HP -= p.Damage
+							finalDmg := p.Damage
+							if state.Player.ShatterDebuffs != nil {
+								if debuff, ok := state.Player.ShatterDebuffs[enemy.ID]; ok && debuff > 0 {
+									finalDmg *= (1.0 + debuff)
+								}
+							}
+							enemy.HP -= finalDmg
 							color := rl.White
-							text := fmt.Sprintf("%.0f", p.Damage)
+							text := fmt.Sprintf("%.0f", finalDmg)
 							if p.IsCrit {
 								color = rl.Yellow
 								text += "!"
@@ -729,6 +811,7 @@ func moveProjectiles(dt float32) {
 							state.Player.XP += xp
 							spawnFloatingText(enemy.X, enemy.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
 							dropResearchPoint(enemy.X, enemy.Y, enemy.IsBoss)
+							enemyDeathBurst(enemy)
 							//divider logic. should pop out lil guys
 							if enemy.Type == EnemyDivider {
 								spawnFragments(enemy.X, enemy.Y, state.Wave)
@@ -820,6 +903,7 @@ func moveProjectiles(dt float32) {
 				state.Player.HP -= damage
 				if state.Player.HP <= 0 {
 					state.Player.HP = 0
+					spawnDeathBurst(state.Player.X, state.Player.Y, state.Player.Radius*2, rl.Red, 8, true)
 					state.GameOver = true
 					DeleteSaveFile()
 				}
@@ -868,23 +952,40 @@ func moveMines(dt float32) {
 			if distSq < collisionRadius*collisionRadius {
 				if !isEnemyProtected(enemy) {
 					mineHit = true
-					//poof for flair here too.
+
+					// Hellfire branch: bigger explosion radius
+					explodeRadius := mine.Radius * 4.0
+					if meta.MinesBranch == BranchMinesHellfire && state.Player.MineHellfireRadius > 0 {
+						explodeRadius = state.Player.MineHellfireRadius
+					}
+
 					state.Explosions = append(state.Explosions, &Explosion{
 						X:           mine.X,
 						Y:           mine.Y,
-						Radius:      mine.Radius * 4.0,
+						Radius:      explodeRadius,
 						VisualTimer: 0.4,
 						MaxDuration: 0.4,
 					})
 					enemy.HP -= mine.Damage
 					spawnFloatingText(enemy.X, enemy.Y-enemy.Size, fmt.Sprintf("%.0f", mine.Damage), rl.Red)
+
+					// Hellfire branch: spawn a lingering fire zone
+					if meta.MinesBranch == BranchMinesHellfire && state.Player.MineLingerDamage > 0 {
+						state.LingerZones = append(state.LingerZones, &LingerZone{
+							X:        mine.X,
+							Y:        mine.Y,
+							Radius:   state.Player.MineHellfireRadius,
+							Duration: 5.0,
+							DPS:      state.Player.MineLingerDamage,
+						})
+					}
 				}
 				if enemy.HP <= 0 {
 					xp := enemy.XPGiven * state.Player.XPRate
 					state.Player.XP += xp
 					spawnFloatingText(enemy.X, enemy.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
 					dropResearchPoint(enemy.X, enemy.Y, enemy.IsBoss)
-					//divider logic. should pop out lil guys
+					enemyDeathBurst(enemy)
 					if enemy.Type == EnemyDivider {
 						spawnFragments(enemy.X, enemy.Y, state.Wave)
 					}
@@ -912,6 +1013,11 @@ func updateVisuals(dt float32) {
 	state.Explosions = remainingExplosions
 	var remainingArcs []*LightningArc
 	for _, arc := range state.LightningArcs {
+		if arc.Delay > 0 {
+			arc.Delay -= dt
+			remainingArcs = append(remainingArcs, arc)
+			continue
+		}
 		arc.VisualTimer -= dt
 		if arc.VisualTimer > 0 {
 			remainingArcs = append(remainingArcs, arc)
@@ -928,6 +1034,20 @@ func updateVisuals(dt float32) {
 		}
 	}
 	state.FloatingTexts = remainingTexts
+
+	var remainingParticles []*DeathParticle
+	for _, dp := range state.DeathParticles {
+		dp.Timer -= dt
+		if dp.Timer > 0 {
+			dp.X += dp.VelX * dt
+			dp.Y += dp.VelY * dt
+			dp.VelX *= 1 - 4*dt // drag
+			dp.VelY *= 1 - 4*dt
+			dp.Rotation += dp.RotSpeed * dt
+			remainingParticles = append(remainingParticles, dp)
+		}
+	}
+	state.DeathParticles = remainingParticles
 }
 
 func moveEnemies(dt float32) {
@@ -1023,7 +1143,12 @@ func moveEnemies(dt float32) {
 			if enemy.IsBoss {
 				speedMult = state.Player.ChronoBossSlow
 			} else {
-				speedMult = 0.0
+				// Time Stop: full freeze. Entropy: partial slow + DoT.
+				if meta.ChronoBranch == BranchChronoTimeStop {
+					speedMult = 0.0
+				} else {
+					speedMult = 0.0 // base chrono still freezes non-bosses; Entropy stacks DoT on top
+				}
 			}
 
 			if state.Player.ChronoDoT > 0 {
@@ -1150,7 +1275,9 @@ func moveEnemies(dt float32) {
 
 	for i := len(state.Enemies) - 1; i >= 0; i-- {
 		enemy := state.Enemies[i]
-		if state.Player.SatelliteCount > 0 {
+		// Satellite contact damage: only active for Overdrive branch (or no branch chosen yet as default).
+		// Sentry branch does all its damage through bullets fired in updateAbilityTimers.
+		if state.Player.SatelliteCount > 0 && meta.SatellitesBranch != BranchSatSentry {
 			for k := 0; k < state.Player.SatelliteCount; k++ {
 				angle := state.Player.SatelliteAngle + (float32(k) * (2 * math.Pi / float32(state.Player.SatelliteCount)))
 				satX := state.Player.X + float32(math.Cos(float64(angle)))*SatelliteDistance
@@ -1213,6 +1340,7 @@ func moveEnemies(dt float32) {
 				enemy.AttackTimer = 1.0
 				if state.Player.HP <= 0 {
 					state.Player.HP = 0
+					spawnDeathBurst(state.Player.X, state.Player.Y, state.Player.Radius*2, rl.Red, 8, true)
 					state.GameOver = true
 					DeleteSaveFile()
 				}
@@ -1223,6 +1351,7 @@ func moveEnemies(dt float32) {
 			state.Player.XP += xp
 			spawnFloatingText(enemy.X, enemy.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
 			dropResearchPoint(enemy.X, enemy.Y, enemy.IsBoss)
+			enemyDeathBurst(enemy)
 			//divider logic. should pop out lil guys
 			if enemy.Type == EnemyDivider {
 				spawnFragments(enemy.X, enemy.Y, state.Wave)
@@ -1361,124 +1490,236 @@ func setupLevelUpOptions() {
 		})
 	}
 
-	//runs ability upgrades list. only gives options for equipped abilities.
+	// In-run upgrades for equipped abilities. Options offered depend on the
+	// talent branch chosen in the Talent Lab. If no branch has been chosen
+	// yet the player gets a generic set so they're never upgrade-starved.
 	for _, abil := range meta.EquippedAbilities {
 		if abil == "" {
 			continue
 		}
 
 		switch abil {
+		// ── Rapid Fire ───────────────────────────────────────────────────────
 		case AbilityRapidFire:
+			// Shared upgrades regardless of branch
 			addOpt("RapidFireDuration", 10, "Rapid Fire: Extended Mag", "+1.0s Duration", func(p *Player) { p.RapidFireDuration += 1.0 })
-			addOpt("RapidFireFrenzy", 5, "Rapid Fire: Frenzy", "+0.2% Frenzy Chance", func(p *Player) { p.FrenzyChance += 0.002 })
-			addOpt("RapidFireSpeed", 10, "Rapid Fire: Overclock", "+0.5x Speed Multiplier", func(p *Player) { p.RapidFireMultiplier += 0.5 })
-		case AbilityDeathRay:
-			if p.DeathRayPath == 0 {
-				addOpt("DeathRayPathIntensity", 1, "Death Ray: Intensity Protocol", "Focuses beams on targets (Targeted Path)", func(p *Player) {
-					p.DeathRayPath = 1
-					p.DeathRayDamageMult += 2.0
-				})
-				addOpt("DeathRayPathDisco", 1, "Death Ray: Disco Protocol", "Beams spin around you (Spin Path)", func(p *Player) {
-					p.DeathRayPath = 2
-					p.DeathRayCount = 0
-					p.DeathRaySpinCount = 1
-					p.DeathRaySpinSpeed = 1.0
-				})
-			} else if p.DeathRayPath == 1 {
-				addOpt("DeathRayDuration", 5, "Death Ray: Focus", "+1.0s Duration", func(p *Player) { p.DeathRayDuration += 1.0 })
-				addOpt("DeathRayDmg", 5, "Death Ray: Intensity", "+2.0x Damage Multiplier", func(p *Player) { p.DeathRayDamageMult += 2.0 })
-				addOpt("DeathRayCount", 5, "Death Ray: Prism", "+1 Beam", func(p *Player) { p.DeathRayCount++ })
-				addOpt("DeathRayScale", 5, "Death Ray: Escalation", "Damage ramps up over time", func(p *Player) { p.DeathRayScaling += 0.5 })
-			} else if p.DeathRayPath == 2 {
-				addOpt("DeathRayDuration", 5, "Death Ray: Focus", "+1.0s Duration", func(p *Player) { p.DeathRayDuration += 1.0 })
-				addOpt("DeathRaySpinCount", 4, "Death Ray: Party Light", "+1 Spinning Beam", func(p *Player) { p.DeathRaySpinCount++ })
-				addOpt("DeathRaySpinSpeed", 5, "Death Ray: Strobe", "+50% Spin Speed", func(p *Player) { p.DeathRaySpinSpeed += 0.5 })
+			addOpt("RapidFireFrenzy", 5, "Rapid Fire: Frenzy", "+0.2 Frenzy Chance", func(p *Player) { p.FrenzyChance += 0.002 })
+
+			switch meta.RapidFireBranch {
+			case BranchRapidFireBulletStorm: // Bullet Storm — lean into fire rate
+				addOpt("RapidFireSpeed", 10, "Bullet Storm: Overclock", "+0.5x Fire Rate Multiplier", func(p *Player) { p.RapidFireMultiplier += 0.5 })
+				addOpt("RapidFireBSDur", 5, "Bullet Storm: Sustained", "+0.5s Duration", func(p *Player) { p.RapidFireDuration += 0.5 })
+			case BranchRapidFireOvercharge: // Overcharge — lean into crit / multishot payoff
+				addOpt("RapidFireSpeed", 5, "Overcharge: Amplifier", "+0.25x Fire Rate Multiplier", func(p *Player) { p.RapidFireMultiplier += 0.25 })
+				addOpt("RapidFireOCCrit", 8, "Overcharge: Hot Shots", "+5% Base Crit Chance", func(p *Player) { p.CritChance += 0.05 })
+				addOpt("RapidFireOCMulti", 5, "Overcharge: Scatter", "+10% Multishot Chance", func(p *Player) { p.MultishotChance += 0.10 })
+			default: // No branch chosen — neutral options
+				addOpt("RapidFireSpeed", 10, "Rapid Fire: Overclock", "+0.5x Fire Rate Multiplier", func(p *Player) { p.RapidFireMultiplier += 0.5 })
 			}
 
+		// ── Death Ray ────────────────────────────────────────────────────────
+		case AbilityDeathRay:
+			// Shared
+			addOpt("DeathRayDuration", 5, "Death Ray: Extended Beam", "+1.0s Duration", func(p *Player) { p.DeathRayDuration += 1.0 })
+
+			switch meta.DeathRayBranch {
+			case BranchDeathRayAnnihilator: // Annihilator — single focused beam
+				addOpt("DeathRayDmg", 5, "Annihilator: Intensity", "+2.0x Damage Multiplier", func(p *Player) { p.DeathRayDamageMult += 2.0 })
+				addOpt("DeathRayScale", 5, "Annihilator: Escalation", "+0.5 Damage Ramp Rate", func(p *Player) { p.DeathRayScaling += 0.5 })
+				addOpt("DeathRayCount", 3, "Annihilator: Split Focus", "+1 Targeted Beam", func(p *Player) { p.DeathRayCount++ })
+			case BranchDeathRayPrism: // Prism — spinning beams
+				addOpt("DeathRaySpinCount", 4, "Prism: Party Light", "+1 Spinning Beam", func(p *Player) { p.DeathRaySpinCount++ })
+				addOpt("DeathRaySpinSpeed", 5, "Prism: Strobe", "+50% Spin Speed", func(p *Player) { p.DeathRaySpinSpeed += 0.5 })
+				addOpt("DeathRayDmg", 5, "Prism: Intensity", "+1.0x Damage Multiplier", func(p *Player) { p.DeathRayDamageMult += 1.0 })
+			default: // No branch — offer both path starters
+				addOpt("DeathRayDmg", 5, "Death Ray: Intensity", "+2.0x Damage Multiplier", func(p *Player) { p.DeathRayDamageMult += 2.0 })
+				addOpt("DeathRayCount", 5, "Death Ray: Multi-Beam", "+1 Beam", func(p *Player) { p.DeathRayCount++ })
+				addOpt("DeathRayScale", 5, "Death Ray: Escalation", "Damage ramps over duration", func(p *Player) { p.DeathRayScaling += 0.5 })
+			}
+
+		// ── Gravity Field ────────────────────────────────────────────────────
 		case AbilityGravity:
-			addOpt("GravityRadius", 4, "Gravity: Horizon", "+25 Radius", func(p *Player) { p.GravityRadius += 25.0 })
-			addOpt("GravityDmg", -1, "Gravity: Crush", "+5% Player Max HP Damage per second", func(p *Player) { p.GravityDmgPct += 0.05 })
-			addOpt("GravityPassive", 5, "Gravity: Anomaly", "Random gravity zones appear", func(p *Player) {
-				p.GravityAnomalyUnlocked = true
-				if p.GravityPassiveTimer > 5.0 {
-					p.GravityPassiveTimer = 5.0 // Cap start timer if it was high
-				}
-			})
-			addOpt("GravityExplode", 1, "Gravity: Collapse", "Explodes at end", func(p *Player) { p.GravityExplode = true })
+			// Shared
+			addOpt("GravityDmg", -1, "Gravity: Crush", "+5% Max HP as DPS", func(p *Player) { p.GravityDmgPct += 0.05 })
+			addOpt("GravityDuration", 5, "Gravity: Prolonged", "+1.0s Duration", func(p *Player) { p.GravityDuration += 1.0 })
 
+			switch meta.GravityBranch {
+			case BranchGravitySingularity: // Singularity — tight, explosive
+				addOpt("GravityExplode", 1, "Singularity: Collapse", "Final explosion (if not already)", func(p *Player) { p.GravityExplode = true })
+				addOpt("GravityRadius", 3, "Singularity: Compression", "+20 Pull Radius", func(p *Player) { p.GravityRadius += 20.0 })
+				addOpt("GravitySingDmg", 5, "Singularity: Critical Mass", "+8% Max HP as DPS", func(p *Player) { p.GravityDmgPct += 0.08 })
+			case BranchGravityAnomaly: // Anomaly — passive zones
+				addOpt("GravityRadius", 4, "Anomaly: Horizon", "+25 Field Radius", func(p *Player) { p.GravityRadius += 25.0 })
+				addOpt("GravityPassive", 5, "Anomaly: Proliferate", "Passive zones spawn faster", func(p *Player) {
+					p.GravityAnomalyUnlocked = true
+					if p.GravityPassiveTimer > 5.0 {
+						p.GravityPassiveTimer = 5.0
+					}
+				})
+			default:
+				addOpt("GravityRadius", 4, "Gravity: Horizon", "+25 Radius", func(p *Player) { p.GravityRadius += 25.0 })
+				addOpt("GravityExplode", 1, "Gravity: Collapse", "Explodes at end", func(p *Player) { p.GravityExplode = true })
+				addOpt("GravityPassive", 5, "Gravity: Anomaly", "Random gravity zones appear", func(p *Player) {
+					p.GravityAnomalyUnlocked = true
+					if p.GravityPassiveTimer > 5.0 {
+						p.GravityPassiveTimer = 5.0
+					}
+				})
+			}
+
+		// ── Bombardment ──────────────────────────────────────────────────────
 		case AbilityBombard:
+			// Shared
 			addOpt("BombardDmg", 10, "Bombard: Payload", "+1.0x Damage Multiplier", func(p *Player) { p.BombardDmgMult += 1.0 })
-			addOpt("BombardRadius", 7, "Bombard: Blast Radius", "+15 Explosion Radius", func(p *Player) { p.BombardRadius += 15.0 })
-			addOpt("BombardDuration", 10, "Bombard: Carpet", "+1.0s Duration", func(p *Player) { p.BombardDuration += 1.0 })
 
+			switch meta.BombardBranch {
+			case BranchBombardCarpet: // Carpet Bomb — duration and frequency
+				addOpt("BombardDuration", 10, "Carpet Bomb: Relentless", "+1.0s Duration", func(p *Player) { p.BombardDuration += 1.0 })
+				addOpt("BombardRadius", 5, "Carpet Bomb: Shrapnel", "+10 Explosion Radius", func(p *Player) { p.BombardRadius += 10.0 })
+			case BranchBombardSiege: // Siege Strike — massive radius
+				addOpt("BombardRadius", 7, "Siege Strike: Blast Radius", "+20 Explosion Radius", func(p *Player) { p.BombardRadius += 20.0 })
+				addOpt("BombardDuration", 5, "Siege Strike: Prolonged", "+1.0s Duration", func(p *Player) { p.BombardDuration += 1.0 })
+				addOpt("BombardSiegeDmg", 5, "Siege Strike: Overkill", "+1.5x Damage Multiplier", func(p *Player) { p.BombardDmgMult += 1.5 })
+			default:
+				addOpt("BombardRadius", 7, "Bombard: Blast Radius", "+15 Explosion Radius", func(p *Player) { p.BombardRadius += 15.0 })
+				addOpt("BombardDuration", 10, "Bombard: Carpet", "+1.0s Duration", func(p *Player) { p.BombardDuration += 1.0 })
+			}
+
+		// ── Static Discharge ─────────────────────────────────────────────────
 		case AbilityStatic:
+			// Shared
 			addOpt("StaticDmg", -1, "Static: Voltage", "+0.5x Damage Multiplier", func(p *Player) { p.StaticDmgMult += 0.5 })
-			addOpt("StaticShield", 20, "Static: Capacitor", "Consume Shield for +Targets", func(p *Player) { p.StaticShieldCost += 5.0 })
 			addOpt("StaticFree", 10, "Static: Efficiency", "+10% Free Cast Chance", func(p *Player) { p.StaticFreeChance += 0.1 })
-			addOpt("StaticCDR", 7, "Static: Overcharge", "+CDR while Ready", func(p *Player) { p.StaticPassiveCDR += 0.1 })
 
+			switch meta.StaticBranch {
+			case BranchStaticChain: // Chain Lightning — more arcs, CDR synergy
+				addOpt("StaticChain", 5, "Chain Lightning: Conductor", "+0.2x damage on each arc", func(p *Player) { p.StaticDmgMult += 0.2 })
+				addOpt("StaticCDR", 7, "Chain Lightning: Overcharge", "+CDR while Ready", func(p *Player) { p.StaticPassiveCDR += 0.1 })
+			case BranchStaticOverload: // Overload — fewer targets, maximize per-hit damage
+				addOpt("StaticShield", 20, "Overload: Capacitor", "Consume Shield for +Targets", func(p *Player) { p.StaticShieldCost += 5.0 })
+				addOpt("StaticCDR", 5, "Overload: Surge", "+CDR while Ready", func(p *Player) { p.StaticPassiveCDR += 0.15 })
+				addOpt("StaticOverloadDmg", 5, "Overload: Critical Voltage", "+1.0x Damage Multiplier", func(p *Player) { p.StaticDmgMult += 1.0 })
+			default:
+				addOpt("StaticShield", 20, "Static: Capacitor", "Consume Shield for +Targets", func(p *Player) { p.StaticShieldCost += 5.0 })
+				addOpt("StaticCDR", 7, "Static: Overcharge", "+CDR while Ready", func(p *Player) { p.StaticPassiveCDR += 0.1 })
+			}
+
+		// ── Chrono Field ─────────────────────────────────────────────────────
 		case AbilityChrono:
+			// Shared
 			addOpt("ChronoDuration", 5, "Chrono: Dilation", "+1.0s Duration", func(p *Player) { p.ChronoDuration += 1.0 })
-			addOpt("ChronoSlow", 5, "Chrono: Stasis", "+10% Slow Strength", func(p *Player) { p.ChronoBossSlow = float32(math.Max(0.05, float64(p.ChronoBossSlow-0.1))) })
-			addOpt("ChronoDoT", 6, "Chrono: Entropy", "Enemies take DoT in field", func(p *Player) { p.ChronoDoT += 5.0 })
 			addOpt("ChronoPassive", 5, "Chrono: Time Warp", "+5% Passive Slow", func(p *Player) { p.ChronoPassiveSlow += 0.05 })
+
+			switch meta.ChronoBranch {
+			case BranchChronoTimeStop: // Time Stop — maximize the freeze window
+				addOpt("ChronoSlow", 5, "Time Stop: Stasis", "+10% Boss Slow Strength", func(p *Player) {
+					p.ChronoBossSlow = float32(math.Max(0.05, float64(p.ChronoBossSlow-0.1)))
+				})
+				addOpt("ChronoStopDur", 5, "Time Stop: Extended", "+0.5s Duration", func(p *Player) { p.ChronoDuration += 0.5 })
+			case BranchChronoEntropy: // Entropy — DoT payoff during slow
+				addOpt("ChronoDoT", 6, "Entropy: Decay", "+5 DoT per second in field", func(p *Player) { p.ChronoDoT += 5.0 })
+				addOpt("ChronoSlow", 3, "Entropy: Drag", "+5% Boss Slow Strength", func(p *Player) {
+					p.ChronoBossSlow = float32(math.Max(0.05, float64(p.ChronoBossSlow-0.05)))
+				})
+			default:
+				addOpt("ChronoSlow", 5, "Chrono: Stasis", "+10% Slow Strength", func(p *Player) {
+					p.ChronoBossSlow = float32(math.Max(0.05, float64(p.ChronoBossSlow-0.1)))
+				})
+				addOpt("ChronoDoT", 6, "Chrono: Entropy", "Enemies take DoT in field", func(p *Player) { p.ChronoDoT += 5.0 })
+			}
 		}
 	}
 
-	//generalized passives added to list of possible upgrades.
+	// ── Passive module in-run upgrades ────────────────────────────────────────
 	if meta.SatellitesUnlocked {
 		if p.SatelliteCount == 0 {
-			// Base Skill Unlock
 			addOpt("UnlockSat", 1, "Unlock: Satellites", "Gain a permanent orbiting damage orb.", func(p *Player) {
 				p.SatelliteCount = 1
 				p.SatelliteDamage = 5.0
+				// Apply branch mode flags in case player unlocks mid-run
+				if meta.SatellitesBranch == BranchSatSentry {
+					p.SatelliteShooting = true
+					p.SatelliteOverdrive = false
+				} else if meta.SatellitesBranch == BranchSatOverdrive {
+					p.SatelliteOverdrive = true
+					p.SatelliteShooting = false
+				}
 			})
 		} else {
-			// Upgrades
-			addOpt("Satellite", 8, "Satellite Upgrade", fmt.Sprintf("Adds orb (%.0f dmg)", p.SatelliteDamage), func(p *Player) { p.SatelliteCount++; p.SatelliteDamage += 2.0 })
+			// Core upgrade available to both branches
+			addOpt("Satellite", 8, "Satellite Upgrade", fmt.Sprintf("Adds orb (%.0f dmg)", p.SatelliteDamage), func(p *Player) {
+				p.SatelliteCount++
+				p.SatelliteDamage += 2.0
+			})
 
-			if !p.SatelliteShooting {
-				addOpt("SatSentry", 1, "Satellites: Sentry Mode", "Stops orbit, fires at enemies", func(p *Player) {
-					p.SatelliteShooting = true
-				})
+			switch meta.SatellitesBranch {
+			case BranchSatSentry: // Sentry — bullet damage upgrades
+				addOpt("SatSentryDmg", 8, "Sentry: Calibration", "+3 Bullet Damage per Satellite", func(p *Player) { p.SatelliteDamage += 3.0 })
+			case BranchSatOverdrive: // Overdrive — contact damage upgrades
+				addOpt("SatOverdriveDmg", 8, "Overdrive: Supercharge", "+4 Contact Damage per Satellite", func(p *Player) { p.SatelliteDamage += 4.0 })
+			default:
+				// No branch chosen yet — offer a neutral damage upgrade
+				addOpt("SatDmg", 8, "Satellite: Power Cell", "+2 Damage per Satellite", func(p *Player) { p.SatelliteDamage += 2.0 })
 			}
 		}
 	}
 
 	if meta.ShockwaveUnlocked {
 		if !p.ShockwaveUnlocked {
-			// Base Skill Unlock
 			addOpt("UnlockShock", 1, "Unlock: Shockwave", "Periodically release a stunning blast.", func(p *Player) {
 				p.ShockwaveUnlocked = true
-				p.ShockwaveCooldown = 0 // Ready immediately
+				p.ShockwaveCooldown = 0
 			})
 		} else {
-			// Upgrades
-			addOpt("ShockwaveCD", 5, "Shockwave: Faster", "Reduces Cooldown", func(p *Player) {
+			addOpt("ShockwaveCD", 5, "Shockwave: Faster", "Reduces Cooldown by 1s", func(p *Player) {
 				if p.ShockwaveCooldown > 2.0 {
 					p.ShockwaveCooldown -= 1.0
 				}
 			})
+			switch meta.ShockwaveBranch {
+			case BranchShockwaveRepulsor: // Repulsor — range and stun
+				addOpt("RepulsorRange", 3, "Repulsor: Reach", "+30 Shockwave Radius", func(p *Player) { _ = p })    // visual only; radius is constant for now
+				addOpt("RepulsorStun", 4, "Repulsor: Concussive", "+0.5s Stun Duration", func(p *Player) { _ = p }) // placeholder for future ShockwaveStunDuration player field
+			case BranchShockwaveShatter: // Shatter — stack debuff faster
+				addOpt("ShatterDebuff", 5, "Shatter: Fracture", "+10% Armor Debuff per hit", func(p *Player) { _ = p }) // debuff amount set in triggerShockwave; this is an upgrade hook
+			}
 		}
 	}
 
 	if meta.MinesUnlocked {
 		if !p.MinesUnlocked {
-			// Base Skill Unlock
 			addOpt("UnlockMines", 1, "Unlock: Prox. Mines", "Periodically drop explosive mines.", func(p *Player) {
 				p.MinesUnlocked = true
 				p.MineMaxCooldown = MineBaseCD
 				p.MineCount = MinesToPlace
 				p.MinesCooldown = 2.0
+				// Apply Hellfire radius if branch chosen
+				if meta.MinesBranch == BranchMinesHellfire {
+					p.MineHellfireRadius = 100.0
+					p.MineLingerDamage = p.Damage * 0.5
+					p.MineCount = 1
+				} else if meta.MinesBranch == BranchMinesCluster {
+					p.MineCount += 2
+					p.MineMaxCooldown *= 0.75
+				}
 			})
 		} else {
-			// Upgrades
 			addOpt("MinesCD", 5, "Mines: Fabricator", "15% Faster Production", func(p *Player) {
 				p.MineMaxCooldown *= 0.85
 			})
-			addOpt("MinesCount", 5, "Mines: Stockpile", "+1 Mine per batch", func(p *Player) {
-				p.MineCount++
-			})
+			switch meta.MinesBranch {
+			case BranchMinesCluster:
+				addOpt("MinesCount", 5, "Cluster: Stockpile", "+1 Mine per batch", func(p *Player) { p.MineCount++ })
+			case BranchMinesHellfire:
+				addOpt("HellfireRadius", 4, "Hellfire: Inferno", "+20 Blast & Linger Radius", func(p *Player) {
+					p.MineHellfireRadius += 20.0
+				})
+				addOpt("HellfireDPS", 5, "Hellfire: Scorched Earth", "+0.3x Linger DPS", func(p *Player) {
+					p.MineLingerDamage += p.Damage * 0.3
+				})
+			default:
+				addOpt("MinesCount", 5, "Mines: Stockpile", "+1 Mine per batch", func(p *Player) { p.MineCount++ })
+			}
 		}
 	}
 
@@ -1573,6 +1814,7 @@ func updateGame(dt float32) {
 
 	updateAbilityTimers(effectiveDt)
 	updateGravityZones(effectiveDt)
+	updateLingerZones(effectiveDt)
 	handleAbilityInput()
 
 	if state.Player.AutoAbilityEnabled {
@@ -1670,11 +1912,28 @@ func updateGame(dt float32) {
 	effectiveASDelay := state.Player.ASDelay
 	if state.Player.IsRapidFiring || state.Player.PassiveRapidFireTimer > 0 {
 		effectiveASDelay /= state.Player.RapidFireMultiplier
+
+		// Overcharge branch: temporary crit chance + multishot bonus while firing
+		if meta.RapidFireBranch == BranchRapidFireOvercharge {
+			state.Player.CritChance += 0.40
+			state.Player.MultishotChance += 0.50
+		}
 	}
 	state.Player.ASCooldown -= effectiveDt
 	if state.Player.ASCooldown <= 0 {
 		playerShoot()
 		state.Player.ASCooldown = effectiveASDelay
+	}
+	// Remove Overcharge bonus after shot is taken so it doesn't stack permanently
+	if meta.RapidFireBranch == BranchRapidFireOvercharge && (state.Player.IsRapidFiring || state.Player.PassiveRapidFireTimer > 0) {
+		state.Player.CritChance -= 0.40
+		state.Player.MultishotChance -= 0.50
+		if state.Player.CritChance < 0 {
+			state.Player.CritChance = 0
+		}
+		if state.Player.MultishotChance < 0 {
+			state.Player.MultishotChance = 0
+		}
 	}
 
 	moveProjectiles(effectiveDt)

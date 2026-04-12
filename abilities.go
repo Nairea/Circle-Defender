@@ -37,6 +37,18 @@ func triggerAbility(name string) {
 		if !p.IsRapidFiring && p.RapidFireCooldown <= 0 {
 			p.IsRapidFiring = true
 			p.RapidFireTimer = p.RapidFireDuration
+			// Bullet Storm: shorter duration but set a higher mult floor
+			if meta.RapidFireBranch == BranchRapidFireBulletStorm {
+				p.RapidFireTimer = p.RapidFireDuration * 0.6
+				if p.RapidFireMultiplier < 4.0 {
+					p.RapidFireMultiplier = 4.0
+				}
+			}
+			// Overcharge: grant crit+multishot burst for the duration
+			if meta.RapidFireBranch == BranchRapidFireOvercharge {
+				p.CritChance += 0.25
+				p.MultishotChance += 0.5
+			}
 		}
 	case AbilityDeathRay:
 		if !p.IsDeathRayActive && p.DeathRayCooldown <= 0 {
@@ -110,7 +122,6 @@ func triggerAbility(name string) {
 }
 
 func triggerStaticDischarge() {
-	count := 0
 	p := &state.Player
 	mult := getAutoMult()
 
@@ -119,30 +130,147 @@ func triggerStaticDischarge() {
 		free = true
 	}
 
-	//starts with a limit of 5 targets, and if its not free spend some shield to do a zap.
 	targetLimit := 5
-	if !free && p.Overshield >= p.StaticShieldCost {
-		p.Overshield -= p.StaticShieldCost
-		targetLimit += 5
+	dmgMult := p.StaticDmgMult
+
+	switch meta.StaticBranch {
+	case BranchStaticOverload:
+		targetLimit = 3
+		dmgMult *= 3.0
+		if !free && p.Overshield >= p.StaticShieldCost*2 {
+			p.Overshield -= p.StaticShieldCost * 2
+			targetLimit += 2
+		}
+	case BranchStaticChain:
+		targetLimit = 10
+		if !free && p.Overshield >= p.StaticShieldCost {
+			p.Overshield -= p.StaticShieldCost
+			targetLimit += 3
+		}
+	default:
+		if !free && p.Overshield >= p.StaticShieldCost {
+			p.Overshield -= p.StaticShieldCost
+			targetLimit += 5
+		}
 	}
 
-	for _, e := range state.Enemies {
-		if count >= targetLimit {
-			break
-		}
-		dist := float32(math.Sqrt(float64((e.X-state.Player.X)*(e.X-state.Player.X) + (e.Y-state.Player.Y)*(e.Y-state.Player.Y))))
-		if dist < 400 {
-			if !isEnemyProtected(e) {
-				dmg := state.Player.Damage * state.Player.StaticDmgMult * mult
-				e.HP -= dmg
-				spawnFloatingText(e.X, e.Y-e.Size, fmt.Sprintf("%.0f", dmg), rl.SkyBlue)
+	if meta.StaticBranch == BranchStaticChain {
+		// Nearest-neighbour chain: seed from the closest enemy to the player,
+		// then hop to the nearest unhit enemy within 320 units each time.
+		// Each enemy is damaged exactly once — 60% of a full hit — when the
+		// bolt reaches them. Visuals are staggered per hop.
+		const maxJumpDist = float32(320)
+		const hopInterval = float32(0.07)
+		const arcDuration = float32(0.30)
+		dmg := p.Damage * dmgMult * 0.60 * mult
+
+		usedIDs := make(map[int]bool)
+		chain := make([]*Enemy, 0, targetLimit)
+
+		// Find closest enemy to player as the first hop
+		var first *Enemy
+		firstDist := float32(400)
+		for _, e := range state.Enemies {
+			if isEnemyProtected(e) {
+				continue
 			}
+			dx := e.X - p.X
+			dy := e.Y - p.Y
+			d := float32(math.Sqrt(float64(dx*dx + dy*dy)))
+			if d < firstDist {
+				firstDist = d
+				first = e
+			}
+		}
+		if first == nil {
+			return
+		}
+		chain = append(chain, first)
+		usedIDs[first.ID] = true
+
+		// Jump to nearest neighbour of each successive enemy
+		cur := first
+		for len(chain) < targetLimit {
+			var next *Enemy
+			bestDist := maxJumpDist
+			for _, e := range state.Enemies {
+				if usedIDs[e.ID] || isEnemyProtected(e) {
+					continue
+				}
+				dx := e.X - cur.X
+				dy := e.Y - cur.Y
+				d := float32(math.Sqrt(float64(dx*dx + dy*dy)))
+				if d < bestDist {
+					bestDist = d
+					next = e
+				}
+			}
+			if next == nil {
+				break
+			}
+			chain = append(chain, next)
+			usedIDs[next.ID] = true
+			cur = next
+		}
+
+		// Apply damage and spawn staggered arcs
+		// Arc 0: player -> first enemy, no delay
+		chain[0].HP -= dmg
+		spawnFloatingText(chain[0].X, chain[0].Y-chain[0].Size, fmt.Sprintf("%.0f", dmg), rl.SkyBlue)
+		state.LightningArcs = append(state.LightningArcs, &LightningArc{
+			SourceX: p.X, SourceY: p.Y,
+			TargetX: chain[0].X, TargetY: chain[0].Y,
+			VisualTimer: arcDuration,
+			Delay:       0,
+			IsChain:     true,
+			Seed:        rand.Int31(),
+		})
+
+		// Arcs 1..n: enemy -> next enemy, each delayed one more hop
+		for i := 0; i < len(chain)-1; i++ {
+			src := chain[i]
+			dst := chain[i+1]
+			dst.HP -= dmg
+			spawnFloatingText(dst.X, dst.Y-dst.Size, fmt.Sprintf("%.0f", dmg), rl.Blue)
 			state.LightningArcs = append(state.LightningArcs, &LightningArc{
-				SourceX: state.Player.X, SourceY: state.Player.Y,
-				TargetX: e.X, TargetY: e.Y,
+				SourceX: src.X, SourceY: src.Y,
+				TargetX: dst.X, TargetY: dst.Y,
+				VisualTimer: arcDuration,
+				Delay:       hopInterval * float32(i+1),
+				IsChain:     true,
+				Seed:        rand.Int31(),
+			})
+		}
+
+	} else {
+		// Non-chain branches: zap closest enemies directly from player
+		count := 0
+		hitTargets := make([]*Enemy, 0)
+		for _, e := range state.Enemies {
+			if count >= targetLimit {
+				break
+			}
+			dx := e.X - p.X
+			dy := e.Y - p.Y
+			dist := float32(math.Sqrt(float64(dx*dx + dy*dy)))
+			if dist < 400 {
+				if !isEnemyProtected(e) {
+					dmg := p.Damage * dmgMult * mult
+					e.HP -= dmg
+					spawnFloatingText(e.X, e.Y-e.Size, fmt.Sprintf("%.0f", dmg), rl.SkyBlue)
+					hitTargets = append(hitTargets, e)
+				}
+				count++
+			}
+		}
+		for _, e := range hitTargets {
+			state.LightningArcs = append(state.LightningArcs, &LightningArc{
+				SourceX:     p.X,
+				SourceY:     p.Y,
+				TargetX:     e.X,
+				TargetY:     e.Y,
 				VisualTimer: 0.2,
 			})
-			count++
 		}
 	}
 }
@@ -157,16 +285,24 @@ func triggerGravityEffect(dt float32) {
 	centerY := p.GravityY
 	mult := getAutoMult()
 
+	// Singularity: tighter radius, stronger pull
+	pullForce := float32(GravityForce)
+	gravRadius := p.GravityRadius
+	if meta.GravityBranch == BranchGravitySingularity {
+		gravRadius *= 0.65
+		pullForce *= 2.0
+	}
+
 	for _, enemy := range state.Enemies {
 		if !isEnemyProtected(enemy) {
 			deltaX := centerX - enemy.X
 			deltaY := centerY - enemy.Y
 			distSq := (deltaX * deltaX) + (deltaY * deltaY)
 
-			if distSq < p.GravityRadius*p.GravityRadius {
+			if distSq < gravRadius*gravRadius {
 				dist := float32(math.Sqrt(float64(distSq)))
 				if dist > 0 {
-					pullStrength := GravityForce * dt
+					pullStrength := pullForce * dt
 					enemy.X += (deltaX / dist) * pullStrength
 					enemy.Y += (deltaY / dist) * pullStrength
 				}
@@ -179,16 +315,23 @@ func triggerGravityEffect(dt float32) {
 
 	//make go boom.
 	if p.GravityTimer <= dt && p.GravityExplode {
+		// Singularity gets a bigger explosion
+		explodeRadius := p.GravityRadius * 1.5
+		explodeDmg := p.Damage * 10.0 * mult
+		if meta.GravityBranch == BranchGravitySingularity {
+			explodeRadius = gravRadius * 2.5
+			explodeDmg = p.Damage * 20.0 * mult
+		}
 		state.Explosions = append(state.Explosions, &Explosion{
-			X: centerX, Y: centerY, Radius: p.GravityRadius * 1.5,
+			X: centerX, Y: centerY, Radius: explodeRadius,
 			VisualTimer: 0.5, MaxDuration: 0.5,
 		})
 		for _, enemy := range state.Enemies {
 			if !isEnemyProtected(enemy) {
 				deltaX := centerX - enemy.X
 				deltaY := centerY - enemy.Y
-				if deltaX*deltaX+deltaY*deltaY < (p.GravityRadius*1.5)*(p.GravityRadius*1.5) {
-					enemy.HP -= p.Damage * 10.0 * mult
+				if deltaX*deltaX+deltaY*deltaY < explodeRadius*explodeRadius {
+					enemy.HP -= explodeDmg
 				}
 			}
 		}
@@ -199,8 +342,8 @@ func updateGravityZones(dt float32) {
 	p := &state.Player
 	mult := getAutoMult()
 
-	// 1. Spawning Logic (Gated by Perk Unlock)
-	if p.GravityAnomalyUnlocked {
+	// 1. Spawning Logic (Gated by Anomaly branch)
+	if p.GravityAnomalyUnlocked && meta.GravityBranch == BranchGravityAnomaly {
 		p.GravityPassiveTimer -= dt
 		if p.GravityPassiveTimer <= 0 {
 			// Spawn a random Gravity Zone
@@ -263,11 +406,15 @@ func updateGravityZones(dt float32) {
 	state.GravityZones = remainingZones
 }
 
-// a neat lil knockback that stuns enemies. meant to buy time for damaged focused builds
-// and will later update to do thorns damage for tanky builds.
+// a neat lil knockback that stuns enemies. meant to buy time for damaged focused builds.
+// Repulsor branch: bigger knockback + longer stun.
+// Shatter branch: strips enemy armor, weaker knockback.
 func triggerShockwave() {
 	p := &state.Player
 	p.ShockwaveCooldown = ShockwaveBaseCD
+	if meta.ShockwaveBranch == BranchShockwaveRepulsor {
+		p.ShockwaveCooldown = ShockwaveBaseCD * 0.7 // shorter CD
+	}
 	p.ShockwaveVisualTimer = 0.5
 
 	for _, enemy := range state.Enemies {
@@ -277,20 +424,67 @@ func triggerShockwave() {
 			dist := float32(math.Sqrt(float64(deltaX*deltaX + deltaY*deltaY)))
 
 			if dist < ShockwaveBaseRadius {
-				enemy.StunTimer = ShockwaveStunDuration
+				stunDur := float32(ShockwaveStunDuration)
+				knockForce := float32(ShockwaveBaseForce)
+
+				switch meta.ShockwaveBranch {
+				case BranchShockwaveRepulsor:
+					stunDur = ShockwaveStunDuration * 2.0
+					knockForce = ShockwaveBaseForce * 2.0
+				case BranchShockwaveShatter:
+					stunDur = ShockwaveStunDuration * 0.4
+					knockForce = ShockwaveBaseForce * 0.4
+					// Apply armor debuff — tracked per enemy ID on the player
+					if p.ShatterDebuffs == nil {
+						p.ShatterDebuffs = make(map[int]float32)
+					}
+					current := p.ShatterDebuffs[enemy.ID]
+					if current < ShatterMaxReduction {
+						p.ShatterDebuffs[enemy.ID] = current + ShatterArmorReduction
+						if p.ShatterDebuffs[enemy.ID] > ShatterMaxReduction {
+							p.ShatterDebuffs[enemy.ID] = ShatterMaxReduction
+						}
+					}
+				}
+
+				enemy.StunTimer = stunDur
 				enemy.KnockbackTimer = ShockwaveSlideDuration
 
 				if dist > 0 {
-					speed := ShockwaveBaseForce / ShockwaveSlideDuration
+					speed := knockForce / ShockwaveSlideDuration
 					enemy.KnockbackVelX = (deltaX / dist) * float32(speed)
 					enemy.KnockbackVelY = (deltaY / dist) * float32(speed)
 				} else {
-					enemy.KnockbackVelX = float32(ShockwaveBaseForce / ShockwaveSlideDuration)
+					enemy.KnockbackVelX = float32(knockForce / ShockwaveSlideDuration)
 					enemy.KnockbackVelY = 0
 				}
 			}
 		}
 	}
+}
+
+// updateLingerZones ticks Hellfire mine fire zones, dealing DPS to enemies inside.
+func updateLingerZones(dt float32) {
+	mult := getAutoMult()
+	var remaining []*LingerZone
+	for _, zone := range state.LingerZones {
+		zone.Duration -= dt
+		if zone.Duration > 0 {
+			for _, enemy := range state.Enemies {
+				if !isEnemyProtected(enemy) {
+					dx := enemy.X - zone.X
+					dy := enemy.Y - zone.Y
+					if dx*dx+dy*dy < zone.Radius*zone.Radius {
+						dmg := zone.DPS * mult * dt
+						enemy.HP -= dmg
+						accumulateDamage(enemy, "Hellfire", dmg)
+					}
+				}
+			}
+			remaining = append(remaining, zone)
+		}
+	}
+	state.LingerZones = remaining
 }
 
 func updateAbilityTimers(dt float32) {
@@ -405,6 +599,17 @@ func updateAbilityTimers(dt float32) {
 				p.IsRapidFiring = false
 				p.RapidFireTimer = 0.0
 				p.RapidFireCooldown = RapidFireBaseCD / (1.0 + p.CooldownRate)
+				// Remove Overcharge bonuses
+				if meta.RapidFireBranch == BranchRapidFireOvercharge {
+					p.CritChance -= 0.25
+					if p.CritChance < 0 {
+						p.CritChance = 0
+					}
+					p.MultishotChance -= 0.5
+					if p.MultishotChance < 0 {
+						p.MultishotChance = 0
+					}
+				}
 			}
 		}
 	}
@@ -462,6 +667,7 @@ func updateAbilityTimers(dt float32) {
 									state.Player.XP += xp
 									spawnFloatingText(e.X, e.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
 									dropResearchPoint(e.X, e.Y, e.IsBoss)
+									enemyDeathBurst(e)
 									if e.Type == EnemyDivider {
 										spawnFragments(e.X, e.Y, state.Wave)
 									}
@@ -568,6 +774,7 @@ func updateAbilityTimers(dt float32) {
 					}
 					if index != -1 {
 						dropResearchPoint(target.X, target.Y, target.IsBoss)
+						enemyDeathBurst(target)
 						if target.Type == EnemyDivider {
 							spawnFragments(target.X, target.Y, state.Wave)
 						}
@@ -605,16 +812,32 @@ func updateAbilityTimers(dt float32) {
 		if p.BombardNextSpawn <= 0 {
 			rangeDist := float32(450.0)
 
+			// Carpet Bomb: faster, smaller radius
+			// Siege Strike: slower, much bigger radius
+			spawnRate := BombardSpawnRate
+			bombRadius := p.BombardRadius
+			switch meta.BombardBranch {
+			case BranchBombardCarpet:
+				spawnRate = BombardSpawnRate * 0.4
+				bombRadius = p.BombardRadius * 0.55
+			case BranchBombardSiege:
+				spawnRate = BombardSpawnRate * 2.5
+				bombRadius = p.BombardRadius * 2.2
+			}
+
 			//keeps a random distribution of LA BOMBAS left or right of player. or up/down.
 			targetX := p.X + (rand.Float32()*2.0-1.0)*rangeDist
 			targetY := p.Y + (rand.Float32()*2.0-1.0)*rangeDist
 
 			state.Explosions = append(state.Explosions, &Explosion{
-				X: targetX, Y: targetY, Radius: p.BombardRadius,
+				X: targetX, Y: targetY, Radius: bombRadius,
 				VisualTimer: 0.5, MaxDuration: 0.5,
 			})
 
 			dmg := p.Damage * p.BombardDmgMult * mult
+			if meta.BombardBranch == BranchBombardSiege {
+				dmg *= 2.5
+			}
 
 			// Check collision with all enemies
 			for _, enm := range state.Enemies {
@@ -622,14 +845,14 @@ func updateAbilityTimers(dt float32) {
 					dx := enm.X - targetX
 					dy := enm.Y - targetY
 					distSq := dx*dx + dy*dy
-					if distSq < p.BombardRadius*p.BombardRadius {
+					if distSq < bombRadius*bombRadius {
 						enm.HP -= dmg
 						spawnFloatingText(enm.X, enm.Y-enm.Size, fmt.Sprintf("%.0f", dmg), rl.Orange)
 					}
 				}
 			}
 
-			p.BombardNextSpawn = BombardSpawnRate
+			p.BombardNextSpawn = float32(spawnRate)
 		}
 		if p.BombardmentTimer <= 0 {
 			p.IsBombardmentActive = false

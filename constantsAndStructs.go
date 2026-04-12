@@ -67,32 +67,32 @@ const (
 
 	//Some enemy stats.
 	//dodging type
-	DodgerBaseSpeed     = 160
+	DodgerBaseSpeed     = 32
 	DodgerDodgeDist     = 80
 	DodgerDodgeCD       = 2
 	DodgerDetectionRad  = 100
 	DodgerSlideDuration = 0.25
 	//ranged shooter
-	RangerBaseSpeed = 90
+	RangerBaseSpeed = 18
 	RangerStopDist  = 250
 	RangerShootCD   = 2.5
 	//Shielder
-	ShielderBaseSpeed = 70
+	ShielderBaseSpeed = 14
 	ShielderRadius    = 180.0
 	//Boss enemy things.
 	BossScaling = 10
 	BossSize    = 30
 	//Phaser
-	PhaserBaseSpeed = 110
+	PhaserBaseSpeed = 22
 	PhaserPhaseCD   = 3.0
 	PhaserPhaseDur  = 2.0
 	//Reflector
-	ReflectorBaseSpeed = 60
+	ReflectorBaseSpeed = 12
 	ReflectorChance    = 0.60
 	//Divider
-	DividerBaseSpeed = 50
+	DividerBaseSpeed = 10
 	//Berserker
-	BerserkerBaseSpeed = 80
+	BerserkerBaseSpeed = 16
 
 	//Some ability constants. Mostly CD's. but also gravity pull rate and the bombardment rate.
 	RapidFireBaseCD  = 15
@@ -111,6 +111,54 @@ const (
 	AbilityBombard   = "Bombardment"
 	AbilityStatic    = "Static Discharge"
 	AbilityChrono    = "Chrono Field"
+
+	// Talent branch choices. Empty string = not yet chosen.
+	// Active ability branches
+	BranchRapidFireBulletStorm = "BulletStorm" // shorter, higher multiplier
+	BranchRapidFireOvercharge  = "Overcharge"  // lower mult, grants crit+multishot
+
+	BranchDeathRayAnnihilator = "Annihilator" // focused single beam, ramps
+	BranchDeathRayPrism       = "Prism"       // more beams, spin mode
+
+	BranchGravitySingularity = "Singularity" // tight pull + big final explosion
+	BranchGravityAnomaly     = "Anomaly"     // wide + passive zone spawning
+
+	BranchBombardCarpet = "CarpetBomb"  // many small fast explosions
+	BranchBombardSiege  = "SiegeStrike" // few large slow explosions
+
+	BranchStaticChain    = "ChainLightning" // arcs to additional targets
+	BranchStaticOverload = "Overload"       // fewer targets, massive damage, eats shield
+
+	BranchChronoTimeStop = "TimeStop" // full freeze, no DoT
+	BranchChronoEntropy  = "Entropy"  // partial slow + stacking DoT
+
+	// Passive branches
+	BranchMinesCluster  = "ClusterMines"  // more mines, smaller, faster refresh
+	BranchMinesHellfire = "HellfireMines" // fewer mines, massive radius, lingering fire
+
+	BranchSatSentry    = "SentryMode" // stationary, shoots bullets, no contact dmg
+	BranchSatOverdrive = "Overdrive"  // fast orbit, contact damage only
+
+	BranchShockwaveRepulsor = "Repulsor" // big knockback, long stun, short CD
+	BranchShockwaveShatter  = "Shatter"  // armor debuff on hit, weaker knockback
+
+	// Branch RP costs (paid on top of the base unlock cost, one per ability)
+	BranchCostRapidFire  = 50
+	BranchCostDeathRay   = 75
+	BranchCostGravity    = 100
+	BranchCostBombard    = 100
+	BranchCostStatic     = 90
+	BranchCostChrono     = 125
+	BranchCostMines      = 75
+	BranchCostSatellites = 75
+	BranchCostShockwave  = 75
+
+	// Shatter debuff constants
+	ShatterArmorReduction = 0.05 // armor reduction per shockwave hit
+	ShatterMaxReduction   = 0.30 // cap on how much armor can be stripped
+
+	// Overdrive satellite speed multiplier
+	OverdriveSatSpeedMult = 4.0
 
 	//explosive shot size.
 	VolatileRadius = 150
@@ -212,6 +260,17 @@ type MetaProgression struct {
 	SatellitesUnlocked      bool
 	ShockwaveUnlocked       bool
 
+	// Talent branch selections (empty = not chosen yet)
+	RapidFireBranch  string
+	DeathRayBranch   string
+	GravityBranch    string
+	BombardBranch    string
+	StaticBranch     string
+	ChronoBranch     string
+	MinesBranch      string
+	SatellitesBranch string
+	ShockwaveBranch  string
+
 	//Speed Unlocks.
 	Speed3xUnlocked       bool
 	OpeningSprintUnlocked bool
@@ -249,6 +308,14 @@ type GravityZone struct {
 	Duration  float32
 	PullForce float32
 	Damage    float32 // Damage per second
+}
+
+// LingerZone is a persistent fire/damage area left by Hellfire mines.
+type LingerZone struct {
+	X, Y     float32
+	Radius   float32
+	Duration float32
+	DPS      float32
 }
 
 // Player struct, who'd have thought.
@@ -296,11 +363,15 @@ type Player struct {
 	SatelliteDamage    float32
 	SatelliteAngle     float32
 	SatelliteShooting  bool
+	SatelliteOverdrive bool // Overdrive branch: fast orbit, contact damage only
 	SatelliteFireTimer float32
 
 	ShockwaveUnlocked    bool
 	ShockwaveCooldown    float32
 	ShockwaveVisualTimer float32
+
+	// Shatter branch: tracks armor reduction applied to each enemy (by ID)
+	ShatterDebuffs map[int]float32
 
 	MinesUnlocked        bool
 	MinePlacementCounter int
@@ -308,6 +379,8 @@ type Player struct {
 	MinesCooldown        float32
 	MineMaxCooldown      float32
 	MineCount            int
+	MineHellfireRadius   float32 // Hellfire branch: large explosion + linger radius
+	MineLingerDamage     float32 // Hellfire branch: damage per second in linger zone
 
 	FrenzyChance          float32
 	FrenzyDuration        float32
@@ -433,11 +506,12 @@ type Projectile struct {
 }
 
 type Mine struct {
-	X, Y     float32
-	Radius   float32
-	Damage   float32
-	IsActive bool
-	Duration float32
+	X, Y       float32
+	Radius     float32
+	Damage     float32
+	IsActive   bool
+	Duration   float32
+	FireDamage float32 // Hellfire branch: damage per second lingering fire zone
 }
 
 type Explosion struct {
@@ -451,6 +525,23 @@ type LightningArc struct {
 	SourceX, SourceY float32
 	TargetX, TargetY float32
 	VisualTimer      float32
+	Delay            float32 // seconds before this arc becomes visible
+	IsChain          bool    // true = chain arc drawn with jagged segments
+	Seed             int32   // per-arc random seed for stable jitter
+}
+
+// DeathParticle is a small flying fragment spawned when an enemy or the player dies.
+// It moves outward from the death position, shrinks, and fades over its lifetime.
+type DeathParticle struct {
+	X, Y        float32
+	VelX, VelY  float32
+	Size        float32
+	Rotation    float32
+	RotSpeed    float32
+	Timer       float32
+	MaxDuration float32
+	Color       rl.Color
+	Sides       int32 // polygon sides matching the dead enemy's shape
 }
 
 type LevelOption struct {
@@ -473,19 +564,21 @@ type FloatingText struct {
 }
 
 type GameState struct {
-	CurrentScreen int
-	Player        Player
-	Enemies       []*Enemy
-	Projectiles   []*Projectile
-	Mines         []*Mine
-	Explosions    []*Explosion
-	LightningArcs []*LightningArc
-	GravityZones  []*GravityZone
-	FloatingTexts []*FloatingText
-	Wave          int
-	WaveTimer     float32
-	SpawnTimer    float32
-	SpawnInterval float32
+	CurrentScreen  int
+	Player         Player
+	Enemies        []*Enemy
+	Projectiles    []*Projectile
+	Mines          []*Mine
+	Explosions     []*Explosion
+	LightningArcs  []*LightningArc
+	GravityZones   []*GravityZone
+	LingerZones    []*LingerZone
+	FloatingTexts  []*FloatingText
+	DeathParticles []*DeathParticle
+	Wave           int
+	WaveTimer      float32
+	SpawnTimer     float32
+	SpawnInterval  float32
 
 	//track runtime in seconds
 	RunTime float32
