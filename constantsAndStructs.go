@@ -33,6 +33,19 @@ const (
 	ItemRing    = 2
 	ItemTrinket = 3
 
+	// Item rarity tiers. Colors follow standard ARPG convention.
+	RarityNormal    = 0 // White  — 1 stat
+	RarityUncommon  = 1 // Green  — 2 stats
+	RarityRare      = 2 // Blue   — 3 stats
+	RarityEpic      = 3 // Purple — 3 stats + chance at unique modifier
+	RarityLegendary = 4 // Yellow — 3 stats + high chance at unique modifier
+	RaritySet       = 5 // Teal   — set items; bonuses activate at 2/4 equipped
+
+	// RP cost thresholds — kept for minimum-investment enforcement in buyItem.
+	// Rarity distribution is now a continuous bell curve; these are no longer
+	// used to gate individual tiers.
+	FabCostMinimum = 100
+
 	//Inventory tab flags.
 	TabAll     = 0
 	TabWeapon  = 1
@@ -44,6 +57,7 @@ const (
 	SortDefault = 0
 	SortValue   = 1
 	SortType    = 2
+	SortRarity  = 3
 
 	//Enemy type flag.
 	EnemyStandard  = 0
@@ -219,7 +233,7 @@ const (
 	DamageAccumInterval = 0.1  // seconds between DoT damage number flushes
 
 	// Delay between player death and game over screen appearing.
-	PlayerDeathDelay = 1.2
+	PlayerDeathDelay = 4.0
 )
 
 // enemy color globals
@@ -306,11 +320,39 @@ type ItemStat struct {
 // gave it a description line for possible
 // fun flavor text later.
 type Item struct {
-	Name         string
-	Type         int
-	Stats        []ItemStat
-	Description  string
-	SalvageValue int
+	Name           string
+	Type           int
+	Rarity         int // RarityNormal … RaritySet
+	Stats          []ItemStat
+	Description    string
+	SalvageValue   int
+	UniqueModifier string // non-empty on epic/legendary rolls; e.g. "LifeOnHit", "ExplosiveShots"
+	SetID          string // non-empty for set items; matches a key in SetRegistry
+}
+
+// SetDefinition describes a named gear set and its bonus thresholds.
+// Bonuses are applied in CheckSetBonuses whenever equipped items change.
+// The actual Effect funcs are left as stubs for now — fill them in once
+// you have concrete ideas for what each set should do.
+type SetDefinition struct {
+	Name    string
+	Items   []string        // item Names that belong to this set
+	Bonus2  func(p *Player) `json:"-"` // bonus when 2 set pieces are equipped
+	Bonus4  func(p *Player) `json:"-"` // bonus when all 4 set pieces are equipped
+	Active2 bool            // runtime: is the 2-piece bonus currently applied?
+	Active4 bool            // runtime: is the 4-piece bonus currently applied?
+}
+
+// SetRegistry holds all defined gear sets keyed by SetID.
+// Add new sets here; the equip/unequip logic reads from this map.
+var SetRegistry = map[string]*SetDefinition{
+	// ── Example set (stub) ────────────────────────────────────────────────
+	// "PhantomProtocol": {
+	//     Name:  "Phantom Protocol",
+	//     Items: []string{"Phantom Blade", "Phantom Veil", "Phantom Band", "Phantom Core"},
+	//     Bonus2: func(p *Player) { /* +15% crit chance */ },
+	//     Bonus4: func(p *Player) { /* shots phase through enemies */ },
+	// },
 }
 
 type GravityZone struct {
@@ -331,16 +373,16 @@ type LingerZone struct {
 
 // Player struct, who'd have thought.
 type Player struct {
-	Radius             float32
-	X, Y               float32
-	HP                 float32
-	MaxHP              float32
-	Overshield         float32
-	Level              int
-	XP                 float32
-	NextLvlXP          float32
-	Points             int
-	AutoAbilityEnabled bool
+	Radius        float32
+	X, Y          float32
+	HP            float32
+	MaxHP         float32
+	Overshield    float32
+	Level         int
+	XP            float32
+	NextLvlXP     float32
+	Points        int
+	AutoAbilities [4]bool // per ability slot; true = fires automatically when off cooldown
 	//houses number of times upgrades taken.
 	UpgradeCounts       map[string]int
 	Damage              float32
@@ -397,6 +439,16 @@ type Player struct {
 	FrenzyDuration        float32
 	PassiveRapidFireTimer float32
 	FrenzyCooldown        float32
+
+	// Unique modifier effect fields (set by RebuildEventSubscriptions)
+	LifeOnHitAmount     float32 // flat HP restored per hit (LifeOnHit modifier)
+	ExplosiveModChance  float32 // chance on basic shot hit to explode (ExplosiveShots modifier)
+	VampireLeechPct     float32 // fraction of damage dealt returned as HP (VampireRounds)
+	StaticBurstChance   float32 // chance on hit to arc a mini lightning bolt (StaticBurst)
+	SwiftReloadKillCDR  float32 // CDR applied per kill (SwiftReload)
+	OverclockHasteBonus float32 // temporary haste bonus while active (Overclock)
+	OverclockHasteTimer float32 // countdown for overclock burst
+	LuckyDropBonus      float32 // additive bonus to RP drop chance (LuckyDrop)
 
 	Inventory     []*Item
 	EquippedItems [4]*Item
@@ -530,6 +582,7 @@ type Explosion struct {
 	Radius      float32
 	VisualTimer float32
 	MaxDuration float32
+	IsDud       bool // true = mine timed out (fizzle), false = triggered explosion
 }
 
 type LightningArc struct {

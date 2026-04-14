@@ -180,8 +180,8 @@ func initBasePlayer() Player {
 		Damage:    5.0,
 		Range:     BaseRange,
 
-		AutoAbilityEnabled: false,
-		UpgradeCounts:      make(map[string]int),
+		AutoAbilities: [4]bool{false, false, false, false},
+		UpgradeCounts: make(map[string]int),
 
 		BaseASDelay:    0.5,
 		ASDelay:        0.5,

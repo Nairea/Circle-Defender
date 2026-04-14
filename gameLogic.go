@@ -79,14 +79,160 @@ func isStatStatic(statType string) bool {
 	}
 }
 
+// ── Rarity helpers ────────────────────────────────────────────────────────────
+
+// rarityWeights computes a normalized probability for each rarity tier at a
+// given RP investment. All five weights always sum to 1.0, so every tier is
+// possible at any investment — the distribution just shifts toward rarer results.
+//
+// Each tier's raw weight is a log-normal bell centered at its "peak" RP:
+//
+//	w = exp( -( ln(rp) - ln(peak) )^2 / (2 * sigma^2) )
+//
+// Peaks and sigmas are tuned to match these approximate targets:
+//
+//	  1k RP →  Normal 55%  Uncommon 37%  Rare  8%   Epic  0.3%  Leg  0.0%
+//	 10k RP →  Normal  3%  Uncommon 18%  Rare 45%   Epic 28%    Leg  6%
+//	 25k RP →  Normal  0%  Uncommon  4%  Rare 23%   Epic 51%    Leg 22%
+//	100k RP →  Normal  0%  Uncommon  0%  Rare  2%   Epic 34%    Leg 64%
+//
+// Returns [normal, uncommon, rare, epic, legendary] weights.
+func rarityWeights(amount int) [5]float64 {
+	type tierDef struct{ peak, sigma float64 }
+	tiers := [5]tierDef{
+		{800, 1.1},    // Normal    — peaks around 800 RP
+		{2500, 1.0},   // Uncommon  — peaks around 2500 RP
+		{7000, 1.0},   // Rare      — peaks around 7000 RP
+		{30000, 1.05}, // Epic      — peaks around 30000 RP
+		{120000, 1.2}, // Legendary — peaks around 120000 RP (always climbing)
+	}
+
+	rp := math.Max(float64(amount), 1.0)
+	lr := math.Log(rp)
+
+	var ws [5]float64
+	var total float64
+	for i, t := range tiers {
+		d := lr - math.Log(t.peak)
+		ws[i] = math.Exp(-(d * d) / (2.0 * t.sigma * t.sigma))
+		total += ws[i]
+	}
+	for i := range ws {
+		ws[i] /= total
+	}
+	return ws
+}
+
+// rollRarity picks a rarity tier using the normalized bell-curve distribution.
+// All tiers are always possible; higher investment shifts the curve toward rarer results.
+// Legendary results have a 15% chance to become Set items instead.
+func rollRarity(amount int) int {
+	ws := rarityWeights(amount)
+	r := float64(rand.Float32())
+
+	tiers := [5]int{RarityNormal, RarityUncommon, RarityRare, RarityEpic, RarityLegendary}
+	cumulative := 0.0
+	for i, tier := range tiers {
+		cumulative += ws[i]
+		if r < cumulative {
+			if tier == RarityLegendary && rand.Float32() < 0.15 {
+				return RaritySet
+			}
+			return tier
+		}
+	}
+	return RarityLegendary // floating-point safety fallback
+}
+
+// rarityStatCount returns how many stats an item of given rarity should have.
+func rarityStatCount(rarity int) int {
+	switch rarity {
+	case RarityNormal:
+		return 1
+	case RarityUncommon:
+		return 2
+	default: // Rare, Epic, Legendary, Set all get 3
+		return 3
+	}
+}
+
+// UniqueModifierPool lists all possible unique modifier IDs.
+// Each entry is a short key used to drive the actual effect in applyStat
+// and displayed in the UI with a human-readable label.
+var UniqueModifierPool = []string{
+	"LifeOnHit",      // Regain a small amount of HP on each hit
+	"ExplosiveShots", // Shots explode on impact for bonus AoE
+	"VampireRounds",  // Small % of damage dealt returned as HP
+	"StaticBurst",    // Chance on hit to release a mini static arc
+	"ShieldSpike",    // Reflects a flat amount of damage back to attackers
+	"SwiftReload",    // Reduces cooldowns slightly on kill
+	"Overclock",      // Brief haste burst after using an ability
+	"LuckyDrop",      // Slightly increased RP drop chance on hit
+}
+
+// uniqueModifierLabel returns a display string for a modifier key.
+func uniqueModifierLabel(key string) string {
+	switch key {
+	case "LifeOnHit":
+		return "Life on Hit"
+	case "ExplosiveShots":
+		return "Explosive Shots"
+	case "VampireRounds":
+		return "Lifesteal"
+	case "StaticBurst":
+		return "Static Burst"
+	case "ShieldSpike":
+		return "Shield Spike"
+	case "SwiftReload":
+		return "Swift Reload"
+	case "Overclock":
+		return "Overclock"
+	case "LuckyDrop":
+		return "Lucky Drop"
+	default:
+		return key
+	}
+}
+
+func rollUniqueModifier(rarity int) string {
+	var chance float32
+	switch rarity {
+	case RarityEpic:
+		chance = 0.30
+	case RarityLegendary:
+		chance = 0.75
+	default:
+		return ""
+	}
+	if rand.Float32() < chance {
+		return UniqueModifierPool[rand.Intn(len(UniqueModifierPool))]
+	}
+	return ""
+}
+
+// RarityOdds returns display-friendly percentage odds for each tier.
+// Mirrors rollRarity exactly. norm+unc+rare+epic+leg always sum to 100%.
+// Set is shown separately as 15% of the legendary weight.
+func RarityOdds(amount int) (norm, unc, rare, epic, leg, set float32) {
+	ws := rarityWeights(amount)
+	norm = float32(ws[0])
+	unc = float32(ws[1])
+	rare = float32(ws[2])
+	epic = float32(ws[3])
+	leg = float32(ws[4])
+	set = leg * 0.15
+	return
+}
+
+// ── Fabrication ───────────────────────────────────────────────────────────────
+
 func buyItem(amount int, targetType int) {
 	if meta.ResearchPoints < amount || amount < 100 {
 		return
 	}
-	//Pay cost.
 	meta.ResearchPoints -= amount
 
-	//If item in templates is valid, add it to valid items
+	// Filter templates by requested type.
 	validItems := make([]Item, 0)
 	if targetType == -1 {
 		validItems = LootTemplates
@@ -97,60 +243,36 @@ func buyItem(amount int, targetType int) {
 			}
 		}
 	}
-
 	if len(validItems) == 0 {
 		validItems = LootTemplates
 	}
 
-	//grab a random item from the list. this will need to be reworked
-	//when I introduce dynamic naming/item creation.
 	template := validItems[rand.Intn(len(validItems))]
 
-	//Set salvage value for when you roll bad items and need to recoup points.
+	// Salvage value scales with investment but is always positive.
 	salvageVal := amount / 5
-
-	//im not sure if it'll ever happen, but prevent salvaging an item from COSTING you points.
-	//that would be so high key dumb its insane. also props to anyone who makes it bug that way.
 	if salvageVal < 0 {
 		salvageVal = 0
 	}
 
-	//Create the item using template.
+	// Roll rarity first — this drives how many stats and whether there's a modifier.
+	rarity := rollRarity(amount)
+
+	// Stat power still scales with RP investment (diminishing returns).
+	// Higher rarity items get a small bonus multiplier on top as a feel-good reward.
+	scaleMult := float32(math.Pow(float64(amount)/100.0, 0.5))
+	rarityMult := float32(1.0) + float32(rarity)*0.08 // +8% per rarity tier
+
 	newItem := &Item{
 		Name:         template.Name,
 		Type:         template.Type,
+		Rarity:       rarity,
 		Description:  template.Description,
 		Stats:        make([]ItemStat, 0),
 		SalvageValue: salvageVal,
 	}
 
-	//Scale the stats based on investment. should have a diminishing return. math needs to be polished here
-	//later im sure, but it works fine for now...in fact #TODO flag for later.
-	scaleMult := float32(math.Pow(float64(amount)/100.0, 0.5))
-
-	//randomize it a little to give players a reason to grind and find "perfect" items.
-	//dopamine go Brrrr.
-	variance := (0.9 + rand.Float32()*0.3) * scaleMult
-	primary := template.Stats[0]
-	val := primary.BaseValue * variance
-	newItem.Stats = append(newItem.Stats, ItemStat{
-		StatType:  primary.StatType,
-		BaseValue: val,
-		Value:     val,
-		Growth:    val,
-	})
-
-	extraStats := 0
-	if amount > 100 && rand.Float32() < float32(amount-100)/400.0 {
-		extraStats++
-	}
-	if amount > 500 && rand.Float32() < float32(amount-500)/1000.0 {
-		extraStats++
-	}
-	if amount > 2000 && rand.Float32() < float32(amount-2000)/3000.0 {
-		extraStats++
-	}
-
+	// Build the stat pool for this item type.
 	var pool []ItemStats
 	switch newItem.Type {
 	case ItemWeapon:
@@ -165,19 +287,30 @@ func buyItem(amount int, targetType int) {
 		pool = WeaponStatPool
 	}
 
+	numStats := rarityStatCount(rarity)
 	usedTypes := make(map[string]bool)
-	usedTypes[primary.StatType] = true
 
-	for i := 0; i < extraStats; i++ {
+	// First stat always comes from the template so the item feels coherent.
+	primary := template.Stats[0]
+	usedTypes[primary.StatType] = true
+	variance := (0.9 + rand.Float32()*0.2) * scaleMult * rarityMult
+	val := primary.BaseValue * variance
+	newItem.Stats = append(newItem.Stats, ItemStat{
+		StatType:  primary.StatType,
+		BaseValue: val,
+		Value:     val,
+		Growth:    val,
+	})
+
+	// Additional stats are drawn randomly from the pool (no duplicates).
+	for i := 1; i < numStats; i++ {
 		randStat := pool[rand.Intn(len(pool))]
-		attempts := 0
-		for usedTypes[randStat.Type] && attempts < 10 {
+		for attempts := 0; usedTypes[randStat.Type] && attempts < 10; attempts++ {
 			randStat = pool[rand.Intn(len(pool))]
-			attempts++
 		}
 		usedTypes[randStat.Type] = true
 
-		variance = (0.8 + rand.Float32()*0.4) * scaleMult
+		variance = (0.8 + rand.Float32()*0.4) * scaleMult * rarityMult
 		val = randStat.Base * variance
 		newItem.Stats = append(newItem.Stats, ItemStat{
 			StatType:  randStat.Type,
@@ -185,6 +318,16 @@ func buyItem(amount int, targetType int) {
 			Value:     val,
 			Growth:    val,
 		})
+	}
+
+	// Roll for unique modifier on epic and legendary items.
+	newItem.UniqueModifier = rollUniqueModifier(rarity)
+
+	// Set items always carry a SetID.  For now set items come from the normal
+	// template pool but are flagged; actual named sets live in SetRegistry.
+	// When real set templates exist, assign their SetID here instead.
+	if rarity == RaritySet {
+		newItem.SetID = "placeholder_set" // replace with real set logic when sets are designed
 	}
 
 	state.Player.Inventory = append(state.Player.Inventory, newItem)
@@ -216,6 +359,11 @@ func equipItem(p *Player, item *Item) {
 	for _, stat := range item.Stats {
 		applyStat(p, stat, true)
 	}
+	CheckSetBonuses(p)
+	// Rebuild event subscriptions mid-run so new modifier effects take effect immediately.
+	if state.CurrentScreen == ScreenGame {
+		RebuildEventSubscriptions(p)
+	}
 }
 
 func unequipItem(p *Player, item *Item) {
@@ -223,6 +371,10 @@ func unequipItem(p *Player, item *Item) {
 		p.EquippedItems[item.Type] = nil
 		for _, stat := range item.Stats {
 			applyStat(p, stat, false)
+		}
+		CheckSetBonuses(p)
+		if state.CurrentScreen == ScreenGame {
+			RebuildEventSubscriptions(p)
 		}
 	}
 }
@@ -254,44 +406,60 @@ func applyStat(p *Player, stat ItemStat, adding bool) {
 		val = -val
 	}
 
-	//more switch case cause its legible compared to endless if/else blocks.
+	clampZero := func(f *float32) {
+		if *f < 0 {
+			*f = 0
+		}
+	}
+
 	switch stat.StatType {
 	case "Damage":
 		p.Damage += val
 	case "Armor":
 		p.Armor += val
+		clampZero(&p.Armor)
 	case "MaxHP":
 		p.MaxHP += val
 		p.HP += val
 	case "Regen":
 		p.RegenRate += val
+		clampZero(&p.RegenRate)
 	case "RPGain":
 		p.RPRate += val
 	case "XPGain":
 		p.XPRate += val
 	case "Explosive":
 		p.ExplosiveShotChance += val
+		clampZero(&p.ExplosiveShotChance)
 	case "Haste":
 		p.Haste += val
+		clampZero(&p.Haste)
 		recalculateAttackSpeed(p)
 	case "CritChance":
 		p.CritChance += val
+		clampZero(&p.CritChance)
 	case "CritMult":
 		p.CritMultiplier += val
 	case "DmgDist":
 		p.DamagePerMeter += val
+		clampZero(&p.DamagePerMeter)
 	case "PureDef":
 		p.PureDefense += val
+		clampZero(&p.PureDefense)
 	case "ShieldRate":
 		p.OvershieldRate += val
+		clampZero(&p.OvershieldRate)
 	case "CDR":
 		state.Player.CooldownRate += val
+		clampZero(&state.Player.CooldownRate)
 	case "FreeUp":
 		p.FreeUpgradeChance += val
+		clampZero(&p.FreeUpgradeChance)
 	case "Range":
 		p.Range += val
 	case "Thorns":
 		p.ThornsDamage += val
+		clampZero(&p.ThornsDamage)
 	}
 }
 
@@ -299,6 +467,45 @@ func applyStat(p *Player, stat ItemStat, adding bool) {
 func applyItemStats(p *Player, item *Item, adding bool) {
 	for _, stat := range item.Stats {
 		applyStat(p, stat, adding)
+	}
+}
+
+// CheckSetBonuses scans currently equipped items and applies or removes set
+// bonuses accordingly.  Call this after any equip or unequip operation.
+// The actual bonus Effect funcs are stubs in SetRegistry until sets are designed.
+func CheckSetBonuses(p *Player) {
+	// Count equipped pieces per set.
+	counts := make(map[string]int)
+	for _, item := range p.EquippedItems {
+		if item != nil && item.SetID != "" {
+			counts[item.SetID]++
+		}
+	}
+
+	for setID, def := range SetRegistry {
+		equipped := counts[setID]
+
+		// 4-piece bonus.
+		if equipped >= 4 {
+			if !def.Active4 && def.Bonus4 != nil {
+				def.Bonus4(p)
+				def.Active4 = true
+			}
+		} else if def.Active4 {
+			// TODO: reverse the 4-piece bonus when pieces are un-equipped.
+			def.Active4 = false
+		}
+
+		// 2-piece bonus (independent of 4-piece).
+		if equipped >= 2 {
+			if !def.Active2 && def.Bonus2 != nil {
+				def.Bonus2(p)
+				def.Active2 = true
+			}
+		} else if def.Active2 {
+			// TODO: reverse the 2-piece bonus when pieces are un-equipped.
+			def.Active2 = false
+		}
 	}
 }
 
@@ -344,6 +551,9 @@ func startRun() {
 		rl.NewVector2(p.X, p.Y),
 		0.0, 1.0,
 	)
+
+	// Reset and rebuild all on-hit/on-kill/etc. event subscribers for the new run.
+	RebuildEventSubscriptions(&p)
 
 	state = GameState{
 		CurrentScreen:           ScreenGame,
@@ -731,12 +941,38 @@ func moveProjectiles(dt float32) {
 								text += "!"
 							}
 							spawnFloatingText(enemy.X, enemy.Y-enemy.Size, text, color)
+
+							hitPos := rl.Vector2{X: p.X, Y: p.Y}
+							Dispatch(GameEvent{
+								Type:     EventOnHit,
+								Player:   &state.Player,
+								Enemy:    enemy,
+								Damage:   finalDmg,
+								IsCrit:   p.IsCrit,
+								Position: hitPos,
+							})
+							if p.IsCrit {
+								Dispatch(GameEvent{
+									Type:     EventOnCrit,
+									Player:   &state.Player,
+									Enemy:    enemy,
+									Damage:   finalDmg,
+									IsCrit:   true,
+									Position: hitPos,
+								})
+							}
 						}
 						if enemy.HP <= 0 {
 							xp := enemy.XPGiven * state.Player.XPRate
 							state.Player.XP += xp
 							spawnFloatingText(enemy.X, enemy.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
 							dropResearchPoint(enemy.X, enemy.Y, enemy.IsBoss)
+							Dispatch(GameEvent{
+								Type:     EventOnKill,
+								Player:   &state.Player,
+								Enemy:    enemy,
+								Position: rl.Vector2{X: enemy.X, Y: enemy.Y},
+							})
 							//divider logic. should pop out lil guys
 							if enemy.Type == EnemyDivider {
 								spawnFragments(enemy.X, enemy.Y, state.Wave)
@@ -750,7 +986,7 @@ func moveProjectiles(dt float32) {
 			}
 
 			if hit {
-				if state.Player.ExplosiveShotChance > 0 && rand.Float32() < state.Player.ExplosiveShotChance {
+				if state.Player.ExplosiveShotChance >= 0.01 && rand.Float32() < state.Player.ExplosiveShotChance {
 					state.Explosions = append(state.Explosions, &Explosion{
 						X: p.X, Y: p.Y, Radius: VolatileRadius,
 						VisualTimer: 0.5, MaxDuration: 0.5,
@@ -761,6 +997,29 @@ func moveProjectiles(dt float32) {
 						dy := e.Y - p.Y
 						distSq := dx*dx + dy*dy
 						colRad := VolatileRadius + e.Size/2
+						if distSq < colRad*colRad {
+							if !isEnemyProtected(e) {
+								e.HP -= bombDmg
+								spawnFloatingText(e.X, e.Y-e.Size, fmt.Sprintf("%.0f", bombDmg), rl.Orange)
+							}
+						}
+					}
+				}
+
+				// ExplosiveShots unique modifier — smaller blast, separate chance roll,
+				// stacks alongside but independent of ExplosiveShotChance.
+				if state.Player.ExplosiveModChance >= 0.01 && rand.Float32() < state.Player.ExplosiveModChance {
+					const modRadius = float32(80)
+					state.Explosions = append(state.Explosions, &Explosion{
+						X: p.X, Y: p.Y, Radius: modRadius,
+						VisualTimer: 0.3, MaxDuration: 0.3,
+					})
+					bombDmg := p.Damage * 0.25
+					for _, e := range state.Enemies {
+						dx := e.X - p.X
+						dy := e.Y - p.Y
+						distSq := dx*dx + dy*dy
+						colRad := modRadius + e.Size/2
 						if distSq < colRad*colRad {
 							if !isEnemyProtected(e) {
 								e.HP -= bombDmg
@@ -833,6 +1092,12 @@ func moveProjectiles(dt float32) {
 						DeleteSaveFile()
 					}
 				}
+				Dispatch(GameEvent{
+					Type:     EventOnPlayerHit,
+					Player:   &state.Player,
+					Damage:   damage,
+					Position: rl.Vector2{X: p.X, Y: p.Y},
+				})
 
 				for _, e := range state.Enemies {
 					if e.ID == p.SourceID {
@@ -860,8 +1125,9 @@ func moveMines(dt float32) {
 				X:           mine.X,
 				Y:           mine.Y,
 				Radius:      mine.Radius * 3.0,
-				VisualTimer: 0.3,
-				MaxDuration: 0.3,
+				VisualTimer: 0.5,
+				MaxDuration: 0.5,
+				IsDud:       true,
 			})
 			continue
 		}
@@ -911,6 +1177,12 @@ func moveMines(dt float32) {
 					state.Player.XP += xp
 					spawnFloatingText(enemy.X, enemy.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
 					dropResearchPoint(enemy.X, enemy.Y, enemy.IsBoss)
+					Dispatch(GameEvent{
+						Type:     EventOnKill,
+						Player:   &state.Player,
+						Enemy:    enemy,
+						Position: rl.Vector2{X: enemy.X, Y: enemy.Y},
+					})
 					if enemy.Type == EnemyDivider {
 						spawnFragments(enemy.X, enemy.Y, state.Wave)
 					}
@@ -950,10 +1222,15 @@ func updateVisuals(dt float32) {
 	}
 	state.LightningArcs = remainingArcs
 
+}
+
+// updateFloatingTexts ticks floating damage/RP numbers using real (unscaled) dt
+// so they always last a steady 1 second regardless of game speed setting.
+func updateFloatingTexts(dt float32) {
 	var remainingTexts []*FloatingText
 	for _, ft := range state.FloatingTexts {
 		ft.Timer -= dt
-		ft.Y -= FloatTextRiseSpeed * dt // Move up
+		ft.Y -= FloatTextRiseSpeed * dt
 		if ft.Timer > 0 {
 			remainingTexts = append(remainingTexts, ft)
 		}
@@ -1256,6 +1533,13 @@ func moveEnemies(dt float32) {
 						DeleteSaveFile()
 					}
 				}
+				Dispatch(GameEvent{
+					Type:     EventOnPlayerHit,
+					Player:   &state.Player,
+					Enemy:    enemy,
+					Damage:   actualDamage,
+					Position: rl.Vector2{X: enemy.X, Y: enemy.Y},
+				})
 			}
 		}
 		if enemy.HP <= 0 {
@@ -1263,6 +1547,12 @@ func moveEnemies(dt float32) {
 			state.Player.XP += xp
 			spawnFloatingText(enemy.X, enemy.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
 			dropResearchPoint(enemy.X, enemy.Y, enemy.IsBoss)
+			Dispatch(GameEvent{
+				Type:     EventOnKill,
+				Player:   &state.Player,
+				Enemy:    enemy,
+				Position: rl.Vector2{X: enemy.X, Y: enemy.Y},
+			})
 			//divider logic. should pop out lil guys
 			if enemy.Type == EnemyDivider {
 				spawnFragments(enemy.X, enemy.Y, state.Wave)
@@ -1346,7 +1636,7 @@ func checkXP() {
 			}
 		}
 		//pretty sure i got it so it grants one free level of item scaling.
-		if state.Player.FreeUpgradeChance > 0 && rand.Float32() < state.Player.FreeUpgradeChance {
+		if state.Player.FreeUpgradeChance >= 0.01 && rand.Float32() < state.Player.FreeUpgradeChance {
 			applyRandomUpgrade()
 		}
 
@@ -1709,7 +1999,20 @@ func updateGame(dt float32) {
 		state.DeathTimer -= dt
 		if state.DeathTimer <= 0 {
 			state.GameOver = true
+			return
 		}
+		// Keep the world running at half speed so the death animation plays.
+		// Skip all input, spawning, and player actions — just update visuals.
+		effectiveDt := dt * 0.5
+		updateAbilityTimers(effectiveDt)
+		updateGravityZones(effectiveDt)
+		updateLingerZones(effectiveDt)
+		moveProjectiles(effectiveDt)
+		moveMines(effectiveDt)
+		updateVisuals(effectiveDt)
+		updateFloatingTexts(dt)
+		moveEnemies(effectiveDt)
+		return
 	}
 
 	if state.GameOver {
@@ -1735,44 +2038,45 @@ func updateGame(dt float32) {
 	updateLingerZones(effectiveDt)
 	handleAbilityInput()
 
-	if state.Player.AutoAbilityEnabled {
-		for _, name := range meta.EquippedAbilities {
-			if name == "" {
-				continue
-			}
+	for i, name := range meta.EquippedAbilities {
+		if name == "" {
+			continue
+		}
+		if !state.Player.AutoAbilities[i] {
+			continue
+		}
 
-			p := &state.Player
-			ready := false
+		p := &state.Player
+		ready := false
 
-			// update CD's for all abilities.
-			switch name {
-			case AbilityRapidFire:
-				ready = !p.IsRapidFiring && p.RapidFireCooldown <= 0
-			case AbilityDeathRay:
-				ready = !p.IsDeathRayActive && p.DeathRayCooldown <= 0
-			case AbilityGravity:
-				ready = !p.IsGravityActive && p.GravityCooldown <= 0
-			case AbilityBombard:
-				ready = !p.IsBombardmentActive && p.BombardmentCooldown <= 0
-			case AbilityStatic:
-				ready = p.StaticCooldown <= 0
-			case AbilityChrono:
-				ready = !p.IsChronoActive && p.ChronoCooldown <= 0
-			}
+		// update CD's for all abilities.
+		switch name {
+		case AbilityRapidFire:
+			ready = !p.IsRapidFiring && p.RapidFireCooldown <= 0
+		case AbilityDeathRay:
+			ready = !p.IsDeathRayActive && p.DeathRayCooldown <= 0
+		case AbilityGravity:
+			ready = !p.IsGravityActive && p.GravityCooldown <= 0
+		case AbilityBombard:
+			ready = !p.IsBombardmentActive && p.BombardmentCooldown <= 0
+		case AbilityStatic:
+			ready = p.StaticCooldown <= 0
+		case AbilityChrono:
+			ready = !p.IsChronoActive && p.ChronoCooldown <= 0
+		}
 
-			if ready {
-				if name == AbilityGravity {
-					if len(state.Enemies) > 0 {
-						target := state.Enemies[rand.Intn(len(state.Enemies))]
-						state.Player.GravityX = target.X
-						state.Player.GravityY = target.Y
-						state.Player.IsGravityActive = true
-						state.Player.GravityTimer = state.Player.GravityDuration
-						// Cooldown starts in updateAbilityTimers when effect ends
-					}
-				} else {
-					triggerAbility(name)
+		if ready {
+			if name == AbilityGravity {
+				if len(state.Enemies) > 0 {
+					target := state.Enemies[rand.Intn(len(state.Enemies))]
+					state.Player.GravityX = target.X
+					state.Player.GravityY = target.Y
+					state.Player.IsGravityActive = true
+					state.Player.GravityTimer = state.Player.GravityDuration
+					// Cooldown starts in updateAbilityTimers when effect ends
 				}
+			} else {
+				triggerAbility(name)
 			}
 		}
 	}
@@ -1807,6 +2111,19 @@ func updateGame(dt float32) {
 	}
 	if state.Player.Overshield < state.Player.MaxHP*MaxOvershieldRatio {
 		state.Player.Overshield += state.Player.OvershieldRate * effectiveDt
+	}
+
+	// Overclock unique modifier: count down the haste burst, remove bonus when it expires.
+	if state.Player.OverclockHasteTimer > 0 {
+		state.Player.OverclockHasteTimer -= effectiveDt
+		if state.Player.OverclockHasteTimer <= 0 {
+			state.Player.OverclockHasteTimer = 0
+			state.Player.Haste -= state.Player.OverclockHasteBonus
+			if state.Player.Haste < 0 {
+				state.Player.Haste = 0
+			}
+			recalculateAttackSpeed(&state.Player)
+		}
 	}
 
 	//add to runtime, update spawn rate.
@@ -1857,6 +2174,7 @@ func updateGame(dt float32) {
 	moveProjectiles(effectiveDt)
 	moveMines(effectiveDt)
 	updateVisuals(effectiveDt)
+	updateFloatingTexts(dt)
 	moveEnemies(effectiveDt)
 	checkXP()
 }

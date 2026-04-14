@@ -10,9 +10,12 @@ import (
 
 // reduces effectiveness of abilities if you have auto on.
 // lets players play in a more idle game style if they want.
+// applies the penalty if any ability slot is set to auto-fire.
 func getAutoMult() float32 {
-	if state.Player.AutoAbilityEnabled {
-		return 0.7
+	for _, a := range state.Player.AutoAbilities {
+		if a {
+			return 0.7
+		}
 	}
 	return 1.0
 }
@@ -155,11 +158,11 @@ func triggerStaticDischarge() {
 	}
 
 	if meta.StaticBranch == BranchStaticChain {
-		// Nearest-neighbour chain: seed from the closest enemy to the player,
-		// then hop to the nearest unhit enemy within 320 units each time.
+		// Nearest-neighbour chain: seed from the closest enemy within player range,
+		// then hop freely to the nearest unhit enemy with no distance cap —
+		// once the bolt is in flight it jumps across the entire screen.
 		// Each enemy is damaged exactly once — 60% of a full hit — when the
 		// bolt reaches them. Visuals are staggered per hop.
-		const maxJumpDist = float32(320)
 		const hopInterval = float32(0.07)
 		const arcDuration = float32(2.0)
 		dmg := p.Damage * dmgMult * 0.60 * mult
@@ -167,9 +170,9 @@ func triggerStaticDischarge() {
 		usedIDs := make(map[int]bool)
 		chain := make([]*Enemy, 0, targetLimit)
 
-		// Find closest enemy to player as the first hop
+		// Find closest enemy within player range as the first hop.
 		var first *Enemy
-		firstDist := float32(400)
+		firstDist := p.Range
 		for _, e := range state.Enemies {
 			if isEnemyProtected(e) {
 				continue
@@ -188,11 +191,11 @@ func triggerStaticDischarge() {
 		chain = append(chain, first)
 		usedIDs[first.ID] = true
 
-		// Jump to nearest neighbour of each successive enemy
+		// Hop to nearest unhit enemy with no range cap — bolt jumps anywhere.
 		cur := first
 		for len(chain) < targetLimit {
 			var next *Enemy
-			bestDist := maxJumpDist
+			bestDist := float32(math.MaxFloat32)
 			for _, e := range state.Enemies {
 				if usedIDs[e.ID] || isEnemyProtected(e) {
 					continue
@@ -217,6 +220,13 @@ func triggerStaticDischarge() {
 		// Arc 0: player -> first enemy, no delay
 		chain[0].HP -= dmg
 		spawnFloatingText(chain[0].X, chain[0].Y-chain[0].Size, fmt.Sprintf("%.0f", dmg), rl.SkyBlue)
+		Dispatch(GameEvent{
+			Type:     EventOnHit,
+			Player:   p,
+			Enemy:    chain[0],
+			Damage:   dmg,
+			Position: rl.Vector2{X: chain[0].X, Y: chain[0].Y},
+		})
 		state.LightningArcs = append(state.LightningArcs, &LightningArc{
 			SourceX: p.X, SourceY: p.Y,
 			TargetX: chain[0].X, TargetY: chain[0].Y,
@@ -232,6 +242,13 @@ func triggerStaticDischarge() {
 			dst := chain[i+1]
 			dst.HP -= dmg
 			spawnFloatingText(dst.X, dst.Y-dst.Size, fmt.Sprintf("%.0f", dmg), rl.Blue)
+			Dispatch(GameEvent{
+				Type:     EventOnHit,
+				Player:   p,
+				Enemy:    dst,
+				Damage:   dmg,
+				Position: rl.Vector2{X: dst.X, Y: dst.Y},
+			})
 			state.LightningArcs = append(state.LightningArcs, &LightningArc{
 				SourceX: src.X, SourceY: src.Y,
 				TargetX: dst.X, TargetY: dst.Y,
@@ -258,6 +275,13 @@ func triggerStaticDischarge() {
 					dmg := p.Damage * dmgMult * mult
 					e.HP -= dmg
 					spawnFloatingText(e.X, e.Y-e.Size, fmt.Sprintf("%.0f", dmg), rl.SkyBlue)
+					Dispatch(GameEvent{
+						Type:     EventOnHit,
+						Player:   p,
+						Enemy:    e,
+						Damage:   dmg,
+						Position: rl.Vector2{X: e.X, Y: e.Y},
+					})
 					hitTargets = append(hitTargets, e)
 				}
 				count++
@@ -386,10 +410,25 @@ func updateGravityZones(dt float32) {
 						damage := zone.Damage * mult * dt
 						enemy.HP -= damage
 						accumulateDamage(enemy, "Gravity", damage)
+						Dispatch(GameEvent{
+							Type:     EventOnHit,
+							Player:   &state.Player,
+							Enemy:    enemy,
+							Damage:   damage,
+							Position: rl.Vector2{X: enemy.X, Y: enemy.Y},
+						})
 
 						if enemy.HP <= 0 {
-							state.Player.XP += enemy.XPGiven * state.Player.XPRate
+							xp := enemy.XPGiven * state.Player.XPRate
+							state.Player.XP += xp
+							spawnFloatingText(enemy.X, enemy.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
 							dropResearchPoint(enemy.X, enemy.Y, enemy.IsBoss)
+							Dispatch(GameEvent{
+								Type:     EventOnKill,
+								Player:   &state.Player,
+								Enemy:    enemy,
+								Position: rl.Vector2{X: enemy.X, Y: enemy.Y},
+							})
 							if enemy.Type == EnemyDivider {
 								spawnFragments(enemy.X, enemy.Y, state.Wave)
 							}
@@ -661,12 +700,25 @@ func updateAbilityTimers(dt float32) {
 								// Draw floating dmg
 								e.DeathRayHitStatus[beamIdx] = true
 								spawnFloatingText(e.X, e.Y-e.Size, fmt.Sprintf("%.0f", damage), rl.Purple)
+								Dispatch(GameEvent{
+									Type:     EventOnHit,
+									Player:   p,
+									Enemy:    e,
+									Damage:   damage,
+									Position: rl.Vector2{X: e.X, Y: e.Y},
+								})
 
 								if e.HP <= 0 {
 									xp := e.XPGiven * p.XPRate
 									state.Player.XP += xp
 									spawnFloatingText(e.X, e.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
 									dropResearchPoint(e.X, e.Y, e.IsBoss)
+									Dispatch(GameEvent{
+										Type:     EventOnKill,
+										Player:   p,
+										Enemy:    e,
+										Position: rl.Vector2{X: e.X, Y: e.Y},
+									})
 									if e.Type == EnemyDivider {
 										spawnFragments(e.X, e.Y, state.Wave)
 									}
@@ -758,6 +810,13 @@ func updateAbilityTimers(dt float32) {
 					dmg := dps * mult * dt
 					target.HP -= dmg
 					accumulateDamage(target, "DeathRay", dmg)
+					Dispatch(GameEvent{
+						Type:     EventOnHit,
+						Player:   p,
+						Enemy:    target,
+						Damage:   dmg,
+						Position: rl.Vector2{X: target.X, Y: target.Y},
+					})
 				}
 
 				if target.HP <= 0 {
@@ -773,6 +832,12 @@ func updateAbilityTimers(dt float32) {
 					}
 					if index != -1 {
 						dropResearchPoint(target.X, target.Y, target.IsBoss)
+						Dispatch(GameEvent{
+							Type:     EventOnKill,
+							Player:   p,
+							Enemy:    target,
+							Position: rl.Vector2{X: target.X, Y: target.Y},
+						})
 						if target.Type == EnemyDivider {
 							spawnFragments(target.X, target.Y, state.Wave)
 						}

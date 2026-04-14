@@ -1,5 +1,5 @@
 {
-  "ResearchPoints": 931,
+  "ResearchPoints": 11498,
   "DmgLevel": 0,
   "ASLevel": 0,
   "RegenLevel": 0,
@@ -11,20 +11,20 @@
   "MusicVolume": 0,
   "SFXVolume": 0,
   "TutorialStep": 8,
-  "RapidFireUnlocked": true,
-  "DeathRayUnlocked": true,
+  "RapidFireUnlocked": false,
+  "DeathRayUnlocked": false,
   "GravityFieldUnlocked": false,
-  "BombardmentUnlocked": true,
+  "BombardmentUnlocked": false,
   "StaticDischargeUnlocked": true,
   "ChronoFieldUnlocked": false,
   "MinesUnlocked": false,
   "SatellitesUnlocked": false,
   "ShockwaveUnlocked": false,
-  "RapidFireBranch": "Overcharge",
-  "DeathRayBranch": "Prism",
+  "RapidFireBranch": "",
+  "DeathRayBranch": "",
   "GravityBranch": "",
-  "BombardBranch": "SiegeStrike",
-  "StaticBranch": "ChainLightning",
+  "BombardBranch": "",
+  "StaticBranch": "",
   "ChronoBranch": "",
   "MinesBranch": "",
   "SatellitesBranch": "",
@@ -32,35 +32,39 @@
   "Speed3xUnlocked": true,
   "OpeningSprintUnlocked": false,
   "EquippedAbilities": [
-    "Rapid Fire",
-    "Death Ray",
-    "Bombardment",
-    "Static Discharge"
+    "Static Discharge",
+    "",
+    "",
+    ""
   ],
   "EquippedItemsByIndex": [
     3,
     2,
     0,
-    1
+    4
   ],
   "Inventory": [
     {
       "Name": "Sapphire Band",
       "Type": 2,
+      "Rarity": 0,
       "Stats": [
         {
           "StatType": "CritChance",
-          "Value": 0.34728312,
+          "Value": 0.049611878,
           "BaseValue": 0.049611878,
           "Growth": 0.049611878
         }
       ],
       "Description": "Critical Focus",
-      "SalvageValue": 20
+      "SalvageValue": 20,
+      "UniqueModifier": "",
+      "SetID": ""
     },
     {
       "Name": "Data Chip",
       "Type": 3,
+      "Rarity": 0,
       "Stats": [
         {
           "StatType": "RPGain",
@@ -70,35 +74,66 @@
         }
       ],
       "Description": "Data Mining",
-      "SalvageValue": 60
+      "SalvageValue": 60,
+      "UniqueModifier": "",
+      "SetID": ""
     },
     {
       "Name": "Force Field",
       "Type": 1,
+      "Rarity": 0,
       "Stats": [
         {
           "StatType": "MaxHP",
-          "Value": 324.11884,
+          "Value": 46.30269,
           "BaseValue": 46.30269,
           "Growth": 46.30269
         }
       ],
       "Description": "Energy Shield",
-      "SalvageValue": 20
+      "SalvageValue": 20,
+      "UniqueModifier": "",
+      "SetID": ""
     },
     {
       "Name": "Laser Cutter",
       "Type": 0,
+      "Rarity": 0,
       "Stats": [
         {
           "StatType": "Damage",
-          "Value": 31.051575,
+          "Value": 4.435939,
           "BaseValue": 4.435939,
           "Growth": 4.435939
         }
       ],
       "Description": "High Power",
-      "SalvageValue": 20
+      "SalvageValue": 20,
+      "UniqueModifier": "",
+      "SetID": ""
+    },
+    {
+      "Name": "Blast Module",
+      "Type": 3,
+      "Rarity": 1,
+      "Stats": [
+        {
+          "StatType": "Explosive",
+          "Value": 0.32563612,
+          "BaseValue": 0.32563612,
+          "Growth": 0
+        },
+        {
+          "StatType": "WaveSkip",
+          "Value": 0.06558381,
+          "BaseValue": 0.06558381,
+          "Growth": 0
+        }
+      ],
+      "Description": "Explosive Hits",
+      "SalvageValue": 200,
+      "UniqueModifier": "",
+      "SetID": ""
     }
   ]
 }

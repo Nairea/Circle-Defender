@@ -2,492 +2,551 @@ package main
 
 import (
 	"fmt"
-	"math"
 	"sort"
+	"strconv"
 
+	gui "github.com/gen2brain/raylib-go/raygui"
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
 const (
 	CardWidth  = 220.0
-	CardHeight = 110.0
+	CardHeight = 130.0
 	CardGap    = 15.0
 	InvCols    = 4
+
+	// Left fabricator panel geometry
+	FabPanelWidth = 300.0
+	FabPanelX     = 20.0
+
+	// Inventory area starts to the right of the fab panel
+	InvAreaX = FabPanelX + FabPanelWidth + 20.0
 )
 
-var showFabricatorPopup = false
+// Vertical layout anchors
+const (
+	invToolbarY = float32(230)
+	invGridY    = float32(272)
+	fabPanelTop = float32(220)
+)
 
-// -1 - Any, 0 - Wep, 1 - Shield, 2 - Ring, 3 - Trinket
-var fabricatorTargetType = -1
+// rarityColor returns the border/text colour for a given rarity tier.
+func rarityColor(rarity int) rl.Color {
+	switch rarity {
+	case RarityNormal:
+		return rl.White
+	case RarityUncommon:
+		return rl.NewColor(80, 200, 100, 255)
+	case RarityRare:
+		return rl.NewColor(80, 140, 255, 255)
+	case RarityEpic:
+		return rl.NewColor(180, 80, 255, 255)
+	case RarityLegendary:
+		return rl.Gold
+	case RaritySet:
+		return rl.NewColor(0, 210, 190, 255)
+	default:
+		return rl.White
+	}
+}
+
+// rarityLabel returns the display name for a rarity tier.
+func rarityLabel(rarity int) string {
+	switch rarity {
+	case RarityNormal:
+		return "Normal"
+	case RarityUncommon:
+		return "Uncommon"
+	case RarityRare:
+		return "Rare"
+	case RarityEpic:
+		return "Epic"
+	case RarityLegendary:
+		return "Legendary"
+	case RaritySet:
+		return "Set"
+	default:
+		return ""
+	}
+}
+
 var isSalvageMode = false
 
+// ── Input ─────────────────────────────────────────────────────────────────────
+
 func handleItemsInput() {
-	// Advance tutorial step when entering screen
 	if meta.TutorialStep == TutorialGoToGear {
 		meta.TutorialStep = TutorialOpenFab
 		SaveMetaProg()
 	}
+	// Fabricator is always visible — no button to click, so skip straight to craft step.
+	if meta.TutorialStep == TutorialOpenFab {
+		meta.TutorialStep = TutorialCraftWeapon
+		SaveMetaProg()
+	}
 
 	if rl.IsKeyPressed(rl.KeyEscape) {
-		if showFabricatorPopup {
-			showFabricatorPopup = false
+		if fabInputActive {
+			fabInputActive = false
+			// Restore display to the last confirmed value.
+			fabInputText = fmt.Sprintf("%d", state.ShopBidAmount)
 		} else {
 			state.CurrentScreen = ScreenStart
-		}
-	}
-
-	//keep minimum payment amount at 100.
-	if state.ShopBidAmount < 100 {
-		state.ShopBidAmount = 100
-	}
-
-	//button positioning info.
-	tabsY := float32(230)
-	tabWidth := float32(80)
-	tabHeight := float32(30)
-	fabricateButtonWidth := float32(110)
-	sortButtonWidth := float32(60)
-	salvageButtonWidth := float32(80)
-	totalRowWidth := fabricateButtonWidth + 20.0 + (5.0*tabWidth + 4.0*10.0) + 20.0 + (2.0*sortButtonWidth + 10.0) + 20.0 + salvageButtonWidth
-	startX := (float32(ScreenWidth) - totalRowWidth) / 2
-
-	fabricateButtonX := startX
-	startTabX := fabricateButtonX + fabricateButtonWidth + 20.0
-	sortX := startTabX + (5.0*tabWidth + 4.0*10.0) + 20.0
-	salvageX := sortX + (2.0*sortButtonWidth + 10.0) + 20.0
-
-	//build a lil pop up for fabrication options.
-	if showFabricatorPopup {
-		if rl.IsMouseButtonReleased(rl.MouseButtonLeft) {
-			mousePos := rl.GetMousePosition()
-
-			panelWidth := float32(400)
-			panelHeight := float32(350)
-			panelX := float32(ScreenWidth)/2 - panelWidth/2
-			panelY := float32(ScreenHeight)/2 - panelHeight/2
-
-			// Close Button (Top Right)
-			closeButtonRect := rl.Rectangle{X: panelX + panelWidth - 35, Y: panelY + 10, Width: 25, Height: 25}
-			if rl.CheckCollisionPointRec(mousePos, closeButtonRect) {
-				showFabricatorPopup = false
-				return
-			}
-
-			//closes if you click outside window.
-			if !rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: panelX, Y: panelY, Width: panelWidth, Height: panelHeight}) {
-				showFabricatorPopup = false
-				return
-			}
-
-			contentX := panelX + (panelWidth-300)/2
-			contentY := panelY + 80
-
-			buttonHeight := float32(30)
-			smallButtonWidth := float32(50)
-			margin := float32(10)
-
-			//current price modifier buttons.
-			if rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: contentX, Y: contentY, Width: smallButtonWidth, Height: buttonHeight}) {
-				playButtonSound()
-				state.ShopBidAmount -= 100
-			}
-			if rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: contentX + smallButtonWidth + margin, Y: contentY, Width: smallButtonWidth, Height: buttonHeight}) {
-				playButtonSound()
-				state.ShopBidAmount -= 10
-			}
-			if rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: contentX + 2*(smallButtonWidth+margin) + 40, Y: contentY, Width: smallButtonWidth, Height: buttonHeight}) {
-				if state.ShopBidAmount+10 <= meta.ResearchPoints {
-					playButtonSound()
-					state.ShopBidAmount += 10
-				}
-			}
-			if rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: contentX + 3*(smallButtonWidth+margin) + 40, Y: contentY, Width: smallButtonWidth, Height: buttonHeight}) {
-				if state.ShopBidAmount+100 <= meta.ResearchPoints {
-					playButtonSound()
-					state.ShopBidAmount += 100
-				}
-			}
-
-			//min/max buttons to let people do it faster once they're chasing bis roll items...i should introduce a cap
-			//on item scaling...
-			row2Y := contentY + buttonHeight + 15
-			if rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: contentX, Y: row2Y, Width: 100, Height: buttonHeight}) {
-				playButtonSound()
-				state.ShopBidAmount = 100
-			}
-			if rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: contentX + 110 + 60, Y: row2Y, Width: 100, Height: buttonHeight}) {
-				playButtonSound()
-				state.ShopBidAmount = meta.ResearchPoints
-			}
-
-			//Keeps price at 100 minimum.
-			if state.ShopBidAmount < 100 {
-				state.ShopBidAmount = 100
-			}
-
-			//type selection buttons.
-			typeButtonWidth := float32(55)
-			typeMargin := float32(5)
-			totalTypeWidth := 5*typeButtonWidth + 4*typeMargin
-			typeStartX := panelX + (panelWidth-totalTypeWidth)/2
-			typeY := row2Y + 85
-
-			//-1 - Any, 0 - Wep, 1 - Shield, 2 - Ring, 3 - Trinket
-			//same as above. if one is changed, change the other.
-			typeVals := []int{-1, 0, 1, 2, 3}
-			for i, val := range typeVals {
-				rect := rl.Rectangle{X: typeStartX + float32(i)*(typeButtonWidth+typeMargin), Y: typeY, Width: typeButtonWidth, Height: 30}
-				if rl.CheckCollisionPointRec(mousePos, rect) {
-					playButtonSound()
-					fabricatorTargetType = val
-				}
-			}
-
-			//Construct Button
-			buttonWidth := float32(200)
-
-			constructRect := rl.Rectangle{X: panelX + (panelWidth-buttonWidth)/2, Y: row2Y + 150, Width: buttonWidth, Height: 50}
-
-			if rl.CheckCollisionPointRec(mousePos, constructRect) {
-				//blocks building things if you've got a run in progress to prevent
-				//cheesing things.
-				if !HasSaveFile() {
-					playButtonSound()
-					// Special Tutorial Logic: Force a specific fixed weapon
-					if meta.TutorialStep == TutorialCraftWeapon {
-						if meta.ResearchPoints >= state.ShopBidAmount {
-							// Deduct cost manually since we bypass buyItem
-							meta.ResearchPoints -= state.ShopBidAmount
-
-							// Create Tutorial Blaster
-							tutorialItem := &Item{
-								Name:        "Tutorial Blaster",
-								Type:        ItemWeapon,
-								Description: "Standard Issue Training Weapon",
-								Stats: []ItemStat{
-									{StatType: "Damage", Value: 0.5, BaseValue: 0.5, Growth: 0.1},
-								},
-								SalvageValue: state.ShopBidAmount / 5,
-							}
-							state.Player.Inventory = append(state.Player.Inventory, tutorialItem)
-
-							// Proceed to Equip Step
-							meta.TutorialStep = TutorialEquipItem
-							SaveMetaProg()
-							showFabricatorPopup = false
-						}
-					} else {
-						// Standard gameplay logic
-						buyItem(state.ShopBidAmount, fabricatorTargetType)
-					}
-				}
-			}
 		}
 		return
 	}
 
-	//scrolling through items n stuff.
-	scroll := rl.GetMouseWheelMove()
-	if scroll != 0 {
-		state.InventoryScrollOffset += scroll * 40.0
-		if state.InventoryScrollOffset > 0 {
-			state.InventoryScrollOffset = 0
+	if state.ShopBidAmount < 100 {
+		state.ShopBidAmount = 100
+	}
+
+	mouse := rl.GetMousePosition()
+
+	// Fabricator input is always live (locked visually when run active, just does nothing)
+	handleFabricatorInput(mouse)
+
+	// Scroll — only when hovering the inventory area
+	if mouse.X > InvAreaX {
+		scroll := rl.GetMouseWheelMove()
+		if scroll != 0 {
+			state.InventoryScrollOffset += scroll * 40.0
+			if state.InventoryScrollOffset > 0 {
+				state.InventoryScrollOffset = 0
+			}
 		}
 	}
 
 	if rl.IsMouseButtonReleased(rl.MouseButtonLeft) {
-		mousePos := rl.GetMousePosition()
-		//back button
-		backRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight) - 100, Width: 200, Height: 50}
-		if rl.CheckCollisionPointRec(mousePos, backRect) {
+		// Back button
+		backRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight) - 70, Width: 200, Height: 45}
+		if rl.CheckCollisionPointRec(mouse, backRect) {
 			playButtonSound()
 			state.CurrentScreen = ScreenStart
 			return
 		}
+		handleInventoryToolbar(mouse)
+		handleInventoryGrid(mouse)
+	}
+}
 
-		//tab buttons.
-		for i := 0; i < 5; i++ {
-			rect := rl.Rectangle{X: startTabX + float32(i)*(tabWidth+10), Y: tabsY, Width: tabWidth, Height: tabHeight}
-			if rl.CheckCollisionPointRec(mousePos, rect) {
-				playButtonSound()
-				state.CurrentTab = i
-				state.InventoryScrollOffset = 0
+// fabInputActive tracks whether the investment box has keyboard focus.
+var fabInputActive = false
+
+// fabInputText is the display/edit buffer for the investment box.
+// Starts empty so the first click lets the user type fresh.
+var fabInputText = "100"
+
+func handleFabricatorInput(mouse rl.Vector2) {
+	if HasSaveFile() {
+		return
+	}
+
+	cx := float32(FabPanelX + 14)
+	inputBoxRect := rl.Rectangle{X: cx, Y: fabPanelTop + 46, Width: FabPanelWidth - 28, Height: 32}
+
+	// Click to focus / unfocus.
+	if rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
+		if rl.CheckCollisionPointRec(mouse, inputBoxRect) {
+			if !fabInputActive {
+				// First click: clear buffer so user can type their amount immediately.
+				fabInputActive = true
+				fabInputText = ""
+			}
+		} else if fabInputActive {
+			// Clicked outside — commit and unfocus.
+			fabInputActive = false
+			liveApplyFabInput()
+			if fabInputText == "" {
+				fabInputText = fmt.Sprintf("%d", state.ShopBidAmount)
 			}
 		}
+	}
 
-		//button for opening fabrication menu
-		fabRect := rl.Rectangle{X: fabricateButtonX, Y: tabsY, Width: fabricateButtonWidth, Height: tabHeight}
-		if rl.CheckCollisionPointRec(mousePos, fabRect) {
-			//blocks if run ongoing.
-			if !HasSaveFile() {
-				playButtonSound()
-				showFabricatorPopup = true
-				isSalvageMode = false
-				// Advance step
-				if meta.TutorialStep == TutorialOpenFab {
-					meta.TutorialStep = TutorialCraftWeapon
-					SaveMetaProg()
-				}
+	if fabInputActive {
+		// Backspace — one character per keypress, handled exactly once.
+		if rl.IsKeyPressed(rl.KeyBackspace) && len(fabInputText) > 0 {
+			fabInputText = fabInputText[:len(fabInputText)-1]
+		}
+
+		// Digits only via GetCharPressed — drains the queue each frame.
+		for {
+			ch := rl.GetCharPressed()
+			if ch == 0 {
+				break
+			}
+			if ch >= '0' && ch <= '9' && len(fabInputText) < 7 {
+				fabInputText += string(ch)
+			}
+			// Non-digits silently dropped.
+		}
+
+		// Live update odds table every frame.
+		liveApplyFabInput()
+
+		// Enter/Escape commit and unfocus.
+		if rl.IsKeyPressed(rl.KeyEnter) || rl.IsKeyPressed(rl.KeyKpEnter) {
+			fabInputActive = false
+			liveApplyFabInput()
+			if fabInputText == "" {
+				fabInputText = fmt.Sprintf("%d", state.ShopBidAmount)
 			}
 		}
+	}
 
-		//Sort buttons...probably need some more work here to let people search by types or something.
-		//maybe a pop up that lets you choose to show items only with selected stats (and/or flags?)
-		valSortRect := rl.Rectangle{X: sortX, Y: tabsY, Width: sortButtonWidth, Height: tabHeight}
-		if rl.CheckCollisionPointRec(mousePos, valSortRect) {
-			playButtonSound()
-			state.SortMode = SortValue
+	if !rl.IsMouseButtonReleased(rl.MouseButtonLeft) {
+		return
+	}
+
+	// Construct button — Y mirrors drawFabricatorPanel layout exactly.
+	oddsTop := inputBoxRect.Y + 32 + 14 + 12
+	oddsH := float32(16 + 6*15 + 8)
+	constructY := oddsTop + oddsH + 10
+	constructRect := rl.Rectangle{X: cx, Y: constructY, Width: FabPanelWidth - 28, Height: 40}
+
+	if rl.CheckCollisionPointRec(mouse, constructRect) {
+		playButtonSound()
+		// Enforce 100 RP floor at purchase time.
+		if state.ShopBidAmount < 100 {
+			state.ShopBidAmount = 100
 		}
-
-		typeSortRect := rl.Rectangle{X: sortX + sortButtonWidth + 10, Y: tabsY, Width: sortButtonWidth, Height: tabHeight}
-		if rl.CheckCollisionPointRec(mousePos, typeSortRect) {
-			playButtonSound()
-			state.SortMode = SortType
-		}
-
-		//Salvage button
-		salvageRect := rl.Rectangle{X: salvageX, Y: tabsY, Width: salvageButtonWidth, Height: tabHeight}
-		if rl.CheckCollisionPointRec(mousePos, salvageRect) {
-			playButtonSound()
-			isSalvageMode = !isSalvageMode
-		}
-
-		//Inventory system stuff
-		invY := float32(280)
-		totalInvWidth := float32(InvCols*CardWidth + (InvCols-1)*CardGap)
-		startInvX := (float32(ScreenWidth) - totalInvWidth) / 2
-
-		filteredItems := []*Item{}
-		for _, item := range state.Player.Inventory {
-			if state.CurrentTab == TabAll ||
-				(state.CurrentTab == TabWeapon && item.Type == ItemWeapon) ||
-				(state.CurrentTab == TabShield && item.Type == ItemShield) ||
-				(state.CurrentTab == TabRing && item.Type == ItemRing) ||
-				(state.CurrentTab == TabTrinket && item.Type == ItemTrinket) {
-				filteredItems = append(filteredItems, item)
+		if meta.TutorialStep == TutorialCraftWeapon {
+			if meta.ResearchPoints >= state.ShopBidAmount {
+				meta.ResearchPoints -= state.ShopBidAmount
+				tutorialItem := &Item{
+					Name:         "Tutorial Blaster",
+					Type:         ItemWeapon,
+					Rarity:       RarityNormal,
+					Description:  "Standard Issue Training Weapon",
+					Stats:        []ItemStat{{StatType: "Damage", Value: 0.5, BaseValue: 0.5, Growth: 0.1}},
+					SalvageValue: state.ShopBidAmount / 5,
+				}
+				state.Player.Inventory = append(state.Player.Inventory, tutorialItem)
+				meta.TutorialStep = TutorialEquipItem
+				SaveMetaProg()
 			}
-		}
-
-		//sets the sorting...i love using switch case, I have to google how it works
-		//EVERY...TIME...stupid syntax.
-		switch state.SortMode {
-		case SortValue:
-			sort.SliceStable(filteredItems, func(i, j int) bool {
-				if len(filteredItems[i].Stats) == 0 {
-					return false
-				}
-				if len(filteredItems[j].Stats) == 0 {
-					return true
-				}
-				return filteredItems[i].Stats[0].Value > filteredItems[j].Stats[0].Value
-			})
-		case SortType:
-			sort.SliceStable(filteredItems, func(i, j int) bool {
-				if filteredItems[i].Type == filteredItems[j].Type {
-					if len(filteredItems[i].Stats) > 0 && len(filteredItems[j].Stats) > 0 {
-						return filteredItems[i].Stats[0].Value > filteredItems[j].Stats[0].Value
-					}
-					return false
-				}
-				return filteredItems[i].Type < filteredItems[j].Type
-			})
-		}
-
-		viewRect := rl.Rectangle{X: 0, Y: invY, Width: float32(ScreenWidth), Height: float32(ScreenHeight - 400)}
-
-		//re-alligns/draws inventory based on sorted stuff so we get the right things when we click.
-		if rl.CheckCollisionPointRec(mousePos, viewRect) {
-			for i, item := range filteredItems {
-				col := i % InvCols
-				row := i / InvCols
-				x := startInvX + float32(col)*(CardWidth+CardGap)
-				y := invY + float32(row)*(CardHeight+CardGap) + state.InventoryScrollOffset
-				rect := rl.Rectangle{X: x, Y: y, Width: CardWidth, Height: CardHeight}
-
-				if rl.CheckCollisionPointRec(mousePos, rect) {
-					if isSalvageMode {
-						salvageItem(item)
-						return
-					} else {
-						//as previous, stops you from doing stuff if a run is ongoing.
-						if !HasSaveFile() {
-							equipItem(&state.Player, item)
-							// Complete tutorial on equip
-							if meta.TutorialStep == TutorialEquipItem {
-								meta.TutorialStep = TutorialReady
-								SaveMetaProg()
-								state.CurrentScreen = ScreenStart
-							}
-						}
-					}
-				}
-			}
+		} else {
+			buyItem(state.ShopBidAmount, -1)
 		}
 	}
 }
 
+// liveApplyFabInput parses fabInputText and immediately updates ShopBidAmount.
+// Does not enforce the 100 minimum while typing so the user can freely clear the field.
+func liveApplyFabInput() {
+	val, err := strconv.Atoi(fabInputText)
+	if err != nil {
+		val = 0
+	}
+	if val > meta.ResearchPoints {
+		val = meta.ResearchPoints
+		fabInputText = fmt.Sprintf("%d", val)
+	}
+	state.ShopBidAmount = val
+}
+
+func handleInventoryToolbar(mouse rl.Vector2) {
+	tabW := float32(76)
+	tabH := float32(28)
+	tabGap := float32(6)
+
+	for i := 0; i < 5; i++ {
+		rect := rl.Rectangle{X: InvAreaX + float32(i)*(tabW+tabGap), Y: invToolbarY, Width: tabW, Height: tabH}
+		if rl.CheckCollisionPointRec(mouse, rect) {
+			playButtonSound()
+			state.CurrentTab = i
+			state.InventoryScrollOffset = 0
+		}
+	}
+
+	sortStartX := InvAreaX + 5*(tabW+tabGap) + 16
+	sortW := float32(52)
+	sortModes := []int{SortValue, SortType, SortRarity}
+	for i, mode := range sortModes {
+		rect := rl.Rectangle{X: sortStartX + float32(i)*(sortW+tabGap), Y: invToolbarY, Width: sortW, Height: tabH}
+		if rl.CheckCollisionPointRec(mouse, rect) {
+			playButtonSound()
+			state.SortMode = mode
+		}
+	}
+
+	salvX := sortStartX + 3*(sortW+tabGap) + 16
+	salvRect := rl.Rectangle{X: salvX, Y: invToolbarY, Width: 84, Height: tabH}
+	if rl.CheckCollisionPointRec(mouse, salvRect) {
+		playButtonSound()
+		isSalvageMode = !isSalvageMode
+	}
+}
+
+func handleInventoryGrid(mouse rl.Vector2) {
+	clipH := float32(ScreenHeight) - invGridY - 90
+	invRect := rl.Rectangle{X: InvAreaX, Y: invGridY, Width: float32(ScreenWidth) - InvAreaX - 20, Height: clipH}
+	if !rl.CheckCollisionPointRec(mouse, invRect) {
+		return
+	}
+
+	for i, item := range getFilteredSortedItems() {
+		col := i % InvCols
+		row := i / InvCols
+		x := InvAreaX + float32(col)*(CardWidth+CardGap)
+		y := invGridY + float32(row)*(CardHeight+CardGap) + state.InventoryScrollOffset
+		if rl.CheckCollisionPointRec(mouse, rl.Rectangle{X: x, Y: y, Width: CardWidth, Height: CardHeight}) {
+			if isSalvageMode {
+				salvageItem(item)
+				return
+			}
+			if !HasSaveFile() {
+				equipItem(&state.Player, item)
+				if meta.TutorialStep == TutorialEquipItem {
+					meta.TutorialStep = TutorialReady
+					SaveMetaProg()
+					state.CurrentScreen = ScreenStart
+				}
+			}
+			return
+		}
+	}
+}
+
+// ── Draw ──────────────────────────────────────────────────────────────────────
+
 func drawItemsMenu() {
 	rl.ClearBackground(rl.NewColor(20, 20, 25, 255))
-	rl.DrawText("GEAR & INVENTORY", ScreenWidth/2-rl.MeasureText("GEAR & INVENTORY", 40)/2, 20, 40, rl.Gold)
+	rl.DrawText("GEAR & INVENTORY", ScreenWidth/2-rl.MeasureText("GEAR & INVENTORY", 36)/2, 16, 36, rl.Gold)
 
-	var tooltipItem *Item
+	drawEquippedRow()
+	drawFabricatorPanel()
+	drawInventoryArea()
 
-	//currently equipped gear.
+	// Footer
+	backRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight) - 70, Width: 200, Height: 45}
+	backCol := rl.Gray
+	if rl.CheckCollisionPointRec(rl.GetMousePosition(), backRect) {
+		backCol = rl.LightGray
+	}
+	rl.DrawRectangleRec(backRect, backCol)
+	lw := rl.MeasureText("BACK", 20)
+	rl.DrawText("BACK", int32(backRect.X+100)-lw/2, int32(backRect.Y)+13, 20, rl.Black)
+
+	rl.DrawText(fmt.Sprintf("RP: %d", meta.ResearchPoints), ScreenWidth-160, int32(ScreenHeight)-55, 24, rl.Gold)
+
+	if HasSaveFile() {
+		warn := "RUN IN PROGRESS — FABRICATOR LOCKED"
+		rl.DrawText(warn, ScreenWidth/2-rl.MeasureText(warn, 18)/2, int32(ScreenHeight)-98, 18, rl.Red)
+	}
+}
+
+func drawEquippedRow() {
 	slotNames := []string{"Weapon", "Shield", "Ring", "Trinket"}
 	equipY := float32(80)
-	totalRowWidth := float32(4*CardWidth + 3*CardGap)
-	startX := (float32(ScreenWidth) - totalRowWidth) / 2
+	equippedRowW := float32(4*CardWidth + 3*CardGap)
+	equipStartX := float32(ScreenWidth)/2 - equippedRowW/2
 
 	for i, name := range slotNames {
-		x := startX + float32(i)*(CardWidth+CardGap)
-
-		rl.DrawText(name, int32(x), int32(equipY-20), 16, rl.LightGray)
-
+		x := equipStartX + float32(i)*(CardWidth+CardGap)
+		rl.DrawText(name, int32(x), int32(equipY-18), 14, rl.LightGray)
 		item := state.Player.EquippedItems[i]
-		//draw item tooltip, this was fun.
 		if item != nil {
 			drawItemCard(item, x, equipY, true)
-			rect := rl.Rectangle{X: x, Y: equipY, Width: CardWidth, Height: CardHeight}
-			if rl.CheckCollisionPointRec(rl.GetMousePosition(), rect) && !showFabricatorPopup {
-				tooltipItem = item
+			if rl.CheckCollisionPointRec(rl.GetMousePosition(), rl.Rectangle{X: x, Y: equipY, Width: CardWidth, Height: CardHeight}) {
+				drawItemTooltip(item)
 			}
 		} else {
 			rect := rl.Rectangle{X: x, Y: equipY, Width: CardWidth, Height: CardHeight}
-			rl.DrawRectangleRec(rect, rl.NewColor(30, 30, 40, 255))
-			rl.DrawRectangleLinesEx(rect, 2, rl.DarkGray)
-			rl.DrawText("Empty", int32(x+CardWidth/2)-20, int32(equipY+CardHeight/2)-10, 20, rl.DarkGray)
+			rl.DrawRectangleRec(rect, rl.NewColor(28, 28, 38, 255))
+			rl.DrawRectangleLinesEx(rect, 1, rl.DarkGray)
+			rl.DrawText("Empty", int32(x+CardWidth/2-22), int32(equipY+CardHeight/2-10), 18, rl.DarkGray)
+		}
+	}
+}
+
+func drawFabricatorPanel() {
+	panelH := float32(ScreenHeight) - fabPanelTop - 80
+	panelRect := rl.Rectangle{X: FabPanelX, Y: fabPanelTop, Width: FabPanelWidth, Height: panelH}
+	mouse := rl.GetMousePosition()
+
+	locked := HasSaveFile()
+	bgCol := rl.NewColor(25, 25, 38, 255)
+	borderCol := rl.SkyBlue
+	if locked {
+		bgCol = rl.NewColor(22, 22, 30, 255)
+		borderCol = rl.NewColor(55, 55, 70, 255)
+	}
+	rl.DrawRectangleRec(panelRect, bgCol)
+	rl.DrawRectangleLinesEx(panelRect, 1, borderCol)
+
+	cx := float32(FabPanelX + 14)
+	titleCol := rl.SkyBlue
+	if locked {
+		titleCol = rl.NewColor(70, 70, 90, 255)
+	}
+	rl.DrawText("FABRICATOR", int32(cx), int32(fabPanelTop+10), 18, titleCol)
+
+	if locked {
+		rl.DrawText("Locked during run", int32(cx), int32(fabPanelTop+38), 13, rl.NewColor(80, 80, 100, 255))
+		return
+	}
+
+	// ── Investment text input box ─────────────────────────────────────────
+	rl.DrawText("Investment (RP):", int32(cx), int32(fabPanelTop+32), 12, rl.NewColor(140, 140, 160, 255))
+
+	inputBoxRect := rl.Rectangle{X: cx, Y: fabPanelTop + 46, Width: FabPanelWidth - 28, Height: 32}
+	// Pass fabInputActive for visual styling only — input is handled entirely by our own code.
+	gui.SetStyle(gui.TEXTBOX, gui.TEXT_ALIGNMENT, gui.TEXT_ALIGN_CENTER)
+	gui.TextBox(inputBoxRect, &fabInputText, 7, false)
+	gui.SetStyle(gui.TEXTBOX, gui.TEXT_ALIGNMENT, gui.TEXT_ALIGN_LEFT)
+
+	// Draw our own active border over raygui's to make focus state clear.
+	if fabInputActive {
+		rl.DrawRectangleLinesEx(inputBoxRect, 2, rl.SkyBlue)
+		// Blinking cursor at end of text.
+		if int(rl.GetTime()*2)%2 == 0 {
+			tw := rl.MeasureText(fabInputText, 16)
+			cursorX := inputBoxRect.X + (inputBoxRect.Width/2 - float32(tw)/2) + float32(tw) + 2
+			rl.DrawRectangle(int32(cursorX), int32(inputBoxRect.Y+6), 2, 20, rl.White)
 		}
 	}
 
-	//the build/salvage/options row of buttons.
-	tabsY := float32(230)
-	tabWidth := float32(80)
-	tabHeight := float32(30)
-	fabButtonWidth := float32(110)
-	sortButtonWidth := float32(60)
-	salvageButtonWidth := float32(80)
+	if !fabInputActive {
+		rl.DrawText("click to edit  •  Enter to confirm", int32(cx), int32(inputBoxRect.Y+inputBoxRect.Height+4), 10, rl.NewColor(80, 80, 100, 255))
+	} else {
+		rl.DrawText("Enter to confirm  •  Esc to cancel", int32(cx), int32(inputBoxRect.Y+inputBoxRect.Height+4), 10, rl.NewColor(100, 140, 180, 255))
+	}
 
-	//all inclusive width. i could probably build this smarter. but hey.
-	totalRowWidth = fabButtonWidth + 20.0 + (5.0*tabWidth + 4.0*10.0) + 20.0 + (2.0*sortButtonWidth + 10.0) + 20.0 + salvageButtonWidth
-	startRowX := (float32(ScreenWidth) - totalRowWidth) / 2
+	// ── Rarity odds table ─────────────────────────────────────────────────
+	oddsY := inputBoxRect.Y + 32 + 12 + 14 // leave room for the hint text
+	rl.DrawText("Odds at this investment:", int32(cx), int32(oddsY), 12, rl.NewColor(140, 140, 160, 255))
+	oddsY += 16
 
-	fabricateButtonX := startRowX
-	startTabX := fabricateButtonX + fabButtonWidth + 20.0
-	sortX := startTabX + (5.0*tabWidth + 4.0*10.0) + 20.0
-	salvageX := sortX + (2.0*sortButtonWidth + 10.0) + 20.0
+	norm, unc, rare, epic, leg, set := RarityOdds(state.ShopBidAmount)
+	type oddsRow struct {
+		label  string
+		chance float32
+		color  rl.Color
+	}
+	rows := []oddsRow{
+		{"Normal  (1 stat)", norm, rl.White},
+		{"Uncommon(2 stats)", unc, rarityColor(RarityUncommon)},
+		{"Rare    (3 stats)", rare, rarityColor(RarityRare)},
+		{"Epic    (3+bonus)", epic, rarityColor(RarityEpic)},
+		{"Legendary       ", leg, rarityColor(RarityLegendary)},
+		{" └ Set          ", set, rarityColor(RaritySet)},
+	}
+	rightEdge := int32(FabPanelX + FabPanelWidth - 14)
+	for _, row := range rows {
+		pct := fmt.Sprintf("%.1f%%", row.chance*100)
+		rl.DrawText(row.label, int32(cx), int32(oddsY), 11, row.color)
+		pw := rl.MeasureText(pct, 11)
+		rl.DrawText(pct, rightEdge-pw, int32(oddsY), 11, row.color)
+		oddsY += 15
+	}
+	oddsY += 8
 
+	// ── Construct button ──────────────────────────────────────────────────
+	constructRect := rl.Rectangle{X: cx, Y: oddsY + 10, Width: FabPanelWidth - 28, Height: 40}
+	canAfford := state.ShopBidAmount <= meta.ResearchPoints
+	cCol := rl.NewColor(18, 85, 18, 255)
+	if !canAfford {
+		cCol = rl.NewColor(85, 18, 18, 255)
+	} else if rl.CheckCollisionPointRec(mouse, constructRect) {
+		cCol = rl.NewColor(28, 130, 28, 255)
+	}
+	rl.DrawRectangleRec(constructRect, cCol)
+	rl.DrawRectangleLinesEx(constructRect, 2, rl.Lime)
+	clabel := "CONSTRUCT"
+	if !canAfford {
+		clabel = "NEED MORE RP"
+	}
+	clw := rl.MeasureText(clabel, 18)
+	rl.DrawText(clabel, int32(cx+(FabPanelWidth-28)/2)-clw/2, int32(constructRect.Y)+11, 18, rl.White)
+
+	if meta.TutorialStep == TutorialCraftWeapon {
+		rl.DrawRectangleLinesEx(constructRect, 3, rl.Yellow)
+		rl.DrawText("▲ CRAFT HERE", int32(cx), int32(constructRect.Y)-22, 16, rl.Yellow)
+	}
+}
+
+func drawInventoryArea() {
+	mouse := rl.GetMousePosition()
+	var tooltipItem *Item
+
+	// ── Toolbar ───────────────────────────────────────────────────────────
+	tabW := float32(76)
+	tabH := float32(28)
+	tabGap := float32(6)
 	tabNames := []string{"All", "Wpn", "Shld", "Ring", "Trnk"}
-
-	//Fabricator button
-	fabricatorRect := rl.Rectangle{X: fabricateButtonX, Y: tabsY, Width: fabButtonWidth, Height: tabHeight}
-	fabricatorColor := rl.NewColor(0, 100, 100, 255)
-
-	//blocks if run in progress
-	if HasSaveFile() {
-		fabricatorColor = rl.NewColor(50, 50, 60, 255)
-	} else if rl.CheckCollisionPointRec(rl.GetMousePosition(), fabricatorRect) && !showFabricatorPopup {
-		fabricatorColor = rl.NewColor(0, 150, 150, 255)
-	}
-
-	rl.DrawRectangleRec(fabricatorRect, fabricatorColor)
-	rl.DrawRectangleLinesEx(fabricatorRect, 1, rl.White)
-	rl.DrawText("FABRICATOR", int32(fabricatorRect.X+10), int32(fabricatorRect.Y+8), 14, rl.White)
-
-	//Flash the fabricator button
-	if meta.TutorialStep == TutorialOpenFab {
-		if math.Mod(float64(rl.GetTime())*4, 2) < 1 {
-			rl.DrawRectangleLinesEx(fabricatorRect, 3, rl.White)
-		}
-		rl.DrawText("^ OPEN ME", int32(fabricatorRect.X), int32(fabricatorRect.Y)+40, 20, rl.Yellow)
-	}
-
-	//the  various tabs. wheeee
 	for i, name := range tabNames {
-		rect := rl.Rectangle{X: startTabX + float32(i)*(tabWidth+10), Y: tabsY, Width: tabWidth, Height: tabHeight}
-		color := rl.DarkGray
-		textColor := rl.Gray
+		x := InvAreaX + float32(i)*(tabW+tabGap)
+		rect := rl.Rectangle{X: x, Y: invToolbarY, Width: tabW, Height: tabH}
+		col := rl.NewColor(48, 48, 64, 255)
+		textCol := rl.Gray
 		if state.CurrentTab == i {
-			color = rl.Gold
-			textColor = rl.Black
+			col = rl.Gold
+			textCol = rl.Black
+		} else if rl.CheckCollisionPointRec(mouse, rect) {
+			col = rl.NewColor(68, 68, 88, 255)
+			textCol = rl.White
 		}
-		rl.DrawRectangleRec(rect, color)
-		rl.DrawText(name, int32(rect.X+10), int32(rect.Y+5), 20, textColor)
+		rl.DrawRectangleRec(rect, col)
+		tw := rl.MeasureText(name, 14)
+		rl.DrawText(name, int32(x+tabW/2)-tw/2, int32(invToolbarY+7), 14, textCol)
 	}
 
-	//sort buttons.
-	valRect := rl.Rectangle{X: sortX, Y: tabsY, Width: sortButtonWidth, Height: tabHeight}
-	valColor := rl.DarkGray
-	if state.SortMode == SortValue {
-		valColor = rl.Green
+	sortStartX := InvAreaX + 5*(tabW+tabGap) + 16
+	sortW := float32(52)
+	sortEntries := []struct {
+		label string
+		mode  int
+		on    rl.Color
+	}{
+		{"VAL", SortValue, rl.NewColor(35, 120, 55, 255)},
+		{"TYP", SortType, rl.NewColor(35, 70, 165, 255)},
+		{"RAR", SortRarity, rl.NewColor(120, 40, 185, 255)},
 	}
-	rl.DrawRectangleRec(valRect, valColor)
-	rl.DrawText("VAL", int32(valRect.X+10), int32(valRect.Y+5), 20, rl.White)
-
-	typeRect := rl.Rectangle{X: sortX + sortButtonWidth + 10, Y: tabsY, Width: sortButtonWidth, Height: tabHeight}
-	typeColor := rl.DarkGray
-	if state.SortMode == SortType {
-		typeColor = rl.Blue
+	for i, s := range sortEntries {
+		x := sortStartX + float32(i)*(sortW+tabGap)
+		rect := rl.Rectangle{X: x, Y: invToolbarY, Width: sortW, Height: tabH}
+		col := rl.NewColor(48, 48, 64, 255)
+		if state.SortMode == s.mode {
+			col = s.on
+		} else if rl.CheckCollisionPointRec(mouse, rect) {
+			col = rl.NewColor(68, 68, 88, 255)
+		}
+		rl.DrawRectangleRec(rect, col)
+		tw := rl.MeasureText(s.label, 13)
+		rl.DrawText(s.label, int32(x+sortW/2)-tw/2, int32(invToolbarY+7), 13, rl.White)
 	}
-	rl.DrawRectangleRec(typeRect, typeColor)
-	rl.DrawText("TYP", int32(typeRect.X+10), int32(typeRect.Y+5), 20, rl.White)
 
-	//Salvage button
-	salvageRect := rl.Rectangle{X: salvageX, Y: tabsY, Width: salvageButtonWidth, Height: tabHeight}
-	salvageColor := rl.DarkGray
+	salvX := sortStartX + 3*(sortW+tabGap) + 16
+	salvRect := rl.Rectangle{X: salvX, Y: invToolbarY, Width: 84, Height: tabH}
+	salvCol := rl.NewColor(48, 48, 64, 255)
 	if isSalvageMode {
-		salvageColor = rl.Red
+		salvCol = rl.NewColor(155, 28, 28, 255)
+	} else if rl.CheckCollisionPointRec(mouse, salvRect) {
+		salvCol = rl.NewColor(68, 68, 88, 255)
 	}
-	rl.DrawRectangleRec(salvageRect, salvageColor)
-	rl.DrawRectangleLinesEx(salvageRect, 1, rl.White)
-	rl.DrawText("SALVAGE", int32(salvageRect.X+10), int32(salvageRect.Y+5), 12, rl.White)
-
-	//inventory system
-	invY := float32(280)
-
-	//filtering stuff again.
-	filteredItems := []*Item{}
-	for _, item := range state.Player.Inventory {
-		if state.CurrentTab == TabAll ||
-			(state.CurrentTab == TabWeapon && item.Type == ItemWeapon) ||
-			(state.CurrentTab == TabShield && item.Type == ItemShield) ||
-			(state.CurrentTab == TabRing && item.Type == ItemRing) ||
-			(state.CurrentTab == TabTrinket && item.Type == ItemTrinket) {
-			filteredItems = append(filteredItems, item)
-		}
+	rl.DrawRectangleRec(salvRect, salvCol)
+	rl.DrawRectangleLinesEx(salvRect, 1, rl.NewColor(85, 85, 110, 255))
+	salvLabel := "SALVAGE"
+	if isSalvageMode {
+		salvLabel = "SALVAGING"
 	}
+	sw := rl.MeasureText(salvLabel, 12)
+	rl.DrawText(salvLabel, int32(salvX+42)-sw/2, int32(invToolbarY+8), 12, rl.White)
 
-	switch state.SortMode {
-	case SortValue:
-		sort.SliceStable(filteredItems, func(i, j int) bool {
-			if len(filteredItems[i].Stats) == 0 {
-				return false
-			}
-			if len(filteredItems[j].Stats) == 0 {
-				return true
-			}
-			return filteredItems[i].Stats[0].Value > filteredItems[j].Stats[0].Value
-		})
-	case SortType:
-		sort.SliceStable(filteredItems, func(i, j int) bool {
-			if filteredItems[i].Type == filteredItems[j].Type {
-				if len(filteredItems[i].Stats) > 0 && len(filteredItems[j].Stats) > 0 {
-					return filteredItems[i].Stats[0].Value > filteredItems[j].Stats[0].Value
-				}
-				return false
-			}
-			return filteredItems[i].Type < filteredItems[j].Type
-		})
-	}
+	// Item count hint
+	filteredItems := getFilteredSortedItems()
+	rl.DrawText(fmt.Sprintf("%d items", len(filteredItems)),
+		int32(salvX+96), int32(invToolbarY+8), 12, rl.NewColor(90, 90, 110, 255))
 
-	//a neat method to restrict draw area a bit more. not sure if it is worth it, but it was cool.
-	rl.BeginScissorMode(0, int32(invY), ScreenWidth, ScreenHeight-400)
+	// ── Grid ──────────────────────────────────────────────────────────────
+	clipH := int32(ScreenHeight) - int32(invGridY) - 90
+	rl.BeginScissorMode(int32(InvAreaX), int32(invGridY), int32(float32(ScreenWidth)-InvAreaX-20), clipH)
 
 	for i, item := range filteredItems {
-		col := i % InvCols
-		row := i / InvCols
-
-		x := startX + float32(col)*(CardWidth+CardGap)
-		y := invY + float32(row)*(CardHeight+CardGap) + state.InventoryScrollOffset
+		c := i % InvCols
+		r := i / InvCols
+		x := InvAreaX + float32(c)*(CardWidth+CardGap)
+		y := invGridY + float32(r)*(CardHeight+CardGap) + state.InventoryScrollOffset
 
 		isEquipped := false
 		for _, eq := range state.Player.EquippedItems {
@@ -499,214 +558,129 @@ func drawItemsMenu() {
 
 		drawItemCard(item, x, y, isEquipped)
 
-		// Tutorial highlight for the equip part of tutorial
-		if meta.TutorialStep == TutorialEquipItem && !isEquipped {
-			rect := rl.Rectangle{X: x, Y: y, Width: CardWidth, Height: CardHeight}
-			rl.DrawRectangleLinesEx(rect, 3, rl.Yellow)
-			rl.DrawText("EQUIP ME!", int32(x)+10, int32(y)+85, 20, rl.Yellow)
-		}
+		rect := rl.Rectangle{X: x, Y: y, Width: CardWidth, Height: CardHeight}
 
-		//make things red if salvaging.
 		if isSalvageMode {
-			rect := rl.Rectangle{X: x, Y: y, Width: CardWidth, Height: CardHeight}
-			rl.DrawRectangleRec(rect, rl.Fade(rl.Red, 0.3))
+			rl.DrawRectangleRec(rect, rl.Fade(rl.Red, 0.22))
 			rl.DrawRectangleLinesEx(rect, 2, rl.Red)
 		}
 
-		rect := rl.Rectangle{X: x, Y: y, Width: CardWidth, Height: CardHeight}
-		//show tooltip only if not blocked by popup
-		if !showFabricatorPopup && rl.CheckCollisionPointRec(rl.GetMousePosition(), rect) && rl.GetMouseY() > int32(invY) && rl.GetMouseY() < int32(ScreenHeight-120) {
+		if meta.TutorialStep == TutorialEquipItem && !isEquipped {
+			rl.DrawRectangleLinesEx(rect, 3, rl.Yellow)
+			rl.DrawText("EQUIP ME!", int32(x)+10, int32(y+CardHeight-28), 16, rl.Yellow)
+		}
+
+		my := rl.GetMouseY()
+		if rl.CheckCollisionPointRec(mouse, rect) && my > int32(invGridY) && my < int32(ScreenHeight)-90 {
 			tooltipItem = item
 		}
 	}
+
 	rl.EndScissorMode()
 
-	//sets scroll bounds.
+	// Scroll bounds
 	totalRows := (len(filteredItems) + InvCols - 1) / InvCols
-	contentHeight := float32(totalRows) * (CardHeight + CardGap)
-	visibleHeight := float32(ScreenHeight - 400)
-
-	if contentHeight > visibleHeight {
-		if state.InventoryScrollOffset < -(contentHeight-visibleHeight)-50 {
-			state.InventoryScrollOffset = -(contentHeight - visibleHeight) - 50
+	contentH := float32(totalRows) * (CardHeight + CardGap)
+	if contentH > float32(clipH) {
+		if state.InventoryScrollOffset < -(contentH-float32(clipH))-50 {
+			state.InventoryScrollOffset = -(contentH - float32(clipH)) - 50
 		}
 	} else {
 		state.InventoryScrollOffset = 0
 	}
 
-	backRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight) - 100, Width: 200, Height: 50}
-	color := rl.Gray
-	if rl.CheckCollisionPointRec(rl.GetMousePosition(), backRect) && !showFabricatorPopup {
-		color = rl.LightGray
-	}
-	rl.DrawRectangleRec(backRect, color)
-	rl.DrawText("BACK", int32(backRect.X)+75, int32(backRect.Y)+15, 20, rl.Black)
-
-	rpText := fmt.Sprintf("RP: %d", meta.ResearchPoints)
-	rl.DrawText(rpText, ScreenWidth-150, ScreenHeight-50, 24, rl.Gold)
-
-	if HasSaveFile() {
-		warn := "RUN IN PROGRESS - GEAR LOCKED"
-		rl.DrawText(warn, ScreenWidth/2-rl.MeasureText(warn, 20)/2, int32(ScreenHeight-130), 20, rl.Red)
-	}
-
-	if showFabricatorPopup {
-		//draw a light black overlay to fade background. makes menu feel more dynamic
-		rl.DrawRectangle(0, 0, ScreenWidth, ScreenHeight, rl.Fade(rl.Black, 0.7))
-		drawFabricatorPopup()
-	} else if tooltipItem != nil {
+	if tooltipItem != nil {
 		drawItemTooltip(tooltipItem)
 	}
 }
 
-func drawFabricatorPopup() {
-	panelWidth := float32(400)
-	panelHeight := float32(350)
-	panelX := float32(ScreenWidth)/2 - panelWidth/2
-	panelY := float32(ScreenHeight)/2 - panelHeight/2
-
-	rl.DrawRectangle(int32(panelX), int32(panelY), int32(panelWidth), int32(panelHeight), rl.NewColor(30, 30, 45, 255))
-	rl.DrawRectangleLines(int32(panelX), int32(panelY), int32(panelWidth), int32(panelHeight), rl.SkyBlue)
-	rl.DrawText("ITEM FABRICATOR", int32(panelX+20), int32(panelY+20), 24, rl.SkyBlue)
-
-	//close button
-	closeRect := rl.Rectangle{X: panelX + panelWidth - 35, Y: panelY + 10, Width: 25, Height: 25}
-	closeCol := rl.DarkGray
-	if rl.CheckCollisionPointRec(rl.GetMousePosition(), closeRect) {
-		closeCol = rl.Red
-	}
-	rl.DrawRectangleRec(closeRect, closeCol)
-	rl.DrawText("X", int32(closeRect.X+8), int32(closeRect.Y+4), 18, rl.White)
-
-	//pop up area to place buttons, give info etc.
-	contentX := panelX + (panelWidth-300)/2
-	contentY := panelY + 80
-
-	rl.DrawText(fmt.Sprintf("Investment: %d RP", state.ShopBidAmount), int32(contentX), int32(contentY-25), 20, rl.White)
-	buttonHeight := float32(30)
-	smallButtonWidth := float32(50)
-	margin := float32(10)
-
-	drawButton := func(x, y, w, h float32, text string) {
-		rec := rl.Rectangle{X: x, Y: y, Width: w, Height: h}
-		col := rl.DarkGray
-		if rl.CheckCollisionPointRec(rl.GetMousePosition(), rec) {
-			col = rl.Gray
+// getFilteredSortedItems returns inventory filtered by the current tab and sorted.
+func getFilteredSortedItems() []*Item {
+	out := make([]*Item, 0, len(state.Player.Inventory))
+	for _, item := range state.Player.Inventory {
+		if state.CurrentTab == TabAll ||
+			(state.CurrentTab == TabWeapon && item.Type == ItemWeapon) ||
+			(state.CurrentTab == TabShield && item.Type == ItemShield) ||
+			(state.CurrentTab == TabRing && item.Type == ItemRing) ||
+			(state.CurrentTab == TabTrinket && item.Type == ItemTrinket) {
+			out = append(out, item)
 		}
-		rl.DrawRectangleRec(rec, col)
-		rl.DrawRectangleLinesEx(rec, 1, rl.White)
-		txtWidth := rl.MeasureText(text, 10)
-		rl.DrawText(text, int32(x+w/2)-txtWidth/2, int32(y+h/2)-5, 10, rl.White)
 	}
-
-	drawButton(contentX, contentY, smallButtonWidth, buttonHeight, "-100")
-	drawButton(contentX+smallButtonWidth+margin, contentY, smallButtonWidth, buttonHeight, "-10")
-	drawButton(contentX+2*(smallButtonWidth+margin)+40, contentY, smallButtonWidth, buttonHeight, "+10")
-	drawButton(contentX+3*(smallButtonWidth+margin)+40, contentY, smallButtonWidth, buttonHeight, "+100")
-
-	row2Y := contentY + buttonHeight + 15
-	drawButton(contentX, row2Y, 100, buttonHeight, "MIN (100)")
-	drawButton(contentX+110+60, row2Y, 100, buttonHeight, "MAX")
-
-	mult := float32(math.Pow(float64(state.ShopBidAmount)/100.0, 0.5))
-	rl.DrawText(fmt.Sprintf("Power Mult: %.2fx", mult), int32(contentX), int32(row2Y+40), 16, rl.Yellow)
-
-	chance2 := float32(0.0)
-	if state.ShopBidAmount > 100 {
-		chance2 = float32(state.ShopBidAmount-100) / 400.0
+	switch state.SortMode {
+	case SortValue:
+		sort.SliceStable(out, func(i, j int) bool {
+			if len(out[i].Stats) == 0 {
+				return false
+			}
+			if len(out[j].Stats) == 0 {
+				return true
+			}
+			return out[i].Stats[0].Value > out[j].Stats[0].Value
+		})
+	case SortType:
+		sort.SliceStable(out, func(i, j int) bool {
+			if out[i].Type == out[j].Type {
+				if len(out[i].Stats) > 0 && len(out[j].Stats) > 0 {
+					return out[i].Stats[0].Value > out[j].Stats[0].Value
+				}
+				return false
+			}
+			return out[i].Type < out[j].Type
+		})
+	case SortRarity:
+		sort.SliceStable(out, func(i, j int) bool {
+			if out[i].Rarity == out[j].Rarity {
+				if len(out[i].Stats) > 0 && len(out[j].Stats) > 0 {
+					return out[i].Stats[0].Value > out[j].Stats[0].Value
+				}
+				return false
+			}
+			return out[i].Rarity > out[j].Rarity
+		})
 	}
-	if chance2 > 1.0 {
-		chance2 = 1.0
-	}
+	return out
+}
 
-	chance3 := float32(0.0)
-	if state.ShopBidAmount > 500 {
-		chance3 = float32(state.ShopBidAmount-500) / 1000.0
-	}
-	if chance3 > 1.0 {
-		chance3 = 1.0
-	}
-	rl.DrawText(fmt.Sprintf("Extra Stat: %.0f%%", chance2*100), int32(contentX+150), int32(row2Y+40), 14, rl.LightGray)
-	if chance3 > 0 {
-		rl.DrawText(fmt.Sprintf("3rd Stat: %.0f%%", chance3*100), int32(contentX+150), int32(row2Y+55), 14, rl.LightGray)
-	}
+// ── Item card & tooltip ───────────────────────────────────────────────────────
 
-	//buttons for selecting targetted type.
-	typeButtonWidth := float32(55)
-	typeMargin := float32(5)
-	totalTypeWidth := 5*typeButtonWidth + 4*typeMargin
-	typeStartX := panelX + (panelWidth-totalTypeWidth)/2
-	typeY := row2Y + 85
-
-	typeLabels := []struct {
-		Text string
-		Val  int
-	}{
-		{"ANY", -1},
-		{"WPN", 0},
-		{"SHLD", 1},
-		{"RING", 2},
-		{"TRNK", 3},
-	}
-
-	for i, t := range typeLabels {
-		x := typeStartX + float32(i)*(typeButtonWidth+typeMargin)
-		r := rl.Rectangle{X: x, Y: typeY, Width: typeButtonWidth, Height: 30}
-
-		col := rl.DarkGray
-		if fabricatorTargetType == t.Val {
-			col = rl.NewColor(0, 100, 200, 255) // Highlight Blue
-		} else if rl.CheckCollisionPointRec(rl.GetMousePosition(), r) {
-			col = rl.Gray
-		}
-
-		rl.DrawRectangleRec(r, col)
-		rl.DrawRectangleLinesEx(r, 1, rl.White)
-		txtWidth := rl.MeasureText(t.Text, 10)
-		rl.DrawText(t.Text, int32(x+typeButtonWidth/2)-txtWidth/2, int32(typeY+10), 10, rl.White)
-	}
-
-	//construct button
-	buttonWidth := float32(200)
-
-	constructRect := rl.Rectangle{X: panelX + (panelWidth-buttonWidth)/2, Y: row2Y + 150, Width: buttonWidth, Height: 50}
-
-	buyCol := rl.DarkGreen
-	if state.ShopBidAmount > meta.ResearchPoints {
-		buyCol = rl.Maroon
-		rl.DrawText("INSUFFICIENT FUNDS", int32(panelX+(panelWidth-float32(rl.MeasureText("INSUFFICIENT FUNDS", 10)))/2), int32(row2Y+190), 10, rl.Red)
-	} else if rl.CheckCollisionPointRec(rl.GetMousePosition(), constructRect) {
-		buyCol = rl.Green
-	}
-	rl.DrawRectangleRec(constructRect, buyCol)
-	rl.DrawRectangleLinesEx(constructRect, 2, rl.Lime)
-	rl.DrawText("CONSTRUCT", int32(constructRect.X)+50, int32(constructRect.Y)+15, 20, rl.White)
-
-	// Highlight Construct Button
-	if meta.TutorialStep == TutorialCraftWeapon {
-		rl.DrawText("CLICK TO CRAFT!", int32(constructRect.X), int32(constructRect.Y)-30, 20, rl.Yellow)
-		rl.DrawRectangleLinesEx(constructRect, 3, rl.Yellow)
+// uniqueModifierDescription returns a plain-English description of a unique modifier for the tooltip.
+func uniqueModifierDescription(key string) string {
+	switch key {
+	case "LifeOnHit":
+		return "Restores a small amount of HP on every hit."
+	case "ExplosiveShots":
+		return "Shots have a chance to explode on impact for AoE damage."
+	case "VampireRounds":
+		return "A portion of damage dealt is returned as HP."
+	case "StaticBurst":
+		return "Chance on hit to arc a bolt of lightning to a nearby enemy."
+	case "ShieldSpike":
+		return "Enemies that strike you directly take reflected damage."
+	case "SwiftReload":
+		return "Each kill shaves time off all active ability cooldowns."
+	case "Overclock":
+		return "Kills trigger a brief burst of increased attack speed."
+	case "LuckyDrop":
+		return "Increases RP dropped by enemies."
+	default:
+		return ""
 	}
 }
 
-// draws item info, base display.
 func drawItemCard(item *Item, x, y float32, isEquipped bool) {
 	rect := rl.Rectangle{X: x, Y: y, Width: CardWidth, Height: CardHeight}
+	rc := rarityColor(item.Rarity)
 
-	bgColor := rl.NewColor(50, 50, 60, 255)
-	borderColor := rl.White
-
+	bgColor := rl.NewColor(30, 30, 42, 255)
 	if isEquipped {
-		bgColor = rl.NewColor(20, 50, 20, 255)
-		borderColor = rl.Green
+		bgColor = rl.NewColor(18, 38, 18, 255)
 	} else if rl.CheckCollisionPointRec(rl.GetMousePosition(), rect) {
-		bgColor = rl.NewColor(70, 70, 80, 255)
+		bgColor = rl.NewColor(48, 48, 62, 255)
 	}
-
 	rl.DrawRectangleRec(rect, bgColor)
-	rl.DrawRectangleLinesEx(rect, 1, borderColor)
+	rl.DrawRectangleLinesEx(rect, 2, rc)
 
-	rl.DrawText(item.Name, int32(x+8), int32(y+8), 16, rl.White)
+	rl.DrawText(item.Name, int32(x+8), int32(y+8), 15, rc)
 
 	typeLabel := "Unknown"
 	switch item.Type {
@@ -719,44 +693,56 @@ func drawItemCard(item *Item, x, y float32, isEquipped bool) {
 	case ItemTrinket:
 		typeLabel = "Trinket"
 	}
-	rl.DrawText(typeLabel, int32(x+8), int32(y+26), 10, rl.Gray)
+	rl.DrawText(typeLabel+" · "+rarityLabel(item.Rarity), int32(x+8), int32(y+26), 10, rl.Gray)
 
-	statY := int32(y + 45)
+	statY := int32(y + 44)
 	for i, stat := range item.Stats {
 		if i >= 3 {
 			break
 		}
-
-		statLabel := stat.StatType
-		if stat.StatType == "RPGain" {
-			statLabel = "RP"
+		lbl := stat.StatType
+		switch stat.StatType {
+		case "RPGain":
+			lbl = "RP"
+		case "MaxHP":
+			lbl = "HP"
+		case "Explosive":
+			lbl = "Boom"
 		}
-		if stat.StatType == "MaxHP" {
-			statLabel = "HP"
-		}
-		if stat.StatType == "Explosive" {
-			statLabel = "Boom"
-		}
-
-		text := fmt.Sprintf("+%.2f %s", stat.BaseValue, statLabel)
-		rl.DrawText(text, int32(x+8), statY, 14, rl.Green)
-		statY += 16
+		rl.DrawText(fmt.Sprintf("+%.2f %s", stat.BaseValue, lbl), int32(x+8), statY, 13, rl.LightGray)
+		statY += 15
 	}
 
+	if item.UniqueModifier != "" {
+		rl.DrawText(">> "+uniqueModifierLabel(item.UniqueModifier), int32(x+8), statY+2, 11, rc)
+	}
+	if item.SetID != "" {
+		rl.DrawText("SET", int32(x+CardWidth-36), int32(y+8), 11, rarityColor(RaritySet))
+	}
 	if isEquipped {
-		rl.DrawText("E", int32(x+CardWidth-20), int32(y+CardHeight-25), 20, rl.Yellow)
+		rl.DrawText("E", int32(x+CardWidth-18), int32(y+CardHeight-22), 18, rl.Yellow)
 	}
 }
 
-// draws...get this...the tooltip.
 func drawItemTooltip(item *Item) {
 	mouse := rl.GetMousePosition()
 	tipX := int32(mouse.X) + 15
 	tipY := int32(mouse.Y) + 15
-	tipWidth := int32(280)
-	baseHeight := 60
-	statHeight := len(item.Stats) * 20
-	tipHeight := int32(baseHeight + statHeight + 10)
+	tipWidth := int32(300)
+
+	// Calculate height based on actual content
+	contentLines := 3 // name + rarity + description label
+	contentLines += len(item.Stats)
+	if item.UniqueModifier != "" {
+		contentLines += 3 // label + description line + gap
+	}
+	if item.SetID != "" {
+		contentLines++
+	}
+	if isSalvageMode {
+		contentLines++
+	}
+	tipHeight := int32(20 + contentLines*20)
 
 	if tipX+tipWidth > ScreenWidth {
 		tipX = ScreenWidth - tipWidth - 10
@@ -765,31 +751,58 @@ func drawItemTooltip(item *Item) {
 		tipY = ScreenHeight - tipHeight - 10
 	}
 
-	//a lil extra height for salvage text
-	if isSalvageMode {
-		tipHeight += 25
-	}
+	rc := rarityColor(item.Rarity)
+	rl.DrawRectangle(tipX, tipY, tipWidth, tipHeight, rl.NewColor(10, 10, 20, 248))
+	rl.DrawRectangleLines(tipX, tipY, tipWidth, tipHeight, rc)
 
-	rl.DrawRectangle(tipX, tipY, tipWidth, tipHeight, rl.NewColor(10, 10, 20, 245))
-	rl.DrawRectangleLines(tipX, tipY, tipWidth, tipHeight, rl.Gold)
+	rl.DrawText(item.Name, tipX+10, tipY+10, 20, rc)
+	rl.DrawText(rarityLabel(item.Rarity), tipX+10, tipY+33, 11, rc)
+	rl.DrawText(item.Description, tipX+120, tipY+35, 10, rl.Gray)
 
-	rl.DrawText(item.Name, tipX+10, tipY+10, 20, rl.Yellow)
-	rl.DrawText(item.Description, tipX+10, tipY+35, 10, rl.LightGray)
-
-	currentY := tipY + 60
-
+	cy := tipY + 56
 	for _, stat := range item.Stats {
-		label := stat.StatType
-		if label == "RPGain" {
-			label = "Research Gain"
+		lbl := stat.StatType
+		switch lbl {
+		case "RPGain":
+			lbl = "Research Gain"
+		case "MaxHP":
+			lbl = "Max HP"
+		case "DmgDist":
+			lbl = "Dmg per Meter"
+		case "PureDef":
+			lbl = "Pure Defense"
+		case "ShieldRate":
+			lbl = "Overshield Rate"
+		case "FreeUp":
+			lbl = "Free Upgrade"
+		case "WaveSkip":
+			lbl = "Wave Skip"
 		}
-		valText := fmt.Sprintf("%s: +%.2f", label, stat.BaseValue)
-		rl.DrawText(valText, tipX+10, currentY, 10, rl.Green)
-		currentY += 20
+		rl.DrawText(fmt.Sprintf("%s: +%.3f", lbl, stat.BaseValue), tipX+10, cy, 12, rl.LightGray)
+		cy += 20
+	}
+
+	if item.UniqueModifier != "" {
+		cy += 4
+		rl.DrawText(">> "+uniqueModifierLabel(item.UniqueModifier), tipX+10, cy, 13, rc)
+		cy += 18
+		desc := uniqueModifierDescription(item.UniqueModifier)
+		if desc != "" {
+			rl.DrawText(desc, tipX+14, cy, 10, rl.NewColor(170, 170, 195, 255))
+			cy += 18
+		}
+	}
+
+	if item.SetID != "" {
+		setText := "SET: " + item.SetID
+		if def, ok := SetRegistry[item.SetID]; ok {
+			setText = "SET: " + def.Name
+		}
+		rl.DrawText(setText, tipX+10, cy, 12, rarityColor(RaritySet))
+		cy += 20
 	}
 
 	if isSalvageMode {
-		salvText := fmt.Sprintf("Salvage: %d RP", item.SalvageValue)
-		rl.DrawText(salvText, tipX+10, currentY+5, 16, rl.Red)
+		rl.DrawText(fmt.Sprintf("Salvage: %d RP", item.SalvageValue), tipX+10, cy+3, 14, rl.Red)
 	}
 }

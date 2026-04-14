@@ -524,22 +524,60 @@ func drawTalentEntry(t talentDef, x, y float32, mousePos rl.Vector2, isTutorialL
 				rl.DrawText(costLabel, int32(x)+4, int32(y)+66, 12, costColor)
 			}
 		} else {
-			// Branch already chosen — show which one
-			chosenName := t.BranchAName
-			chosenDesc := t.BranchADesc
-			lineColor := rl.SkyBlue
-			if *t.Branch == t.BranchBValue {
-				chosenName = t.BranchBName
-				chosenDesc = t.BranchBDesc
-				lineColor = rl.Orange
+			// Branch already chosen — show both options side by side.
+			// Chosen is highlighted; unchosen is visible but dimmed. Neither is clickable.
+			chosenA := *t.Branch == t.BranchAValue
+			branchARect := rl.Rectangle{X: x, Y: y + 44, Width: lay.branchW, Height: 36}
+			branchBRect := rl.Rectangle{X: x + lay.branchW + 8, Y: y + 44, Width: lay.branchW, Height: 36}
+
+			var chosenRect, otherRect rl.Rectangle
+			var colChosen, colOther rl.Color
+			var borderChosen, borderOther rl.Color
+			var labelChosen, labelOther string
+			var descChosen, descOther string
+
+			if chosenA {
+				chosenRect = branchARect
+				otherRect = branchBRect
+				colChosen = rl.NewColor(20, 60, 120, 255)
+				borderChosen = rl.SkyBlue
+				labelChosen = "[A] " + trimLabel(t.BranchAName, 13)
+				descChosen = t.BranchADesc
+				colOther = rl.NewColor(25, 20, 20, 200)
+				borderOther = rl.NewColor(60, 60, 60, 200)
+				labelOther = "[B] " + trimLabel(t.BranchBName, 13)
+				descOther = t.BranchBDesc
+			} else {
+				chosenRect = branchBRect
+				otherRect = branchARect
+				colChosen = rl.NewColor(100, 45, 10, 255)
+				borderChosen = rl.Orange
+				labelChosen = "[B] " + trimLabel(t.BranchBName, 13)
+				descChosen = t.BranchBDesc
+				colOther = rl.NewColor(20, 20, 25, 200)
+				borderOther = rl.NewColor(60, 60, 60, 200)
+				labelOther = "[A] " + trimLabel(t.BranchAName, 13)
+				descOther = t.BranchADesc
 			}
-			tagRect := rl.Rectangle{X: x, Y: y + 44, Width: lay.cardW, Height: 36}
-			rl.DrawRectangleRec(tagRect, rl.NewColor(15, 15, 25, 220))
-			rl.DrawRectangleLinesEx(tagRect, 2, lineColor)
-			rl.DrawText("Branch: "+chosenName, int32(x)+6, int32(y)+48, 14, lineColor)
-			rl.DrawText(chosenDesc, int32(x)+6, int32(y)+64, 12, rl.LightGray)
-			if rl.CheckCollisionPointRec(mousePos, tagRect) {
-				tooltip = fmt.Sprintf("Chosen: %s — %s", chosenName, chosenDesc)
+
+			// Unchosen (dimmed)
+			rl.DrawRectangleRec(otherRect, colOther)
+			rl.DrawRectangleLinesEx(otherRect, 1, borderOther)
+			rl.DrawText(labelOther, int32(otherRect.X)+4, int32(otherRect.Y)+4, 11, rl.NewColor(120, 120, 120, 200))
+			rl.DrawText(trimLabel(descOther, 18), int32(otherRect.X)+4, int32(otherRect.Y)+18, 10, rl.NewColor(90, 90, 90, 180))
+
+			// Chosen (highlighted)
+			rl.DrawRectangleRec(chosenRect, colChosen)
+			rl.DrawRectangleLinesEx(chosenRect, 2, borderChosen)
+			rl.DrawText(labelChosen, int32(chosenRect.X)+4, int32(chosenRect.Y)+4, 11, rl.White)
+			rl.DrawText(trimLabel(descChosen, 18), int32(chosenRect.X)+4, int32(chosenRect.Y)+18, 10, rl.LightGray)
+			rl.DrawText("✓", int32(chosenRect.X+chosenRect.Width)-14, int32(chosenRect.Y)+4, 13, borderChosen)
+
+			if rl.CheckCollisionPointRec(mousePos, chosenRect) {
+				tooltip = fmt.Sprintf("Chosen: %s — %s", labelChosen, descChosen)
+			}
+			if rl.CheckCollisionPointRec(mousePos, otherRect) {
+				tooltip = fmt.Sprintf("Not chosen: %s — %s", labelOther, descOther)
 			}
 		}
 	}
