@@ -75,13 +75,11 @@ var isSalvageMode = false
 // ── Input ─────────────────────────────────────────────────────────────────────
 
 func handleItemsInput() {
+	// On entering the gear room during tutorial, advance from GoToGear → CraftFirst.
+	// This is safe because we no longer have a TutorialOpenFab step -- the fabricator
+	// is always visible, so we skip straight to "craft your first item".
 	if meta.TutorialStep == TutorialGoToGear {
-		meta.TutorialStep = TutorialOpenFab
-		SaveMetaProg()
-	}
-	// Fabricator is always visible — no button to click, so skip straight to craft step.
-	if meta.TutorialStep == TutorialOpenFab {
-		meta.TutorialStep = TutorialCraftWeapon
+		meta.TutorialStep = TutorialCraftFirst
 		SaveMetaProg()
 	}
 
@@ -105,7 +103,7 @@ func handleItemsInput() {
 	// Fabricator input is always live (locked visually when run active, just does nothing)
 	handleFabricatorInput(mouse)
 
-	// Scroll — only when hovering the inventory area
+	// Scroll -- only when hovering the inventory area
 	if mouse.X > InvAreaX {
 		scroll := rl.GetMouseWheelMove()
 		if scroll != 0 {
@@ -120,7 +118,19 @@ func handleItemsInput() {
 		// Back button
 		backRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight) - 70, Width: 200, Height: 45}
 		if rl.CheckCollisionPointRec(mouse, backRect) {
+			// Block leaving until required tutorial actions are done.
+			if meta.TutorialStep == TutorialCraftFirst ||
+				meta.TutorialStep == TutorialCraftBad ||
+				meta.TutorialStep == TutorialSalvageBad ||
+				meta.TutorialStep == TutorialEquipItem {
+				return
+			}
 			playButtonSound()
+			// Clicking Back during TutorialBackFromGear advances to TutorialReady.
+			if meta.TutorialStep == TutorialBackFromGear {
+				meta.TutorialStep = TutorialReady
+				SaveMetaProg()
+			}
 			state.CurrentScreen = ScreenStart
 			return
 		}
@@ -153,7 +163,7 @@ func handleFabricatorInput(mouse rl.Vector2) {
 				fabInputText = ""
 			}
 		} else if fabInputActive {
-			// Clicked outside — commit and unfocus.
+			// Clicked outside -- commit and unfocus.
 			fabInputActive = false
 			liveApplyFabInput()
 			if fabInputText == "" {
@@ -163,12 +173,12 @@ func handleFabricatorInput(mouse rl.Vector2) {
 	}
 
 	if fabInputActive {
-		// Backspace — one character per keypress, handled exactly once.
+		// Backspace -- one character per keypress, handled exactly once.
 		if rl.IsKeyPressed(rl.KeyBackspace) && len(fabInputText) > 0 {
 			fabInputText = fabInputText[:len(fabInputText)-1]
 		}
 
-		// Digits only via GetCharPressed — drains the queue each frame.
+		// Digits only via GetCharPressed -- drains the queue each frame.
 		for {
 			ch := rl.GetCharPressed()
 			if ch == 0 {
@@ -197,7 +207,7 @@ func handleFabricatorInput(mouse rl.Vector2) {
 		return
 	}
 
-	// Construct button — Y mirrors drawFabricatorPanel layout exactly.
+	// Construct button -- Y mirrors drawFabricatorPanel layout exactly.
 	oddsTop := inputBoxRect.Y + 32 + 14 + 12
 	oddsH := float32(16 + 6*15 + 8)
 	constructY := oddsTop + oddsH + 10
@@ -209,24 +219,29 @@ func handleFabricatorInput(mouse rl.Vector2) {
 		if state.ShopBidAmount < 100 {
 			state.ShopBidAmount = 100
 		}
-		if meta.TutorialStep == TutorialCraftWeapon {
-			if meta.ResearchPoints >= state.ShopBidAmount {
-				meta.ResearchPoints -= state.ShopBidAmount
-				tutorialItem := &Item{
-					Name:         "Tutorial Blaster",
-					Type:         ItemWeapon,
-					Rarity:       RarityNormal,
-					Description:  "Standard Issue Training Weapon",
-					Stats:        []ItemStat{{StatType: "Damage", Value: 0.5, BaseValue: 0.5, Growth: 0.1}},
-					SalvageValue: state.ShopBidAmount / 5,
-				}
-				state.Player.Inventory = append(state.Player.Inventory, tutorialItem)
-				meta.TutorialStep = TutorialEquipItem
-				SaveMetaProg()
-			}
-		} else {
-			buyItem(state.ShopBidAmount, -1)
+
+		// ── Tutorial craft phase 1: inject the free "bad" item first ────────
+		// We show the bad result first so the "oh no" moment lands before
+		// the good item, making the Plasma Cutter feel earned by comparison.
+		if meta.TutorialStep == TutorialCraftFirst {
+			item := injectTutorialBadItem()
+			state.Player.Inventory = append(state.Player.Inventory, item)
+			meta.TutorialStep = TutorialCraftBad
+			SaveMetaProg()
+			return
 		}
+
+		// ── Tutorial craft phase 2: inject the free "good" item ──────────────
+		if meta.TutorialStep == TutorialCraftBad {
+			item := injectTutorialGoodItem()
+			state.Player.Inventory = append(state.Player.Inventory, item)
+			meta.TutorialStep = TutorialSalvageBad
+			SaveMetaProg()
+			return
+		}
+
+		// Normal fabrication for all other states.
+		buyItem(state.ShopBidAmount, -1)
 	}
 }
 
@@ -291,15 +306,25 @@ func handleInventoryGrid(mouse rl.Vector2) {
 		y := invGridY + float32(row)*(CardHeight+CardGap) + state.InventoryScrollOffset
 		if rl.CheckCollisionPointRec(mouse, rl.Rectangle{X: x, Y: y, Width: CardWidth, Height: CardHeight}) {
 			if isSalvageMode {
+				// During TutorialSalvageBad, only allow salvaging the Defective Cell.
+				// This prevents a new player from accidentally scrapping their good weapon.
+				if meta.TutorialStep == TutorialSalvageBad && item.Name != "Defective Cell" {
+					return
+				}
 				salvageItem(item)
+				// Salvaging the bad item advances the tutorial.
+				if meta.TutorialStep == TutorialSalvageBad {
+					meta.TutorialStep = TutorialEquipItem
+					isSalvageMode = false
+					SaveMetaProg()
+				}
 				return
 			}
 			if !HasSaveFile() {
 				equipItem(&state.Player, item)
 				if meta.TutorialStep == TutorialEquipItem {
-					meta.TutorialStep = TutorialReady
+					meta.TutorialStep = TutorialBackFromGear
 					SaveMetaProg()
-					state.CurrentScreen = ScreenStart
 				}
 			}
 			return
@@ -323,6 +348,13 @@ func drawItemsMenu() {
 	if rl.CheckCollisionPointRec(rl.GetMousePosition(), backRect) {
 		backCol = rl.LightGray
 	}
+	if meta.TutorialStep == TutorialBackFromGear {
+		if int(rl.GetTime()*4)%2 == 0 {
+			backCol = rl.NewColor(30, 130, 30, 255)
+		} else {
+			backCol = rl.NewColor(20, 80, 20, 255)
+		}
+	}
 	rl.DrawRectangleRec(backRect, backCol)
 	lw := rl.MeasureText("BACK", 20)
 	rl.DrawText("BACK", int32(backRect.X+100)-lw/2, int32(backRect.Y)+13, 20, rl.Black)
@@ -330,9 +362,12 @@ func drawItemsMenu() {
 	rl.DrawText(fmt.Sprintf("RP: %d", meta.ResearchPoints), ScreenWidth-160, int32(ScreenHeight)-55, 24, rl.Gold)
 
 	if HasSaveFile() {
-		warn := "RUN IN PROGRESS — FABRICATOR LOCKED"
+		warn := "RUN IN PROGRESS -- FABRICATOR LOCKED"
 		rl.DrawText(warn, ScreenWidth/2-rl.MeasureText(warn, 18)/2, int32(ScreenHeight)-98, 18, rl.Red)
 	}
+
+	// ── Tutorial overlays ─────────────────────────────────────────────────────
+	drawItemsMenuTutorialOverlay()
 }
 
 func drawEquippedRow() {
@@ -390,7 +425,7 @@ func drawFabricatorPanel() {
 	rl.DrawText("Investment (RP):", int32(cx), int32(fabPanelTop+32), 12, rl.NewColor(140, 140, 160, 255))
 
 	inputBoxRect := rl.Rectangle{X: cx, Y: fabPanelTop + 46, Width: FabPanelWidth - 28, Height: 32}
-	// Pass fabInputActive for visual styling only — input is handled entirely by our own code.
+	// Pass fabInputActive for visual styling only -- input is handled entirely by our own code.
 	gui.SetStyle(gui.TEXTBOX, gui.TEXT_ALIGNMENT, gui.TEXT_ALIGN_CENTER)
 	gui.TextBox(inputBoxRect, &fabInputText, 7, false)
 	gui.SetStyle(gui.TEXTBOX, gui.TEXT_ALIGNMENT, gui.TEXT_ALIGN_LEFT)
@@ -407,9 +442,9 @@ func drawFabricatorPanel() {
 	}
 
 	if !fabInputActive {
-		rl.DrawText("click to edit  •  Enter to confirm", int32(cx), int32(inputBoxRect.Y+inputBoxRect.Height+4), 10, rl.NewColor(80, 80, 100, 255))
+		rl.DrawText("click to edit  |  Enter to confirm", int32(cx), int32(inputBoxRect.Y+inputBoxRect.Height+4), 10, rl.NewColor(80, 80, 100, 255))
 	} else {
-		rl.DrawText("Enter to confirm  •  Esc to cancel", int32(cx), int32(inputBoxRect.Y+inputBoxRect.Height+4), 10, rl.NewColor(100, 140, 180, 255))
+		rl.DrawText("Enter to confirm  |  Esc to cancel", int32(cx), int32(inputBoxRect.Y+inputBoxRect.Height+4), 10, rl.NewColor(100, 140, 180, 255))
 	}
 
 	// ── Rarity odds table ─────────────────────────────────────────────────
@@ -459,9 +494,13 @@ func drawFabricatorPanel() {
 	clw := rl.MeasureText(clabel, 18)
 	rl.DrawText(clabel, int32(cx+(FabPanelWidth-28)/2)-clw/2, int32(constructRect.Y)+11, 18, rl.White)
 
-	if meta.TutorialStep == TutorialCraftWeapon {
+	if meta.TutorialStep == TutorialCraftFirst {
 		rl.DrawRectangleLinesEx(constructRect, 3, rl.Yellow)
-		rl.DrawText("▲ CRAFT HERE", int32(cx), int32(constructRect.Y)-22, 16, rl.Yellow)
+		rl.DrawText("^ CRAFT YOUR FIRST ITEM (FREE!)", int32(cx), int32(constructRect.Y)-22, 14, rl.Yellow)
+	}
+	if meta.TutorialStep == TutorialCraftBad {
+		rl.DrawRectangleLinesEx(constructRect, 3, rl.Orange)
+		rl.DrawText("^ CRAFT AGAIN (FREE! -- for salvage demo)", int32(cx), int32(constructRect.Y)-22, 12, rl.Orange)
 	}
 }
 
@@ -693,7 +732,7 @@ func drawItemCard(item *Item, x, y float32, isEquipped bool) {
 	case ItemTrinket:
 		typeLabel = "Trinket"
 	}
-	rl.DrawText(typeLabel+" · "+rarityLabel(item.Rarity), int32(x+8), int32(y+26), 10, rl.Gray)
+	rl.DrawText(typeLabel+" / "+rarityLabel(item.Rarity), int32(x+8), int32(y+26), 10, rl.Gray)
 
 	statY := int32(y + 44)
 	for i, stat := range item.Stats {
@@ -804,5 +843,104 @@ func drawItemTooltip(item *Item) {
 
 	if isSalvageMode {
 		rl.DrawText(fmt.Sprintf("Salvage: %d RP", item.SalvageValue), tipX+10, cy+3, 14, rl.Red)
+	}
+}
+
+// drawSalvageLockOverlay dims all inventory cards except the Defective Cell
+// during TutorialSalvageBad, making it visually obvious which item to click
+// and preventing accidental salvage of the good weapon.
+func drawSalvageLockOverlay() {
+	clipH := float32(ScreenHeight) - invGridY - 90
+	rl.BeginScissorMode(int32(InvAreaX), int32(invGridY), int32(float32(ScreenWidth)-InvAreaX-20), int32(clipH))
+
+	for i, item := range getFilteredSortedItems() {
+		if item.Name == "Defective Cell" {
+			continue // leave the target item fully visible
+		}
+		col := i % InvCols
+		row := i / InvCols
+		x := InvAreaX + float32(col)*(CardWidth+CardGap)
+		y := invGridY + float32(row)*(CardHeight+CardGap) + state.InventoryScrollOffset
+		// Dark translucent overlay -- dims the card and makes it feel unclickable.
+		rl.DrawRectangle(int32(x), int32(y), int32(CardWidth), int32(CardHeight),
+			rl.NewColor(0, 0, 0, 160))
+		// Small "LOCKED" label so the intent is unambiguous.
+		lbl := "LOCKED"
+		lw := rl.MeasureText(lbl, 12)
+		rl.DrawText(lbl, int32(x)+int32(CardWidth)/2-lw/2, int32(y)+int32(CardHeight)/2-6, 12, rl.NewColor(180, 180, 180, 200))
+	}
+
+	rl.EndScissorMode()
+}
+
+// drawItemsMenuTutorialOverlay renders the step-by-step tutorial guidance panels
+// inside the Gear & Inventory screen. Each step shows a bubble near the relevant
+// UI element and explains what to do next.
+func drawItemsMenuTutorialOverlay() {
+	backRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight) - 70, Width: 200, Height: 45}
+
+	switch meta.TutorialStep {
+
+	case TutorialCraftFirst:
+		drawTutorialBubble(FabPanelX, fabPanelTop-150,
+			"FABRICATOR",
+			[]string{
+				"Use the Fabricator to craft gear!",
+				"More RP invested = better odds for",
+				"higher rarity items with more stats.",
+				"Hit CONSTRUCT to try your luck!",
+			}, rl.Gold)
+
+	case TutorialCraftBad:
+		drawTutorialBubble(FabPanelX, fabPanelTop-165,
+			"OH NO...",
+			[]string{
+				"That one's not great. It happens!",
+				"Not every craft is a winner -- odds",
+				"improve a lot with more RP invested.",
+				"Hit CONSTRUCT once more and let's",
+				"see if we can do better.",
+			}, rl.Orange)
+
+	case TutorialSalvageBad:
+		salvX := InvAreaX + 5*(76+6) + 16 + 3*(52+6) + 16
+		// Raised above the toolbar so it doesn't overlap the salvage button.
+		drawTutorialBubble(float32(salvX-80), invToolbarY-160,
+			"MUCH BETTER!",
+			[]string{
+				"That's a keeper! But what about",
+				"the Defective Cell gathering dust?",
+				"Enable SALVAGE mode above, then",
+				"click the Defective Cell to break it",
+				"down and recover some RP.",
+			}, rl.Red)
+		salvRect := rl.Rectangle{X: float32(salvX), Y: invToolbarY, Width: 84, Height: 28}
+		if int(rl.GetTime()*4)%2 == 0 {
+			rl.DrawRectangleLinesEx(salvRect, 3, rl.Red)
+		}
+		drawSalvageLockOverlay()
+
+	case TutorialEquipItem:
+		// Raised well above the inventory grid so it clears the first item card.
+		drawTutorialBubble(InvAreaX, invGridY-150,
+			"EQUIP YOUR GEAR",
+			[]string{
+				"Click the Plasma Cutter in your",
+				"inventory to equip it.",
+				"Equipped gear boosts your stats",
+				"and levels up during each run!",
+			}, rl.SkyBlue)
+
+	case TutorialBackFromGear:
+		// Item equipped -- guide them to click Back.
+		// Back button centre is ScreenWidth/2; anchor bubble so it sits centred over it.
+		drawTutorialBubble(float32(ScreenWidth)/2-160, backRect.Y-130,
+			"OK, LOOKING SHARP!",
+			[]string{
+				"(Pun intended.)",
+				"Let's go kill us some dastardly polygons!",
+				"Click BACK to head to the start screen",
+				"and begin your run.",
+			}, rl.Lime)
 	}
 }

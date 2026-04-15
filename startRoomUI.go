@@ -47,7 +47,7 @@ func handleStartInput() {
 			Width: 220, Height: 50,
 		}
 		if rl.CheckCollisionPointRec(mousePos, resRect) {
-			//checks for tutuorial state before letting you in. prevents spending the tutorial RP here.
+			// Only allow entry at step 1 (GoToResearch) or when tutorial is done.
 			if meta.TutorialStep == TutorialNone || meta.TutorialStep == TutorialReady || meta.TutorialStep == TutorialGoToResearch {
 				playButtonSound()
 				state.CurrentScreen = ScreenResearch
@@ -62,10 +62,21 @@ func handleStartInput() {
 			Width: 220, Height: 50,
 		}
 		if rl.CheckCollisionPointRec(mousePos, itemsRect) {
-			playButtonSound()
-			state.CurrentScreen = ScreenItems
-			state.CurrentTab = TabAll
-			state.InventoryScrollOffset = 0
+			// Lock gear room until after the research steps are fully done.
+			gearAllowed := meta.TutorialStep == TutorialNone ||
+				meta.TutorialStep == TutorialReady ||
+				meta.TutorialStep == TutorialGoToGear ||
+				meta.TutorialStep == TutorialCraftFirst ||
+				meta.TutorialStep == TutorialCraftBad ||
+				meta.TutorialStep == TutorialSalvageBad ||
+				meta.TutorialStep == TutorialEquipItem ||
+				meta.TutorialStep == TutorialBackFromGear
+			if gearAllowed {
+				playButtonSound()
+				state.CurrentScreen = ScreenItems
+				state.CurrentTab = TabAll
+				state.InventoryScrollOffset = 0
+			}
 			return
 		}
 
@@ -129,7 +140,7 @@ func drawStartMenu() {
 	resButtonX := float32(ScreenWidth)/2 - resButtonWidth/2
 
 	resRect := rl.Rectangle{X: resButtonX, Y: resButtonY, Width: resButtonWidth, Height: resButtonHeight}
-	resColor := rl.Purple
+	resColor := rl.Color(rl.Purple)
 
 	if meta.TutorialStep != TutorialNone && meta.TutorialStep != TutorialReady && meta.TutorialStep != TutorialGoToResearch {
 		resColor = rl.DarkGray
@@ -141,7 +152,7 @@ func drawStartMenu() {
 	rl.DrawRectangleLinesEx(resRect, 2, rl.RayWhite)
 
 	resText := "RESEARCH LAB"
-	resTextColor := rl.White
+	resTextColor := rl.Color(rl.White)
 
 	if meta.TutorialStep != TutorialNone && meta.TutorialStep != TutorialReady && meta.TutorialStep != TutorialGoToResearch {
 		resText = "LOCKED"
@@ -153,7 +164,6 @@ func drawStartMenu() {
 		if math.Mod(float64(rl.GetTime())*4, 2) < 1 {
 			rl.DrawRectangleLinesEx(resRect, 3, rl.Yellow)
 		}
-		rl.DrawText("CLICK HERE!", int32(resButtonX)+240, int32(resButtonY)+15, 20, rl.Yellow)
 	}
 
 	resTextW := rl.MeasureText(resText, 20)
@@ -166,14 +176,29 @@ func drawStartMenu() {
 	itemsButtonX := float32(ScreenWidth)/2 - itemsButtonWidth/2
 
 	itemsRect := rl.Rectangle{X: itemsButtonX, Y: itemsButtonY, Width: itemsButtonWidth, Height: itemsButtonHeight}
-	itemsColor := rl.Gold
+	itemsColor := rl.Color(rl.Gold)
 
-	// Flashing effect for tutorial (Go To Gear OR Equip Item if they backed out)
-	if meta.TutorialStep == TutorialGoToGear || meta.TutorialStep == TutorialEquipItem {
+	// Locked during research tutorial steps.
+	gearLocked := meta.TutorialStep == TutorialGoToResearch ||
+		meta.TutorialStep == TutorialBuyAbility ||
+		meta.TutorialStep == TutorialEquipAbility ||
+		meta.TutorialStep == TutorialPickBranch ||
+		meta.TutorialStep == TutorialBackFromResearch
+
+	// Flash the gear button for all gear-related tutorial steps.
+	gearTutActive := meta.TutorialStep == TutorialGoToGear ||
+		meta.TutorialStep == TutorialCraftFirst ||
+		meta.TutorialStep == TutorialCraftBad ||
+		meta.TutorialStep == TutorialSalvageBad ||
+		meta.TutorialStep == TutorialEquipItem ||
+		meta.TutorialStep == TutorialBackFromGear
+
+	if gearLocked {
+		itemsColor = rl.DarkGray
+	} else if gearTutActive {
 		if math.Mod(float64(rl.GetTime())*4, 2) < 1 {
 			itemsColor = rl.White
 		}
-		rl.DrawText("CLICK HERE!", int32(itemsButtonX)+240, int32(itemsButtonY)+15, 20, rl.Yellow)
 	} else if rl.CheckCollisionPointRec(rl.GetMousePosition(), itemsRect) {
 		itemsColor = rl.NewColor(255, 230, 100, 255)
 	}
@@ -182,8 +207,13 @@ func drawStartMenu() {
 	rl.DrawRectangleLinesEx(itemsRect, 2, rl.RayWhite)
 
 	itemsText := "ITEMS & GEAR"
+	itemsTextColor := rl.Color(rl.Black)
+	if gearLocked {
+		itemsText = "LOCKED"
+		itemsTextColor = rl.Gray
+	}
 	itemsTextW := rl.MeasureText(itemsText, 20)
-	rl.DrawText(itemsText, int32(itemsButtonX+itemsButtonWidth/2-float32(itemsTextW)/2), int32(itemsButtonY+15), 20, rl.Black)
+	rl.DrawText(itemsText, int32(itemsButtonX+itemsButtonWidth/2-float32(itemsTextW)/2), int32(itemsButtonY+15), 20, itemsTextColor)
 
 	//close game button
 	exitButtonWidth := float32(220)
@@ -208,4 +238,58 @@ func drawStartMenu() {
 	rpText := fmt.Sprintf("Points: %d", meta.ResearchPoints)
 	rl.DrawText(rpText, ScreenWidth/2-rl.MeasureText(rpText, 20)/2, ScreenHeight-50, 20, rl.Gold)
 	rl.DrawCircleLines(ScreenWidth/2, ScreenHeight/2, 30, DefenderColor)
+
+	// ── Tutorial overlay bubbles ──────────────────────────────────────────────
+	drawStartMenuTutorialOverlay(resButtonX, resButtonY, itemsButtonX, itemsButtonY, startX, startY)
+}
+
+// drawStartMenuTutorialOverlay draws contextual tip bubbles on the start screen
+// for each tutorial step that routes through it.
+func drawStartMenuTutorialOverlay(resX, resY, gearX, gearY, startX, startY float32) {
+	switch meta.TutorialStep {
+
+	case TutorialGoToResearch:
+		drawTutorialBubble(resX+240, resY-90,
+			"STEP 1 -- RESEARCH LAB",
+			[]string{
+				"Welcome, Defender!",
+				"You'll need an ability to survive.",
+				"Head to the Research Lab first.",
+			}, rl.Yellow)
+
+	case TutorialGoToGear,
+		TutorialCraftFirst,
+		TutorialCraftBad,
+		TutorialSalvageBad,
+		TutorialEquipItem,
+		TutorialBackFromGear:
+		drawTutorialBubble(gearX+240, gearY-90,
+			"STEP 2 -- ITEMS & GEAR",
+			[]string{
+				"Nice work! Now head to Items & Gear",
+				"to craft and equip some equipment",
+				"before your run.",
+			}, rl.Gold)
+
+	case TutorialReady:
+		// Only show once -- disappears after the player completes their first run.
+		if meta.TutorialComplete {
+			break
+		}
+		// Bubble to the right of the Start Run button.
+		// startX = ScreenWidth/2 - 120, startWidth = 240, so right edge = ScreenWidth/2 + 120
+		drawTutorialBubble(float32(ScreenWidth)/2+136, startY-10,
+			"YOU'RE READY!",
+			[]string{
+				"Ability equipped, gear sorted.",
+				"Hit START RUN to begin!",
+				"Survive as long as you can!",
+			}, rl.Lime)
+		// Flash the start button border.
+		if math.Mod(float64(rl.GetTime())*3, 2) < 1 {
+			rl.DrawRectangleLines(
+				int32(startX)-2, int32(startY)-2,
+				244, 54, rl.Lime)
+		}
+	}
 }

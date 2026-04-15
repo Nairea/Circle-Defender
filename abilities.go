@@ -20,6 +20,60 @@ func getAutoMult() float32 {
 	return 1.0
 }
 
+// isAbilityEquipped returns true if the named ability is in one of the four equipped slots.
+func isAbilityEquipped(name string) bool {
+	for _, eq := range meta.EquippedAbilities {
+		if eq == name {
+			return true
+		}
+	}
+	return false
+}
+
+// hasViableTargetInRange returns true if at least one non-protected, non-phased
+// enemy exists within `radius` of the player.
+func hasViableTargetInRange(radius float32) bool {
+	p := &state.Player
+	for _, e := range state.Enemies {
+		if e.HP <= 0 {
+			continue
+		}
+		if isEnemyProtected(e) {
+			continue
+		}
+		if e.Type == EnemyPhaser && e.IsPhased {
+			continue
+		}
+		dx := e.X - p.X
+		dy := e.Y - p.Y
+		if dx*dx+dy*dy <= radius*radius {
+			return true
+		}
+	}
+	return false
+}
+
+// viableEnemyCount returns how many non-protected, non-phased enemies are
+// within `radius` of the player.
+func viableEnemyCount(radius float32) int {
+	p := &state.Player
+	count := 0
+	for _, e := range state.Enemies {
+		if e.HP <= 0 || isEnemyProtected(e) {
+			continue
+		}
+		if e.Type == EnemyPhaser && e.IsPhased {
+			continue
+		}
+		dx := e.X - p.X
+		dy := e.Y - p.Y
+		if dx*dx+dy*dy <= radius*radius {
+			count++
+		}
+	}
+	return count
+}
+
 func handleAbilityInput() {
 	keys := []int32{rl.KeyOne, rl.KeyTwo, rl.KeyThree, rl.KeyFour}
 
@@ -40,13 +94,6 @@ func triggerAbility(name string) {
 		if !p.IsRapidFiring && p.RapidFireCooldown <= 0 {
 			p.IsRapidFiring = true
 			p.RapidFireTimer = p.RapidFireDuration
-			// Bullet Storm: shorter duration but set a higher mult floor
-			if meta.RapidFireBranch == BranchRapidFireBulletStorm {
-				p.RapidFireTimer = p.RapidFireDuration * 0.6
-				if p.RapidFireMultiplier < 4.0 {
-					p.RapidFireMultiplier = 4.0
-				}
-			}
 			// Overcharge: grant crit+multishot burst for the duration
 			if meta.RapidFireBranch == BranchRapidFireOvercharge {
 				p.CritChance += 0.25
@@ -366,8 +413,8 @@ func updateGravityZones(dt float32) {
 	p := &state.Player
 	mult := getAutoMult()
 
-	// 1. Spawning Logic (Gated by Anomaly branch)
-	if p.GravityAnomalyUnlocked && meta.GravityBranch == BranchGravityAnomaly {
+	// 1. Spawning Logic (Gated by Anomaly branch AND Gravity being equipped)
+	if p.GravityAnomalyUnlocked && meta.GravityBranch == BranchGravityAnomaly && isAbilityEquipped(AbilityGravity) {
 		p.GravityPassiveTimer -= dt
 		if p.GravityPassiveTimer <= 0 {
 			// Spawn a random Gravity Zone
@@ -539,7 +586,7 @@ func updateAbilityTimers(dt float32) {
 	if p.Overshield < p.MaxHP*MaxOvershieldRatio {
 		p.Overshield += p.OvershieldRate * dt
 	}
-	if p.StaticPassiveCDR > 0 && p.StaticCooldown <= 0 {
+	if p.StaticPassiveCDR > 0 && p.StaticCooldown <= 0 && isAbilityEquipped(AbilityStatic) {
 		//may need to adjust this passive CDR, but i like balance atm.
 		bonus := p.StaticPassiveCDR * dt
 		if p.RapidFireCooldown > 0 {
@@ -637,7 +684,15 @@ func updateAbilityTimers(dt float32) {
 			if p.RapidFireTimer <= 0 {
 				p.IsRapidFiring = false
 				p.RapidFireTimer = 0.0
-				p.RapidFireCooldown = RapidFireBaseCD / (1.0 + p.CooldownRate)
+				// Bullet Storm gets a shorter cooldown — more frequent bursts is its identity.
+				baseCD := float32(RapidFireBaseCD)
+				if meta.RapidFireBranch == BranchRapidFireBulletStorm {
+					baseCD = float32(RapidFireBSBaseCD) - p.BulletStormCDR
+					if baseCD < 3.0 {
+						baseCD = 3.0 // hard floor so CDR can't trivialise the cooldown
+					}
+				}
+				p.RapidFireCooldown = baseCD / (1.0 + p.CooldownRate)
 				// Remove Overcharge bonuses
 				if meta.RapidFireBranch == BranchRapidFireOvercharge {
 					p.CritChance -= 0.25

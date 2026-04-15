@@ -12,6 +12,127 @@ func playButtonSound() {
 	rl.PlaySound(state.MenuClickSound)
 }
 
+// ── Shared tutorial UI helpers ────────────────────────────────────────────────
+
+// drawTutorialBubble renders a styled tip box anchored at (x, y).
+//
+//	title    — bold header text drawn in the accent colour
+//	lines    — body lines, each drawn on its own row
+//	accent   — border and title colour (e.g. rl.Gold, rl.SkyBlue)
+//
+// The box is sized to fit the longest line and automatically clamped to the
+// screen so it never gets clipped on any edge.
+func drawTutorialBubble(x float32, y float32, title string, lines []string, accent rl.Color) {
+	const fontSize = int32(15)
+	const titleSize = int32(16)
+	const lineH = int32(19)
+	const padX = int32(14)
+	const padY = int32(12)
+
+	// Measure width needed.
+	maxW := rl.MeasureText(title, titleSize)
+	for _, l := range lines {
+		if w := rl.MeasureText(l, fontSize); w > maxW {
+			maxW = w
+		}
+	}
+	boxW := maxW + padX*2
+	boxH := int32(len(lines))*lineH + titleSize + padY*2 + 6 // 6px gap between title and body
+
+	// Clamp to screen bounds.
+	bx := int32(x)
+	by := int32(y)
+	if bx < 4 {
+		bx = 4
+	}
+	if by < 4 {
+		by = 4
+	}
+	if bx+boxW > ScreenWidth-4 {
+		bx = ScreenWidth - 4 - boxW
+	}
+	if by+boxH > ScreenHeight-4 {
+		by = ScreenHeight - 4 - boxH
+	}
+
+	// Background + border.
+	rl.DrawRectangle(bx, by, boxW, boxH, rl.NewColor(10, 10, 25, 235))
+	rl.DrawRectangleLines(bx, by, boxW, boxH, accent)
+	// Slightly thicker inner glow.
+	rl.DrawRectangleLines(bx+1, by+1, boxW-2, boxH-2, rl.NewColor(accent.R, accent.G, accent.B, 80))
+
+	// Title.
+	rl.DrawText(title, bx+padX, by+padY, titleSize, accent)
+
+	// Body lines.
+	bodyY := by + padY + titleSize + 6
+	for _, l := range lines {
+		rl.DrawText(l, bx+padX, bodyY, fontSize, rl.White)
+		bodyY += lineH
+	}
+}
+
+// drawInRunTip renders the current in-run tutorial tip as a semi-transparent
+// banner near the top-centre of the HUD. Tips auto-dismiss when TutTipTimer
+// reaches zero — no click required.
+func drawInRunTip() {
+	if state.TutActiveTip == "" {
+		return
+	}
+
+	const bannerH = int32(52)
+	const fontSize = int32(17)
+	const timerBarH = int32(3)
+
+	text := state.TutActiveTip
+	tw := rl.MeasureText(text, fontSize)
+	bannerW := tw + 60
+	if bannerW > ScreenWidth-40 {
+		bannerW = ScreenWidth - 40
+	}
+	bx := int32(ScreenWidth)/2 - bannerW/2
+	by := int32(55) // below the timer at y=15
+
+	// Fade out in the last second of the timer.
+	alpha := uint8(255)
+	if state.TutTipTimer > 0 && state.TutTipTimer < 1.0 {
+		alpha = uint8(255 * state.TutTipTimer)
+	}
+
+	rl.DrawRectangle(bx, by, bannerW, bannerH, rl.NewColor(12, 12, 30, alpha*220/255))
+	rl.DrawRectangleLines(bx, by, bannerW, bannerH, rl.NewColor(rl.Gold.R, rl.Gold.G, rl.Gold.B, alpha))
+	rl.DrawText(text, bx+int32(bannerW)/2-tw/2, by+10, fontSize, rl.NewColor(255, 255, 255, alpha))
+
+	// Timer drain bar.
+	if state.TutTipTimer > 0 {
+		barW := int32(float32(bannerW-4) * rl.Clamp(state.TutTipTimer/8.0, 0, 1))
+		rl.DrawRectangle(bx+2, by+bannerH-timerBarH-2, barW, timerBarH, rl.NewColor(rl.Gold.R, rl.Gold.G, rl.Gold.B, alpha))
+	}
+}
+
+// enemyIntroText returns a one-line flavour description for first encounters.
+func enemyIntroText(t int) string {
+	switch t {
+	case EnemyStandard:
+		return "SQUARE -- Basic polygon. Charges straight at you."
+	case EnemyDodger:
+		return "TRIANGLE -- Dodger. Slides sideways when you fire near it."
+	case EnemyRanger:
+		return "HEXAGON -- Ranger. Keeps its distance and shoots back!"
+	case EnemyShielder:
+		return "PENTAGON -- Shielder. Nearby enemies inside its zone are invulnerable."
+	case EnemyPhaser:
+		return "CIRCLE -- Phaser. Blinks intangible to dodge your shots."
+	case EnemyReflector:
+		return "SQUARE -- Reflector. Has a chance to bounce your bullets back at you."
+	case EnemyDivider:
+		return "BIG HEXAGON -- Divider. Splits into fast fragments when killed!"
+	case EnemyBerserker:
+		return "STAR -- Berserker. Gets faster and hits harder as it takes damage."
+	}
+	return ""
+}
+
 func handlePauseMenuInput() {
 	mousePos := rl.GetMousePosition()
 
@@ -126,11 +247,11 @@ func abilityUpgradeLines(abilityName string) []string {
 		addF("RapidFireDuration", "Extended Mag", n("RapidFireDuration"),
 			fmt.Sprintf("+%.1fs duration", float32(n("RapidFireDuration"))*1.0))
 		addF("RapidFireBSDur", "Sustained", n("RapidFireBSDur"),
-			fmt.Sprintf("+%.1fs duration", float32(n("RapidFireBSDur"))*0.5))
+			fmt.Sprintf("+%.0f%% burst damage", float32(n("RapidFireBSDur"))*5))
 		switch meta.RapidFireBranch {
 		case BranchRapidFireBulletStorm:
 			addF("RapidFireSpeed", "Overclock", n("RapidFireSpeed"),
-				fmt.Sprintf("+%.1fx fire rate", float32(n("RapidFireSpeed"))*0.5))
+				fmt.Sprintf("+%.1fx fire rate, -%.1fs CD", float32(n("RapidFireSpeed"))*0.5, float32(n("RapidFireSpeed"))*0.6))
 		case BranchRapidFireOvercharge:
 			addF("RapidFireSpeed", "Amplifier", n("RapidFireSpeed"),
 				fmt.Sprintf("+%.2fx fire rate", float32(n("RapidFireSpeed"))*0.25))
@@ -695,79 +816,94 @@ func handleLevelUpInput() {
 }
 
 // builds the info blocks for your passive abilities. Huge.
-func drawPassiveIndicator(x, y float32, label string, char string, cooldown, baseCD, activeTimer float32, color rl.Color) {
+func drawPassiveIndicator(x, y float32, label string, char string, cooldown, baseCD, activeTimer float32, color rl.Color, hudAlpha uint8) {
+	fa := func(c rl.Color) rl.Color {
+		if hudAlpha == 255 {
+			return c
+		}
+		return rl.NewColor(c.R, c.G, c.B, uint8(float32(c.A)*float32(hudAlpha)/255))
+	}
 	iconRect := rl.Rectangle{X: x, Y: y, Width: AbilityIconSize, Height: AbilityIconSize}
-	rl.DrawRectangleRec(iconRect, rl.NewColor(50, 50, 50, 255))
-	rl.DrawRectangleLinesEx(iconRect, 2, rl.White)
-	rl.DrawText(char, int32(x+15), int32(y+10), 32, color)
+	rl.DrawRectangleRec(iconRect, fa(rl.NewColor(50, 50, 50, 255)))
+	rl.DrawRectangleLinesEx(iconRect, 2, fa(rl.White))
+	rl.DrawText(char, int32(x+15), int32(y+10), 32, color) // color already fa'd by caller
 
-	//builds the lil shadowed circle over the icon if on cooldown
-	//this was kinda fun to build too.
-	//easier than i thought honestly.
 	if cooldown > 0 {
 		cooldownPct := cooldown / baseCD
-		rl.DrawRectangleRec(iconRect, rl.Fade(rl.Black, 0.7))
+		rl.DrawRectangleRec(iconRect, fa(rl.NewColor(0, 0, 0, 178)))
 		startAngle := float32(90.0)
 		sweep := cooldownPct * 360.0
 		endAngle := 90.0 - sweep
 		center := rl.NewVector2(x+AbilityIconSize/2, y+AbilityIconSize/2)
 		radius := float32(AbilityIconSize) * 0.75
-		rl.DrawCircleSector(center, radius, endAngle, startAngle, 32, rl.Fade(rl.Black, 0.6))
+		rl.DrawCircleSector(center, radius, endAngle, startAngle, 32, fa(rl.NewColor(0, 0, 0, 153)))
 	} else if math.Mod(float64(rl.GetTime())*20, 20) < 10 {
-		rl.DrawRectangleLinesEx(iconRect, 1, rl.Yellow)
+		rl.DrawRectangleLinesEx(iconRect, 1, fa(rl.Yellow))
 	}
 	if activeTimer > 0 {
-		rl.DrawRectangleLinesEx(iconRect, 3, rl.Red)
+		rl.DrawRectangleLinesEx(iconRect, 3, fa(rl.Red))
 	}
-	rl.DrawText(label, int32(x), int32(y+AbilityIconSize+3), 12, rl.RayWhite)
+	rl.DrawText(label, int32(x), int32(y+AbilityIconSize+3), 12, fa(rl.RayWhite))
 }
 
 // same stuff as above, but for abilities in action bars instead.
-func drawAbilityIcon(index int, key int32, cd float32, baseCD float32, isActive bool, iconChar string, iconColor rl.Color) {
+func drawAbilityIcon(index int, key int32, cd float32, baseCD float32, isActive bool, iconChar string, iconColor rl.Color, hudAlpha uint8) {
+	fa := func(c rl.Color) rl.Color {
+		if hudAlpha == 255 {
+			return c
+		}
+		return rl.NewColor(c.R, c.G, c.B, uint8(float32(c.A)*float32(hudAlpha)/255))
+	}
 	iconX := float32(AbilityIconMargin + AbilityIconMargin + index*(AbilityIconSize+AbilityIconMargin))
 	iconY := float32(ActionBarY)
 	iconRect := rl.Rectangle{X: iconX, Y: iconY, Width: AbilityIconSize, Height: AbilityIconSize}
 
-	rl.DrawRectangleRec(iconRect, rl.NewColor(50, 50, 50, 255))
-	rl.DrawRectangleLinesEx(iconRect, 2, rl.White)
-	rl.DrawText(iconChar, int32(iconX+12), int32(iconY+10), 32, iconColor)
+	rl.DrawRectangleRec(iconRect, fa(rl.NewColor(50, 50, 50, 255)))
+	rl.DrawRectangleLinesEx(iconRect, 2, fa(rl.White))
+	rl.DrawText(iconChar, int32(iconX+12), int32(iconY+10), 32, iconColor) // color already fa'd by caller
 
 	if cd > 0 {
 		cooldownPct := cd / baseCD
-		rl.DrawRectangleRec(iconRect, rl.Fade(rl.Black, 0.7))
+		rl.DrawRectangleRec(iconRect, fa(rl.NewColor(0, 0, 0, 178)))
 		startAngle := float32(90.0)
 		sweep := cooldownPct * 360.0
 		endAngle := 90.0 - sweep
 		center := rl.NewVector2(iconX+AbilityIconSize/2, iconY+AbilityIconSize/2)
 		radius := float32(AbilityIconSize) * 0.75
-		rl.DrawCircleSector(center, radius, endAngle, startAngle, 32, rl.Fade(rl.Black, 0.6))
+		rl.DrawCircleSector(center, radius, endAngle, startAngle, 32, fa(rl.NewColor(0, 0, 0, 153)))
 		cooldownText := fmt.Sprintf("%.0f", cd)
 		textWidth := rl.MeasureText(cooldownText, 20)
-		rl.DrawText(cooldownText, int32(center.X)-textWidth/2, int32(center.Y)-10, 20, rl.White)
+		rl.DrawText(cooldownText, int32(center.X)-textWidth/2, int32(center.Y)-10, 20, fa(rl.White))
 	}
 
 	if isActive && math.Mod(float64(rl.GetTime())*20, 20) < 10 {
-		rl.DrawRectangleLinesEx(iconRect, 3, rl.Red)
+		rl.DrawRectangleLinesEx(iconRect, 3, fa(rl.Red))
 	} else if cd <= 0 {
-		rl.DrawRectangleLinesEx(iconRect, 1, rl.Yellow)
+		rl.DrawRectangleLinesEx(iconRect, 1, fa(rl.Yellow))
 	}
 
 	keyText := fmt.Sprintf("%d", index+1)
-	rl.DrawText(keyText, int32(iconX), int32(iconY+AbilityIconSize+3), 16, rl.RayWhite)
+	rl.DrawText(keyText, int32(iconX), int32(iconY+AbilityIconSize+3), 16, fa(rl.RayWhite))
 }
 
 // im bad at pixel art, but by god can i overlay shapes to make a lock symbol lookin
 // thing rofl. Who knew there was a draw ring option. 100% thought i'd have to draw two
 // overlapping circles to make the arc part of the lock lol.
-func drawLockedIcon(index int) {
+func drawLockedIcon(index int, hudAlpha uint8) {
+	fa := func(c rl.Color) rl.Color {
+		if hudAlpha == 255 {
+			return c
+		}
+		return rl.NewColor(c.R, c.G, c.B, uint8(float32(c.A)*float32(hudAlpha)/255))
+	}
 	iconX := float32(AbilityIconMargin + AbilityIconMargin + index*(AbilityIconSize+AbilityIconMargin))
 	iconY := float32(ActionBarY)
 	iconRect := rl.Rectangle{X: iconX, Y: iconY, Width: AbilityIconSize, Height: AbilityIconSize}
-	rl.DrawRectangleRec(iconRect, rl.NewColor(30, 30, 30, 255))
-	rl.DrawRectangleLinesEx(iconRect, 2, rl.Gray)
+	rl.DrawRectangleRec(iconRect, fa(rl.NewColor(30, 30, 30, 255)))
+	rl.DrawRectangleLinesEx(iconRect, 2, fa(rl.Gray))
 	center := rl.NewVector2(iconX+AbilityIconSize/2, iconY+AbilityIconSize/2)
-	rl.DrawRectangle(int32(center.X)-6, int32(center.Y)-4, 12, 10, rl.Gray)
-	rl.DrawRing(rl.NewVector2(center.X, center.Y-4), 3, 5, 180, 360, 8, rl.Gray)
+	rl.DrawRectangle(int32(center.X)-6, int32(center.Y)-4, 12, 10, fa(rl.Gray))
+	rl.DrawRing(rl.NewVector2(center.X, center.Y-4), 3, 5, 180, 360, 8, fa(rl.Gray))
 }
 
 // build the buttons for SPEEEEEED. im going the distance, im going for SPEEEEED.
@@ -850,74 +986,320 @@ func drawLevelUpMenu() {
 }
 
 // its dangerous to go alone, die about it i guess.
+
+// drawLoadScreen renders the pre-run load screen. The start menu is drawn
+// first and fades out beneath a siren-red overlay that itself transitions
+// smoothly into the game's background color — no jarring cuts anywhere.
+func drawLoadScreen() {
+	// progress: 1.0 = just started, 0.0 = handing off to ScreenGame.
+	progress := state.LoadScreenTimer / LoadScreenDuration
+	if progress > 1 {
+		progress = 1
+	}
+
+	// Siren color constants — used in both phases.
+	const bgR, bgG, bgB = float32(30), float32(30), float32(40)
+	const sirenR, sirenG, sirenB = float32(90), float32(12), float32(18)
+
+	// --- Phase 1: start menu fade-out (top 35% of timer, progress 1.0 → 0.65) ---
+	// The menu is visible at the very start and dissolves away.
+	menuVisible := progress > 0.65
+
+	if menuVisible {
+		// Draw the full start menu as the base layer.
+		drawStartMenu()
+
+		// Curtain alpha: 0 when progress=1.0 (menu fully visible),
+		// rising to 1 when progress=0.65 (menu fully hidden).
+		curtainT := (1.0 - progress) / 0.35
+		if curtainT > 1 {
+			curtainT = 1
+		}
+
+		// Siren starts as soon as the curtain begins rising — pulse the curtain
+		// color from dark-neutral to red so the flash bleeds in during the fade.
+		sirenPulse := float32(math.Sin(float64(state.LoadScreenTimer)*3.5))*0.5 + 0.5
+		curtainR := uint8((20.0 + (sirenR-20)*sirenPulse*curtainT) * curtainT)
+		curtainG := uint8((20.0 + (sirenG-20)*sirenPulse*curtainT) * curtainT)
+		curtainB := uint8((30.0 + (sirenB-30)*sirenPulse*curtainT) * curtainT)
+		curtainA := uint8(curtainT * 255)
+		rl.DrawRectangle(0, 0, ScreenWidth, ScreenHeight, rl.NewColor(curtainR, curtainG, curtainB, curtainA))
+
+		// The circle outline is drawn on top of the curtain at full opacity so it
+		// persists as a grounding element regardless of how dark the curtain gets.
+		rl.DrawCircleLines(ScreenWidth/2, ScreenHeight/2, 30, DefenderColor)
+		return
+	}
+
+	// --- Phase 2: siren + world (remaining 65% of timer, progress 0.65 → 0.0) ---
+	// Siren pulse: slow gentle red flash that fades out in the final 30%.
+	sirenStrength := float32(0)
+	if progress > 0.3 {
+		sirenStrength = (progress - 0.3) / 0.35 // ramps from 0 at progress=0.3 to 1 at progress=0.65
+		if sirenStrength > 1 {
+			sirenStrength = 1
+		}
+	}
+	sirenPulse := float32(math.Sin(float64(state.LoadScreenTimer)*3.5))*0.5 + 0.5
+
+	// Lerp between game bg and siren color based on pulse * strength.
+	t := sirenPulse * sirenStrength
+	r := uint8(bgR + (sirenR-bgR)*t)
+	g := uint8(bgG + (sirenG-bgG)*t)
+	b := uint8(bgB + (sirenB-bgB)*t)
+	rl.ClearBackground(rl.NewColor(r, g, b, 255))
+
+	// Draw enemies in world space so the player sees them converging.
+	// They fade in over the first portion of phase 2 (progress 0.65 → 0.5) so
+	// they don't hard-pop the instant the menu curtain drops.
+	enemyFadeT := float32(1)
+	if progress > 0.5 {
+		enemyFadeT = (0.65 - progress) / 0.15 // 0 at progress=0.65, 1 at progress=0.5
+		if enemyFadeT < 0 {
+			enemyFadeT = 0
+		}
+	}
+	enemyAlpha := uint8(enemyFadeT * 255)
+
+	rl.BeginMode2D(state.Camera)
+	for _, enm := range state.Enemies {
+		if enm.HP <= 0 {
+			continue
+		}
+		baseColor := EnemyColor
+		if enm.IsBoss {
+			baseColor = rl.Purple
+		} else if enm.Type == EnemyDodger {
+			baseColor = EnemyDodgerColor
+		} else if enm.Type == EnemyRanger {
+			baseColor = EnemyRangerColor
+		} else if enm.Type == EnemyShielder {
+			baseColor = EnemyShielderColor
+		} else if enm.Type == EnemyPhaser {
+			baseColor = EnemyPhaserColor
+		} else if enm.Type == EnemyReflector {
+			baseColor = EnemyReflectorColor
+		} else if enm.Type == EnemyDivider {
+			baseColor = EnemyDividerColor
+		} else if enm.Type == EnemyBerserker {
+			baseColor = EnemyBerserkerColor
+		}
+		color := rl.NewColor(baseColor.R, baseColor.G, baseColor.B, enemyAlpha)
+		white := rl.NewColor(255, 255, 255, enemyAlpha)
+
+		angleRad := math.Atan2(float64(state.Player.Y-enm.Y), float64(state.Player.X-enm.X))
+		angleDeg := float32(angleRad * 180 / math.Pi)
+
+		switch enm.Type {
+		case EnemyDodger:
+			rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 3, enm.Size/2.0*1.5, angleDeg, color)
+			rl.DrawPolyLinesEx(rl.NewVector2(enm.X, enm.Y), 3, enm.Size/2.0*1.5, angleDeg, 2.0, white)
+		case EnemyRanger:
+			rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 6, enm.Size/2.0, angleDeg, color)
+			rl.DrawPolyLinesEx(rl.NewVector2(enm.X, enm.Y), 6, enm.Size/2.0, angleDeg, 2.0, white)
+		case EnemyShielder:
+			rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 5, enm.Size/2.0+5, angleDeg, color)
+			rl.DrawPolyLinesEx(rl.NewVector2(enm.X, enm.Y), 5, enm.Size/2.0+5, angleDeg, 2.0, white)
+		case EnemyPhaser:
+			rl.DrawCircle(int32(enm.X), int32(enm.Y), enm.Size/2, color)
+			rl.DrawCircleLines(int32(enm.X), int32(enm.Y), enm.Size/2, white)
+		case EnemyReflector:
+			rl.DrawRectanglePro(rl.Rectangle{X: enm.X, Y: enm.Y, Width: enm.Size, Height: enm.Size}, rl.NewVector2(enm.Size/2, enm.Size/2), angleDeg, color)
+		case EnemyDivider:
+			rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 6, enm.Size/2.0, angleDeg, color)
+			rl.DrawPolyLinesEx(rl.NewVector2(enm.X, enm.Y), 6, enm.Size/2.0, angleDeg, 2.0, white)
+		case EnemyBerserker:
+			rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 4, enm.Size/2.0*1.5, angleDeg, color)
+			rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 4, enm.Size/2.0*1.5, angleDeg+45, color)
+		default:
+			polyRadius := (enm.Size / 2.0) * float32(math.Sqrt(2))
+			rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 4, polyRadius, angleDeg-45, color)
+			rl.DrawPolyLinesEx(rl.NewVector2(enm.X, enm.Y), 4, polyRadius, angleDeg-45, 2.0, white)
+		}
+	}
+
+	// Draw player so there's a visible center point for enemies to converge on.
+	// worldFadeT drives the "fill" of the player circle — starts at 0 (empty outline)
+	// and reaches 1 (fully solid) by the time the game screen takes over.
+	worldFadeT := float32(0)
+	if progress < 0.4 {
+		worldFadeT = (0.4 - progress) / 0.4 // 0 at progress=0.4, 1 at progress=0.0
+	}
+	worldAlpha := uint8(worldFadeT * 255)
+
+	if worldAlpha > 0 {
+		// Range ring fades in alongside the fill.
+		rangeColor := rl.Fade(rl.Green, float32(worldAlpha)/255*0.1)
+		rl.DrawCircleLines(int32(state.Player.X), int32(state.Player.Y), state.Player.Range, rangeColor)
+
+		// Player body fills in.
+		bodyColor := rl.NewColor(DefenderColor.R, DefenderColor.G, DefenderColor.B, worldAlpha)
+		rl.DrawCircle(int32(state.Player.X), int32(state.Player.Y), state.Player.Radius, bodyColor)
+	}
+
+	// The circle outline transitions from DefenderColor (blue) to white as the
+	// player fills in — no separate white circle, just one outline shifting colour.
+	outlineR := DefenderColor.R + uint8(float32(255-DefenderColor.R)*worldFadeT)
+	outlineG := DefenderColor.G + uint8(float32(255-DefenderColor.G)*worldFadeT)
+	outlineB := DefenderColor.B + uint8(float32(255-DefenderColor.B)*worldFadeT)
+	rl.DrawCircleLines(int32(state.Player.X), int32(state.Player.Y), state.Player.Radius, rl.NewColor(outlineR, outlineG, outlineB, 255))
+
+	rl.EndMode2D()
+
+	// Draw all HUD elements at the same alpha as the player fill — they all
+	// arrive together as the run gets underway.
+	if worldAlpha > 0 {
+		drawUI(worldAlpha)
+	}
+
+	// ── "GET READY" / "INCOMING" ───────────────────────────────────────────────
+	// Fades in at progress=0.5, holds through progress=0.1, then fades out by
+	// progress=0.0 — giving roughly a second of extra visibility compared to before.
+	// The fade-out overlaps with the circle fill so both finish together.
+	var textAlpha float32
+	if progress <= 0.5 && progress >= 0.1 {
+		// Fade in: 0 at progress=0.5, full at progress=0.3
+		if progress > 0.3 {
+			textAlpha = (0.5 - progress) / 0.2
+		} else {
+			textAlpha = 1.0
+		}
+	} else if progress < 0.1 {
+		// Fade out: 1 at progress=0.1, 0 at progress=0.0
+		textAlpha = progress / 0.1
+	}
+	if textAlpha > 0.02 {
+		ta := uint8(textAlpha * 255)
+		msg := "GET READY"
+		fontSize := int32(60)
+		tw := rl.MeasureText(msg, fontSize)
+		rl.DrawText(msg, ScreenWidth/2-tw/2, ScreenHeight/2-30, fontSize, rl.NewColor(255, 255, 255, ta))
+
+		subMsg := "INCOMING"
+		subSize := int32(24)
+		sw := rl.MeasureText(subMsg, subSize)
+		flashPulse := float32(math.Sin(float64(state.LoadScreenTimer)*12.0))*0.5 + 0.5
+		flashAlpha := uint8(textAlpha * flashPulse * 255)
+		rl.DrawText(subMsg, ScreenWidth/2-sw/2, ScreenHeight/2+45, subSize, rl.NewColor(200, 100, 100, flashAlpha))
+	}
+}
 func drawGameOverScreen() {
 	rl.DrawRectangle(0, 0, ScreenWidth, ScreenHeight, rl.Fade(rl.Black, 0.9))
 	text := "GAME OVER"
-	rl.DrawText(text, ScreenWidth/2-rl.MeasureText(text, 80)/2, ScreenHeight/2-100, 80, rl.Red)
-	score := fmt.Sprintf("You Reached Level %d and Survived %02d:%02d", state.Player.Level, int(state.RunTime)/60, int(state.RunTime)%60)
-	rl.DrawText(score, ScreenWidth/2-rl.MeasureText(score, 30)/2, ScreenHeight/2, 30, rl.White)
+	rl.DrawText(text, ScreenWidth/2-rl.MeasureText(text, 80)/2, ScreenHeight/2-140, 80, rl.Red)
+	score := fmt.Sprintf("Level %d  |  Survived %02d:%02d", state.Player.Level, int(state.RunTime)/60, int(state.RunTime)%60)
+	rl.DrawText(score, ScreenWidth/2-rl.MeasureText(score, 28)/2, ScreenHeight/2-35, 28, rl.White)
+
+	// ── First-death tutorial popup ────────────────────────────────────────────
+	// Shown exactly once; sets TutorialComplete so in-run tips no longer fire.
+	if !meta.TutorialComplete {
+		meta.TutorialComplete = true
+		SaveMetaProg()
+	}
+
+	if meta.TutorialStep != TutorialNone && meta.TutorialStep != TutorialReady {
+		// Player died mid-tutorial somehow — just show the normal restart hint.
+	} else if !meta.TutorialDeathShown {
+		// Show the informational "polygons got you" panel exactly once.
+		meta.TutorialDeathShown = true
+		SaveMetaProg()
+
+		const popW = int32(640)
+		const popH = int32(130)
+		popX := int32(ScreenWidth)/2 - popW/2
+		popY := int32(ScreenHeight)/2 + 20
+
+		rl.DrawRectangle(popX, popY, popW, popH, rl.NewColor(18, 18, 40, 245))
+		rl.DrawRectangleLines(popX, popY, popW, popH, rl.Gold)
+		rl.DrawRectangleLines(popX+1, popY+1, popW-2, popH-2, rl.NewColor(255, 215, 0, 60))
+
+		line1 := "The polygons got you -- but every run earns Research Points!"
+		line2 := "Head to the Research Lab and invest in yourself."
+		line3 := "The further you push, the more you earn. Keep at it!"
+		rl.DrawText(line1, popX+18, popY+16, 17, rl.Yellow)
+		rl.DrawText(line2, popX+18, popY+40, 17, rl.White)
+		rl.DrawText(line3, popX+18, popY+64, 17, rl.White)
+
+		restart := "Press SPACE to return to the main menu"
+		rl.DrawText(restart, ScreenWidth/2-rl.MeasureText(restart, 20)/2, popY+popH+14, 20, rl.Lime)
+		return
+	}
+
 	restart := "Press SPACE to Return to the Main Menu"
 	rl.DrawText(restart, ScreenWidth/2-rl.MeasureText(restart, 24)/2, ScreenHeight/2+60, 24, rl.Green)
 }
 
-func drawUI() {
+func drawUI(hudAlpha uint8) {
+	// fa (fade-apply) tints any color with hudAlpha, preserving its own alpha
+	// proportionally. When hudAlpha=255 colors are unchanged.
+	fa := func(c rl.Color) rl.Color {
+		if hudAlpha == 255 {
+			return c
+		}
+		return rl.NewColor(c.R, c.G, c.B, uint8(float32(c.A)*float32(hudAlpha)/255))
+	}
+
 	panelX, panelY := 10, 10
-	rl.DrawText(fmt.Sprintf("Level: %d", state.Player.Level), int32(panelX), int32(panelY), 20, rl.White)
+	rl.DrawText(fmt.Sprintf("Level: %d", state.Player.Level), int32(panelX), int32(panelY), 20, fa(rl.White))
 
 	xpBarX, xpBarY := panelX, panelY+25
 	xpBarWidth, xpBarHeight := 180, 10
 	xpPct := state.Player.XP / state.Player.NextLvlXP
-	rl.DrawRectangle(int32(xpBarX), int32(xpBarY), int32(xpBarWidth), int32(xpBarHeight), rl.NewColor(50, 50, 60, 255))
-	rl.DrawRectangle(int32(xpBarX), int32(xpBarY), int32(float32(xpBarWidth)*xpPct), int32(xpBarHeight), rl.Purple)
-	rl.DrawText(fmt.Sprintf("XP: %.0f/%.0f", state.Player.XP, state.Player.NextLvlXP), int32(xpBarX), int32(xpBarY+12), 12, rl.White)
+	rl.DrawRectangle(int32(xpBarX), int32(xpBarY), int32(xpBarWidth), int32(xpBarHeight), fa(rl.NewColor(50, 50, 60, 255)))
+	rl.DrawRectangle(int32(xpBarX), int32(xpBarY), int32(float32(xpBarWidth)*xpPct), int32(xpBarHeight), fa(rl.Purple))
+	rl.DrawText(fmt.Sprintf("XP: %.0f/%.0f", state.Player.XP, state.Player.NextLvlXP), int32(xpBarX), int32(xpBarY+12), 12, fa(rl.White))
 
-	rl.DrawText(fmt.Sprintf("Damage: %.0f", state.Player.Damage), int32(panelX), int32(panelY+50), 16, rl.White)
-	rl.DrawText(fmt.Sprintf("AS: %.2fs", state.Player.ASDelay), int32(panelX), int32(panelY+70), 16, rl.White)
+	rl.DrawText(fmt.Sprintf("Damage: %.0f", state.Player.Damage), int32(panelX), int32(panelY+50), 16, fa(rl.White))
+	rl.DrawText(fmt.Sprintf("AS: %.2fs", state.Player.ASDelay), int32(panelX), int32(panelY+70), 16, fa(rl.White))
 
-	rl.DrawText(fmt.Sprintf("Multi: %.0f%% (x%d)", state.Player.MultishotChance*100, state.Player.MultishotCount), int32(panelX), int32(panelY+90), 16, rl.White)
-	rl.DrawText(fmt.Sprintf("Chain: %.0f%% (x%d)", state.Player.ChainChance*100, state.Player.ChainCount), int32(panelX), int32(panelY+110), 16, rl.White)
+	rl.DrawText(fmt.Sprintf("Multi: %.0f%% (x%d)", state.Player.MultishotChance*100, state.Player.MultishotCount), int32(panelX), int32(panelY+90), 16, fa(rl.White))
+	rl.DrawText(fmt.Sprintf("Chain: %.0f%% (x%d)", state.Player.ChainChance*100, state.Player.ChainCount), int32(panelX), int32(panelY+110), 16, fa(rl.White))
 
-	rl.DrawText(fmt.Sprintf("Crit: %.0f%% (x%.1f)", state.Player.CritChance*100, state.Player.CritMultiplier), int32(panelX), int32(panelY+130), 16, rl.White)
-	rl.DrawText(fmt.Sprintf("Armor: %.0f%%", rl.Clamp(state.Player.Armor*100, 0, 90)), int32(panelX), int32(panelY+150), 16, rl.White)
+	rl.DrawText(fmt.Sprintf("Crit: %.0f%% (x%.1f)", state.Player.CritChance*100, state.Player.CritMultiplier), int32(panelX), int32(panelY+130), 16, fa(rl.White))
+	rl.DrawText(fmt.Sprintf("Armor: %.0f%%", rl.Clamp(state.Player.Armor*100, 0, 90)), int32(panelX), int32(panelY+150), 16, fa(rl.White))
 
-	rl.DrawText(fmt.Sprintf("Regen: %.1f/s", state.Player.RegenRate), int32(panelX), int32(panelY+170), 16, rl.White)
-	rl.DrawText(fmt.Sprintf("Range: %.0f", state.Player.Range), int32(panelX), int32(panelY+190), 16, rl.White)
-	rl.DrawText(fmt.Sprintf("Pure Defense: %.0f", state.Player.PureDefense), int32(panelX), int32(panelY+210), 16, rl.White)
-	rl.DrawText(fmt.Sprintf("Thorns: %.0f", state.Player.ThornsDamage), int32(panelX), int32(panelY+230), 16, rl.White)
-
-	passiveY := float32(panelY + 260)
-	if state.Player.ShockwaveUnlocked {
-		drawPassiveIndicator(float32(panelX), passiveY, "Shock", "S", state.Player.ShockwaveCooldown, ShockwaveBaseCD, state.Player.ShockwaveVisualTimer, rl.SkyBlue)
-		passiveY += AbilityIconSize + 25
-	}
-	if state.Player.MinesUnlocked {
-		drawPassiveIndicator(float32(panelX), passiveY, "Mines", "M", state.Player.MinesCooldown, state.Player.MineMaxCooldown, float32(state.Player.MinePlacementCounter), rl.Orange)
-		passiveY += AbilityIconSize + 25
-	}
-	if state.Player.FrenzyChance > 0 {
-		drawPassiveIndicator(float32(panelX), passiveY, fmt.Sprintf("Frenzy\n%.1f%%", state.Player.FrenzyChance*100), "F", state.Player.FrenzyCooldown, FrenzyBaseCD, state.Player.PassiveRapidFireTimer, rl.Red)
-	}
+	rl.DrawText(fmt.Sprintf("Regen: %.1f/s", state.Player.RegenRate), int32(panelX), int32(panelY+170), 16, fa(rl.White))
+	rl.DrawText(fmt.Sprintf("Range: %.0f", state.Player.Range), int32(panelX), int32(panelY+190), 16, fa(rl.White))
+	rl.DrawText(fmt.Sprintf("Pure Defense: %.0f", state.Player.PureDefense), int32(panelX), int32(panelY+210), 16, fa(rl.White))
+	rl.DrawText(fmt.Sprintf("Thorns: %.0f", state.Player.ThornsDamage), int32(panelX), int32(panelY+230), 16, fa(rl.White))
 
 	hpBarX, hpBarY := 20, ScreenHeight-30
 	hpBarWidth := ScreenWidth - 40
 	if state.Player.Overshield > 0 {
 		osPct := state.Player.Overshield / (state.Player.MaxHP * MaxOvershieldRatio)
 		osBarW := float32(hpBarWidth) * osPct
-		rl.DrawRectangle(int32(hpBarX), int32(hpBarY-8), int32(osBarW), 6, rl.SkyBlue)
-		rl.DrawText(fmt.Sprintf("Overshield: %.0f", state.Player.Overshield), int32(hpBarX), int32(hpBarY-22), 10, rl.SkyBlue)
+		rl.DrawRectangle(int32(hpBarX), int32(hpBarY-8), int32(osBarW), 6, fa(rl.SkyBlue))
+		rl.DrawText(fmt.Sprintf("Overshield: %.0f", state.Player.Overshield), int32(hpBarX), int32(hpBarY-22), 10, fa(rl.SkyBlue))
 	}
 
 	hpPct := state.Player.HP / state.Player.MaxHP
-	rl.DrawRectangle(int32(hpBarX), int32(hpBarY), int32(hpBarWidth), 20, rl.NewColor(50, 50, 60, 255))
-	rl.DrawRectangle(int32(hpBarX), int32(hpBarY), int32(float32(hpBarWidth)*hpPct), 20, rl.Lime)
-	rl.DrawText(fmt.Sprintf("HP: %.0f/%.0f", state.Player.HP, state.Player.MaxHP), int32(hpBarX+5), int32(hpBarY+3), 16, rl.White)
+	rl.DrawRectangle(int32(hpBarX), int32(hpBarY), int32(hpBarWidth), 20, fa(rl.NewColor(50, 50, 60, 255)))
+	rl.DrawRectangle(int32(hpBarX), int32(hpBarY), int32(float32(hpBarWidth)*hpPct), 20, fa(rl.Lime))
+	rl.DrawText(fmt.Sprintf("HP: %.0f/%.0f", state.Player.HP, state.Player.MaxHP), int32(hpBarX+5), int32(hpBarY+3), 16, fa(rl.White))
 
-	actionBarWidth := float32(4*(AbilityIconSize+AbilityIconMargin) + AbilityIconMargin)
-	rl.DrawRectangle(int32(AbilityIconMargin), int32(ActionBarY-28), int32(actionBarWidth), AbilityIconSize+50, rl.NewColor(20, 20, 30, 180))
+	// ── Action bar background ──────────────────────────────────────────────────
+	passiveCount := 0
+	if state.Player.ShockwaveUnlocked {
+		passiveCount++
+	}
+	if state.Player.MinesUnlocked {
+		passiveCount++
+	}
+	if state.Player.FrenzyChance > 0 {
+		passiveCount++
+	}
+	activeBarWidth := float32(4*(AbilityIconSize+AbilityIconMargin) + AbilityIconMargin)
+	passiveBarWidth := float32(passiveCount) * float32(AbilityIconSize+AbilityIconMargin)
+	totalBarWidth := activeBarWidth
+	if passiveCount > 0 {
+		totalBarWidth += 8 + passiveBarWidth
+	}
+	rl.DrawRectangle(int32(AbilityIconMargin), int32(ActionBarY-28), int32(totalBarWidth), AbilityIconSize+50, fa(rl.NewColor(20, 20, 30, 180)))
 
+	// ── Active ability icons ───────────────────────────────────────────────────
 	for i, name := range meta.EquippedAbilities {
 		if name == "" {
-			drawLockedIcon(i)
+			drawLockedIcon(i, hudAlpha)
 			continue
 		}
 
@@ -929,7 +1311,15 @@ func drawUI() {
 		switch name {
 		case AbilityRapidFire:
 			cd = p.RapidFireCooldown
-			base = RapidFireBaseCD / (1.0 + p.CooldownRate)
+			if meta.RapidFireBranch == BranchRapidFireBulletStorm {
+				bsBase := float32(RapidFireBSBaseCD) - p.BulletStormCDR
+				if bsBase < 3.0 {
+					bsBase = 3.0
+				}
+				base = bsBase / (1.0 + p.CooldownRate)
+			} else {
+				base = RapidFireBaseCD / (1.0 + p.CooldownRate)
+			}
 			active = p.IsRapidFiring
 			color = rl.Red
 		case AbilityDeathRay:
@@ -959,7 +1349,7 @@ func drawUI() {
 			color = rl.Gold
 		}
 
-		// Per-slot AUTO toggle — centered above the icon.
+		// Per-slot AUTO toggle
 		iconX := float32(AbilityIconMargin + AbilityIconMargin + i*(AbilityIconSize+AbilityIconMargin))
 		const autoH = 16
 		autoRect := rl.Rectangle{
@@ -983,41 +1373,76 @@ func drawUI() {
 				state.Player.AutoAbilities[i] = !isAuto
 			}
 		}
-		rl.DrawRectangleRec(autoRect, autoBg)
-		rl.DrawRectangleLinesEx(autoRect, 1, rl.NewColor(200, 200, 200, 160))
+		rl.DrawRectangleRec(autoRect, fa(autoBg))
+		rl.DrawRectangleLinesEx(autoRect, 1, fa(rl.NewColor(200, 200, 200, 160)))
 		autoLabel := "AUTO"
 		labelW := rl.MeasureText(autoLabel, 10)
-		rl.DrawText(autoLabel, int32(autoRect.X)+int32(autoRect.Width/2)-labelW/2, int32(autoRect.Y+3), 10, rl.White)
+		rl.DrawText(autoLabel, int32(autoRect.X)+int32(autoRect.Width/2)-labelW/2, int32(autoRect.Y+3), 10, fa(rl.White))
 
-		drawAbilityIcon(i, int32(rl.KeyOne)+int32(i), cd, base, active, char, color)
+		drawAbilityIcon(i, int32(rl.KeyOne)+int32(i), cd, base, active, char, fa(color), hudAlpha)
+	}
+
+	// ── Passive ability icons ──────────────────────────────────────────────────
+	if passiveCount > 0 {
+		divX := int32(AbilityIconMargin) + int32(activeBarWidth) + 4
+		rl.DrawRectangle(divX, int32(ActionBarY)-4, 1, AbilityIconSize+8, fa(rl.NewColor(100, 100, 120, 180)))
+
+		passiveX := float32(AbilityIconMargin) + activeBarWidth + 8
+		passiveY := float32(ActionBarY)
+		if state.Player.ShockwaveUnlocked {
+			drawPassiveIndicator(passiveX, passiveY, "Shock", "S", state.Player.ShockwaveCooldown, ShockwaveBaseCD, state.Player.ShockwaveVisualTimer, fa(rl.SkyBlue), hudAlpha)
+			passiveX += float32(AbilityIconSize + AbilityIconMargin)
+		}
+		if state.Player.MinesUnlocked {
+			drawPassiveIndicator(passiveX, passiveY, "Mines", "M", state.Player.MinesCooldown, state.Player.MineMaxCooldown, float32(state.Player.MinePlacementCounter), fa(rl.Orange), hudAlpha)
+			passiveX += float32(AbilityIconSize + AbilityIconMargin)
+		}
+		if state.Player.FrenzyChance > 0 {
+			drawPassiveIndicator(passiveX, passiveY, fmt.Sprintf("Fz%.1f%%", state.Player.FrenzyChance*100), "F", state.Player.FrenzyCooldown, FrenzyBaseCD, state.Player.PassiveRapidFireTimer, fa(rl.Red), hudAlpha)
+		}
 	}
 
 	drawAndHandleSpeedButtons()
 
-	//show's current runs survival time.
+	// ── Run RP counter ─────────────────────────────────────────────────────────
+	rpRunText := fmt.Sprintf("Run RP: +%d", state.RunRP)
+	rpRunW := rl.MeasureText(rpRunText, 16)
+	rl.DrawText(rpRunText, ScreenWidth-int32(rpRunW)-10, int32(ActionBarY)+int32(AbilityIconSize)+18, 16, fa(rl.Gold))
+
 	minutes := int(state.RunTime) / 60
 	seconds := int(state.RunTime) % 60
 	timeText := fmt.Sprintf("%02d:%02d", minutes, seconds)
-	rl.DrawText(timeText, ScreenWidth/2-rl.MeasureText(timeText, 30)/2, 15, 30, rl.White)
+	rl.DrawText(timeText, ScreenWidth/2-rl.MeasureText(timeText, 30)/2, 15, 30, fa(rl.White))
 
-	//Shows current enemy scaling. similarly not sure if this adds anything for real
-	//but lets players feel strong and like they're overpowering enemies at
-	//escalating difficulties. keeps the dopamine drip of "yeah i can beat enemies with a
-	//300% buff!"
 	currentScale := 1.0 + 0.1*float32(state.Wave-1)
 	const scalingThresholdTime = 570.0
-
 	if state.RunTime > scalingThresholdTime {
 		excessTime := state.RunTime - scalingThresholdTime
 		ticks := excessTime / 10.0
 		currentScale *= float32(math.Pow(1.03, float64(ticks)))
 	}
-
 	scalingText := fmt.Sprintf("Enemy Scaling: %.2fx", currentScale)
-	rl.DrawText(scalingText, ScreenWidth-rl.MeasureText(scalingText, 20)-10, 40, 20, rl.Gold)
+	rl.DrawText(scalingText, ScreenWidth-rl.MeasureText(scalingText, 20)-10, 40, 20, fa(rl.Gold))
 
 	if state.IsPaused {
 		drawPauseMenu()
+	}
+
+	// ── Enemy intro scan ──────────────────────────────────────────────────────
+	if !meta.TutorialComplete && state.TutEnemySeen != nil {
+		for _, e := range state.Enemies {
+			if e.HP <= 0 {
+				continue
+			}
+			if !state.TutEnemySeen[e.Type] {
+				state.TutEnemySeen[e.Type] = true
+				intro := enemyIntroText(e.Type)
+				if intro != "" {
+					pushTutTip(intro, 6.0)
+				}
+				break
+			}
+		}
 	}
 }
 
@@ -1034,6 +1459,10 @@ func drawGame() {
 		return
 	} else if state.CurrentScreen == ScreenItems {
 		drawItemsMenu()
+		rl.EndDrawing()
+		return
+	} else if state.CurrentScreen == ScreenLoading {
+		drawLoadScreen()
 		rl.EndDrawing()
 		return
 	}
@@ -1162,7 +1591,7 @@ func drawGame() {
 				// Perpendicular unit vector for jitter
 				perpX := -dy / length
 				perpY := dx / length
-				maxJitter := length * 0.18
+				maxJitter := length * 0.06
 
 				// Build segment points
 				pts := make([]rl.Vector2, segments+1)
@@ -1474,10 +1903,15 @@ func drawGame() {
 
 		rl.EndMode2D()
 
-		drawUI()
+		drawUI(255)
 
 		if state.IsLeveling {
 			drawLevelUpMenu()
+		}
+
+		// Tutorial tip drawn last so it always sits above the level-up menu.
+		if !meta.TutorialComplete {
+			drawInRunTip()
 		}
 
 		//keep this at the end ya dingus. kept drawing it before other stuff and breaking

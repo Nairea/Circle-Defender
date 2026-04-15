@@ -11,7 +11,7 @@ import (
 var researchScrollY float32
 
 // researchMenuContentHeight is the total scrollable content height (set each frame).
-const researchMenuHeaderH = 170 // pixels reserved for fixed header
+const researchMenuHeaderH = 200 // pixels reserved for fixed header
 const researchMenuFooterH = 70  // pixels reserved for fixed back button
 
 // researchLayout holds all derived layout values for the talent grid.
@@ -55,7 +55,7 @@ func buildTalentList() []talentDef {
 			Branch: &meta.RapidFireBranch, BranchCost: BranchCostRapidFire,
 			BranchAValue: BranchRapidFireBulletStorm,
 			BranchAName:  "Bullet Storm",
-			BranchADesc:  "Higher fire rate, shorter duration.",
+			BranchADesc:  "Higher fire rate, shorter cooldown.",
 			BranchBValue: BranchRapidFireOvercharge,
 			BranchBName:  "Overcharge",
 			BranchBDesc:  "+Crit & Multishot while active.",
@@ -201,13 +201,61 @@ func handleResearchInput() {
 		}
 	}
 
+	// AUTO toggle buttons below each loadout slot
+	if rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
+		for i, name := range meta.EquippedAbilities {
+			if name == "" {
+				continue
+			}
+			autoX := float32(ScreenWidth/2 - 115 + i*60)
+			autoY := float32(112 + 54)
+			autoRect := rl.Rectangle{X: autoX, Y: autoY, Width: 50, Height: 18}
+			if rl.CheckCollisionPointRec(rl.GetMousePosition(), autoRect) {
+				playButtonSound()
+				meta.AutoAbilities[i] = !meta.AutoAbilities[i]
+				// Keep player in sync if a run is active.
+				state.Player.AutoAbilities[i] = meta.AutoAbilities[i]
+				SaveMetaProg()
+
+				// Tutorial: once the player enables AUTO on Rapid Fire,
+				// show a "click Back" prompt instead of jumping straight to the start screen.
+				if meta.TutorialStep == TutorialEquipAbility &&
+					name == AbilityRapidFire &&
+					meta.AutoAbilities[i] {
+					meta.TutorialStep = TutorialBackFromResearch
+					SaveMetaProg()
+				}			}
+		}
+	}
+
 	backRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight) - 60, Width: 200, Height: 50}
 	if rl.IsMouseButtonReleased(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(rl.GetMousePosition(), backRect) {
-		if meta.TutorialStep < TutorialGoToGear {
+		// Block leaving during steps where the player still has required actions.
+		if meta.TutorialStep == TutorialBuyAbility ||
+			meta.TutorialStep == TutorialEquipAbility ||
+			meta.TutorialStep == TutorialPickBranch {
 			return
+		}
+		// During TutorialBackFromResearch, also block if AUTO hasn't been toggled on yet.
+		if meta.TutorialStep == TutorialBackFromResearch {
+			autoOn := false
+			for i, name := range meta.EquippedAbilities {
+				if name == AbilityRapidFire && meta.AutoAbilities[i] {
+					autoOn = true
+					break
+				}
+			}
+			if !autoOn {
+				return
+			}
 		}
 		playButtonSound()
 		researchScrollY = 0
+		// Clicking Back during TutorialBackFromResearch advances to GoToGear.
+		if meta.TutorialStep == TutorialBackFromResearch {
+			meta.TutorialStep = TutorialGoToGear
+			SaveMetaProg()
+		}
 		state.CurrentScreen = ScreenStart
 	}
 
@@ -246,27 +294,44 @@ func handleResearchInput() {
 				}
 			} else if !HasSaveFile() {
 				toggleEquip(t.Name)
+				// After equipping, move to the branch-pick step so the player
+				// learns about specialisations before enabling AUTO.
 				if meta.TutorialStep == TutorialEquipAbility && t.Name == AbilityRapidFire {
-					meta.TutorialStep = TutorialGoToGear
+					meta.TutorialStep = TutorialPickBranch
 					SaveMetaProg()
-					state.CurrentScreen = ScreenStart
 				}
 			}
 		}
 
 		if *t.Unlocked && *t.Branch == "" && !HasSaveFile() {
+			// Block branch selection before we reach the pick-branch tutorial step,
+			// and block non-RapidFire branches even during that step.
+			branchClickLocked :=
+				(meta.TutorialStep == TutorialBuyAbility ||
+					meta.TutorialStep == TutorialEquipAbility) ||
+				(meta.TutorialStep == TutorialPickBranch && t.Name != AbilityRapidFire)
+			if branchClickLocked {
+				continue
+			}
+
 			branchARect := rl.Rectangle{X: x, Y: y + 44, Width: lay.branchW, Height: 36}
 			branchBRect := rl.Rectangle{X: x + lay.branchW + 8, Y: y + 44, Width: lay.branchW, Height: 36}
 			if rl.CheckCollisionPointRec(mousePos, branchARect) && meta.ResearchPoints >= t.BranchCost {
 				playButtonSound()
 				meta.ResearchPoints -= t.BranchCost
 				*t.Branch = t.BranchAValue
+				if meta.TutorialStep == TutorialPickBranch {
+					meta.TutorialStep = TutorialBackFromResearch
+				}
 				SaveMetaProg()
 			}
 			if rl.CheckCollisionPointRec(mousePos, branchBRect) && meta.ResearchPoints >= t.BranchCost {
 				playButtonSound()
 				meta.ResearchPoints -= t.BranchCost
 				*t.Branch = t.BranchBValue
+				if meta.TutorialStep == TutorialPickBranch {
+					meta.TutorialStep = TutorialBackFromResearch
+				}
 				SaveMetaProg()
 			}
 		}
@@ -469,18 +534,27 @@ func drawTalentEntry(t talentDef, x, y float32, mousePos rl.Vector2, isTutorialL
 
 	if rl.CheckCollisionPointRec(mousePos, unlockRect) {
 		if *t.Unlocked {
-			tooltip = fmt.Sprintf("%s — choose a talent branch below", t.Name)
+			tooltip = fmt.Sprintf("%s -- choose a talent branch below", t.Name)
 		} else {
-			tooltip = fmt.Sprintf("Cost: %d RP — %s / %s", t.Cost, t.BranchAName, t.BranchBName)
+			tooltip = fmt.Sprintf("Cost: %d RP -- %s / %s", t.Cost, t.BranchAName, t.BranchBName)
 		}
 	}
 
 	// -- Branch area --
 	if *t.Unlocked {
+		// Determine if branches should be locked for this entry during tutorial.
+		branchTutLocked := isTutorialLocked ||
+			(meta.TutorialStep == TutorialBuyAbility ||
+				meta.TutorialStep == TutorialEquipAbility) ||
+			(meta.TutorialStep == TutorialPickBranch && t.Name != AbilityRapidFire)
+
 		if *t.Branch == "" {
 			// No branch chosen yet
 			if HasSaveFile() {
 				rl.DrawText("Branch locked during run", int32(x)+4, int32(y)+46, 13, rl.Gray)
+			} else if branchTutLocked {
+				// Tutorial hasn't reached the branch-pick step yet -- show dimmed placeholder.
+				rl.DrawText("Branch locked", int32(x)+4, int32(y)+46, 13, rl.Gray)
 			} else {
 				branchARect := rl.Rectangle{X: x, Y: y + 44, Width: lay.branchW, Height: 36}
 				branchBRect := rl.Rectangle{X: x + lay.branchW + 8, Y: y + 44, Width: lay.branchW, Height: 36}
@@ -516,15 +590,17 @@ func drawTalentEntry(t talentDef, x, y float32, mousePos rl.Vector2, isTutorialL
 				rl.DrawText("[A] "+trimLabel(t.BranchAName, 13), int32(x)+4, int32(y)+51, 13, rl.White)
 				rl.DrawText("[B] "+trimLabel(t.BranchBName, 13), int32(x+lay.branchW+8)+4, int32(y)+51, 13, rl.White)
 
-				costLabel := fmt.Sprintf("%d RP each", t.BranchCost)
+				costLabel := fmt.Sprintf("%d RP", t.BranchCost)
 				costColor := rl.Gold
 				if !canAfford {
 					costColor = rl.Red
 				}
+				// Draw cost on each button individually rather than a shared "each" label.
 				rl.DrawText(costLabel, int32(x)+4, int32(y)+66, 12, costColor)
+				rl.DrawText(costLabel, int32(x+lay.branchW+8)+4, int32(y)+66, 12, costColor)
 			}
 		} else {
-			// Branch already chosen — show both options side by side.
+			// Branch already chosen -- show both options side by side.
 			// Chosen is highlighted; unchosen is visible but dimmed. Neither is clickable.
 			chosenA := *t.Branch == t.BranchAValue
 			branchARect := rl.Rectangle{X: x, Y: y + 44, Width: lay.branchW, Height: 36}
@@ -571,13 +647,13 @@ func drawTalentEntry(t talentDef, x, y float32, mousePos rl.Vector2, isTutorialL
 			rl.DrawRectangleLinesEx(chosenRect, 2, borderChosen)
 			rl.DrawText(labelChosen, int32(chosenRect.X)+4, int32(chosenRect.Y)+4, 11, rl.White)
 			rl.DrawText(trimLabel(descChosen, 18), int32(chosenRect.X)+4, int32(chosenRect.Y)+18, 10, rl.LightGray)
-			rl.DrawText("✓", int32(chosenRect.X+chosenRect.Width)-14, int32(chosenRect.Y)+4, 13, borderChosen)
+			rl.DrawText("[x]", int32(chosenRect.X+chosenRect.Width)-26, int32(chosenRect.Y)+4, 11, borderChosen)
 
 			if rl.CheckCollisionPointRec(mousePos, chosenRect) {
-				tooltip = fmt.Sprintf("Chosen: %s — %s", labelChosen, descChosen)
+				tooltip = fmt.Sprintf("Chosen: %s -- %s", labelChosen, descChosen)
 			}
 			if rl.CheckCollisionPointRec(mousePos, otherRect) {
-				tooltip = fmt.Sprintf("Not chosen: %s — %s", labelOther, descOther)
+				tooltip = fmt.Sprintf("Not chosen: %s -- %s", labelOther, descOther)
 			}
 		}
 	}
@@ -595,6 +671,8 @@ func trimLabel(s string, maxLen int) string {
 func drawResearchMenu() {
 	rl.ClearBackground(rl.NewColor(10, 10, 20, 255))
 
+	mousePos := rl.GetMousePosition()
+
 	title := "TALENT LAB"
 	rl.DrawText(title, ScreenWidth/2-rl.MeasureText(title, 40)/2, 15, 40, rl.Purple)
 	rpText := fmt.Sprintf("Available RP: %d", meta.ResearchPoints)
@@ -604,12 +682,41 @@ func drawResearchMenu() {
 	loadoutLabel := "Active Loadout (Max 4):"
 	rl.DrawText(loadoutLabel, ScreenWidth/2-rl.MeasureText(loadoutLabel, 18)/2, 90, 18, rl.White)
 	for i, name := range meta.EquippedAbilities {
-		x := int32(ScreenWidth/2 - 115 + i*60)
-		y := int32(112)
-		rl.DrawRectangleLines(x, y, 50, 50, rl.Gray)
+		slotX := int32(ScreenWidth/2 - 115 + i*60)
+		slotY := int32(112)
+		rl.DrawRectangleLines(slotX, slotY, 50, 50, rl.Gray)
 		if name != "" {
-			rl.DrawText(string(name[0]), x+15, y+12, 28, rl.Green)
+			rl.DrawText(string(name[0]), slotX+15, slotY+12, 28, rl.Green)
 		}
+
+		// AUTO toggle button below each slot
+		const autoH = int32(18)
+		const autoW = int32(50)
+		autoX := slotX
+		autoY := slotY + 54
+		isAuto := meta.AutoAbilities[i]
+		autoBg := rl.NewColor(110, 25, 25, 220)
+		if isAuto {
+			autoBg = rl.NewColor(25, 110, 25, 220)
+		}
+		if name == "" {
+			autoBg = rl.NewColor(40, 40, 40, 180)
+		}
+		if name != "" && rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: float32(autoX), Y: float32(autoY), Width: float32(autoW), Height: float32(autoH)}) {
+			if isAuto {
+				autoBg = rl.NewColor(35, 150, 35, 255)
+			} else {
+				autoBg = rl.NewColor(150, 35, 35, 255)
+			}
+		}
+		rl.DrawRectangle(autoX, autoY, autoW, autoH, autoBg)
+		rl.DrawRectangleLines(autoX, autoY, autoW, autoH, rl.NewColor(180, 180, 180, 160))
+		autoLabel := "AUTO"
+		if name == "" {
+			autoLabel = "--"
+		}
+		lw := rl.MeasureText(autoLabel, 10)
+		rl.DrawText(autoLabel, autoX+autoW/2-lw/2, autoY+4, 10, rl.White)
 	}
 
 	// Respec button
@@ -623,11 +730,11 @@ func drawResearchMenu() {
 	rl.DrawText("RESET ALL", int32(respecRect.X+10), int32(respecRect.Y+12), 16, rl.White)
 
 	if HasSaveFile() {
-		warn := "RUN IN PROGRESS — LOADOUT & BRANCHES LOCKED"
-		rl.DrawText(warn, ScreenWidth/2-rl.MeasureText(warn, 16)/2, 170, 16, rl.Red)
+		warn := "RUN IN PROGRESS -- LOADOUT & BRANCHES LOCKED"
+		rl.DrawText(warn, ScreenWidth/2-rl.MeasureText(warn, 16)/2, 183, 16, rl.Red)
 	}
 
-	mousePos := rl.GetMousePosition()
+	mousePos = rl.GetMousePosition()
 	var tooltipText string
 
 	// Clip scrollable content between header and back button
@@ -649,7 +756,7 @@ func drawResearchMenu() {
 		if meta.TutorialStep == TutorialBuyAbility && t.Name != AbilityRapidFire {
 			isTutLocked = true
 		}
-		if meta.TutorialStep == TutorialEquipAbility && t.Name != AbilityRapidFire {
+		if (meta.TutorialStep == TutorialEquipAbility || meta.TutorialStep == TutorialPickBranch) && t.Name != AbilityRapidFire {
 			isTutLocked = true
 		}
 
@@ -667,7 +774,7 @@ func drawResearchMenu() {
 	for i, t := range passives {
 		var x, y float32
 		if len(passives) > 1 && i == len(passives)-1 && len(passives)%2 == 1 {
-			// Odd last item — centre it on its own row
+			// Odd last item -- centre it on its own row
 			row := i / 2
 			x = float32(ScreenWidth)/2 - lay.cardW/2
 			y = passiveStartY + float32(row)*lay.cardH
@@ -743,10 +850,44 @@ func drawResearchMenu() {
 
 	// ── Back button ───────────────────────────────────────────────────────────
 	backRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight) - 60, Width: 200, Height: 50}
-	rl.DrawRectangleRec(backRect, rl.Gray)
+	backLocked := meta.TutorialStep == TutorialBuyAbility ||
+		meta.TutorialStep == TutorialEquipAbility ||
+		meta.TutorialStep == TutorialPickBranch
+	// Also locked during BackFromResearch until AUTO is enabled.
+	autoReadyForBack := false
+	if meta.TutorialStep == TutorialBackFromResearch {
+		for i, name := range meta.EquippedAbilities {
+			if name == AbilityRapidFire && meta.AutoAbilities[i] {
+				autoReadyForBack = true
+				break
+			}
+		}
+		if !autoReadyForBack {
+			backLocked = true
+		}
+	}
+	backCol := rl.Color(rl.Gray)
+	if backLocked {
+		backCol = rl.NewColor(50, 50, 50, 255)
+	} else if meta.TutorialStep == TutorialBackFromResearch && autoReadyForBack {
+		// Flash green -- AUTO is on, ready to proceed.
+		if int(rl.GetTime()*4)%2 == 0 {
+			backCol = rl.NewColor(30, 130, 30, 255)
+		} else {
+			backCol = rl.NewColor(20, 80, 20, 255)
+		}
+	}
+	rl.DrawRectangleRec(backRect, backCol)
 	rl.DrawRectangleLinesEx(backRect, 1, rl.White)
 	backLabel := "BACK"
-	rl.DrawText(backLabel, int32(backRect.X+backRect.Width/2)-rl.MeasureText(backLabel, 20)/2, int32(backRect.Y)+15, 20, rl.Black)
+	if backLocked {
+		backLabel = "BACK (finish tutorial first)"
+	}
+	rl.DrawText(backLabel, int32(backRect.X+backRect.Width/2)-rl.MeasureText(backLabel, 16)/2, int32(backRect.Y)+17, 16, rl.White)
+
+	// ── Tutorial overlay bubbles ──────────────────────────────────────────────
+	// Drawn after EndScissorMode so they always appear on top.
+	drawResearchTutorialOverlay()
 
 	// ── Tooltip ───────────────────────────────────────────────────────────────
 	if tooltipText != "" {
@@ -774,4 +915,117 @@ func drawTooltip(mouse rl.Vector2, text string) {
 	rl.DrawRectangle(drawX, drawY, rw, rh, rl.NewColor(10, 10, 20, 240))
 	rl.DrawRectangleLines(drawX, drawY, rw, rh, rl.Gold)
 	rl.DrawText(text, drawX+padding, drawY+10, fontSize, rl.Yellow)
+}
+
+// drawResearchTutorialOverlay renders contextual tip bubbles for each
+// tutorial step that happens inside the Research Lab.
+func drawResearchTutorialOverlay() {
+	lay := calcResearchLayout()
+	// Rapid Fire is the first card, top-left column.
+	rfCardX := lay.originX
+	rfCardY := float32(researchMenuHeaderH) - researchScrollY
+	// unlockRect matches what drawTalentEntry draws -- just the top 40px strip.
+	rfUnlockRect := rl.Rectangle{X: rfCardX, Y: rfCardY, Width: lay.cardW, Height: 40}
+
+	// AUTO button position for the first loadout slot.
+	autoSlot0X := float32(ScreenWidth/2 - 115)
+	autoY := float32(112 + 54 + 20)
+
+	// Back button position -- used for the BackFromResearch bubble.
+	backRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight) - 60, Width: 200, Height: 50}
+
+	switch meta.TutorialStep {
+
+	case TutorialBuyAbility:
+		drawTutorialBubble(
+			rfCardX, rfCardY-140,
+			"UNLOCK AN ABILITY",
+			[]string{
+				"Click the Rapid Fire card to unlock",
+				"your first active ability for 25 RP.",
+				"Abilities are powerful cooldown skills",
+				"you can trigger during a run.",
+			}, rl.Purple)
+		// Flash wraps only the unlock button strip, not the branch area.
+		if int(rl.GetTime()*4)%2 == 0 {
+			rl.DrawRectangleLinesEx(rfUnlockRect, 3, rl.Yellow)
+		}
+
+	case TutorialEquipAbility:
+		// Rapid Fire is unlocked -- prompt the player to click again to equip it.
+		drawTutorialBubble(
+			rfCardX, rfCardY-140,
+			"EQUIP IT!",
+			[]string{
+				"Rapid Fire is unlocked! Click the card",
+				"again to slot it into your active loadout.",
+				"You can equip up to 4 abilities at once.",
+			}, rl.Green)
+		if int(rl.GetTime()*4)%2 == 0 {
+			rl.DrawRectangleLinesEx(rfUnlockRect, 3, rl.Lime)
+		}
+
+	case TutorialPickBranch:
+		// Ability is equipped -- now explain branches and ask them to pick one.
+		drawTutorialBubble(
+			rfCardX, rfCardY+lay.cardH-10,
+			"PICK A SPECIALISATION",
+			[]string{
+				"Each ability has two branches that",
+				"change how it behaves permanently.",
+				"Read both options and pick the one",
+				"that sounds most fun to you!",
+				"You can only choose one, so choose wisely.",
+			}, rl.SkyBlue)
+		// Flash the branch area (below the unlock strip).
+		branchRect := rl.Rectangle{X: rfCardX, Y: rfCardY + 44, Width: lay.cardW, Height: 36}
+		if int(rl.GetTime()*4)%2 == 0 {
+			rl.DrawRectangleLinesEx(branchRect, 3, rl.SkyBlue)
+		}
+
+	case TutorialBackFromResearch:
+		// Check if AUTO is on for Rapid Fire.
+		autoOn := false
+		autoSlotIdx := 0
+		for i, name := range meta.EquippedAbilities {
+			if name == AbilityRapidFire {
+				autoSlotIdx = i
+				if meta.AutoAbilities[i] {
+					autoOn = true
+				}
+				break
+			}
+		}
+		if !autoOn {
+			// AUTO not yet enabled -- keep pointing at that button.
+			ax := float32(ScreenWidth/2 - 115 + autoSlotIdx*60)
+			ay := float32(112 + 54)
+			drawTutorialBubble(autoSlot0X-10, autoY,
+				"ENABLE AUTO-FIRE FIRST",
+				[]string{
+					"Click the AUTO button below your",
+					"ability slot before heading out.",
+					"It fires automatically at 70% power.",
+				}, rl.SkyBlue)
+			if int(rl.GetTime()*4)%2 == 0 {
+				rl.DrawRectangleLines(int32(ax), int32(ay), 50, 18, rl.SkyBlue)
+			}
+		} else {
+			// AUTO is on -- now guide them to Back.
+			drawTutorialBubble(
+				backRect.X-10, backRect.Y-175,
+				"GREAT WORK!",
+				[]string{
+					"You have an ability! AUTO mode will",
+					"make the ability fire automatically",
+					"for you. There is a small penalty to",
+					"effectiveness though. Now, click BACK",
+					"to head to the gear shop and kit",
+					"yourself out!",
+				}, rl.Gold)
+			if int(rl.GetTime()*4)%2 == 0 {
+				rl.DrawRectangleLinesEx(backRect, 3, rl.Gold)
+			}
+		}
+	}
 }

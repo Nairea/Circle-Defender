@@ -76,6 +76,7 @@ func SaveMetaProg() {
 	}
 	meta.MusicVolume = state.MusicVolume
 	meta.SFXVolume = state.SFXVolume
+	meta.AutoAbilities = state.Player.AutoAbilities
 
 	//ah marshall. a delight
 	data, err := json.MarshalIndent(meta, "", "  ")
@@ -97,9 +98,10 @@ func LoadMetaProgression() {
 	if err != nil {
 		state.MusicVolume = 0.5
 		state.SFXVolume = 0.5
-		//tutorial amount  of RP, enough for a single weapon.
-		//move tutorial forward a step.
-		meta.ResearchPoints = 125
+		//if there is no meta save file its the first run. give the player
+		//200 RP (enough for Rapid Fire + some breathing room) and kick
+		//off the tutorial flow.
+		meta.ResearchPoints = 200
 		meta.TutorialStep = TutorialGoToResearch
 		SaveMetaProg()
 		return
@@ -167,6 +169,40 @@ func DeleteSaveFile() {
 	}
 }
 
+// ── Tutorial item helpers ─────────────────────────────────────────────────────
+// These produce guaranteed pre-built items for the crafting tutorial steps so
+// that the player's RP balance can never soft-lock the tutorial.
+
+// injectTutorialGoodItem returns a solid Uncommon weapon for the player to keep.
+func injectTutorialGoodItem() *Item {
+	return &Item{
+		Name:        "Plasma Cutter",
+		Type:        ItemWeapon,
+		Rarity:      RarityUncommon,
+		Description: "High-energy cutting tool",
+		Stats: []ItemStat{
+			{StatType: "Damage", Value: 2.0, BaseValue: 2.0, Growth: 0.5},
+			{StatType: "Haste", Value: 0.01, BaseValue: 0.01, Growth: 0.005},
+		},
+		SalvageValue: 40,
+	}
+}
+
+// injectTutorialBadItem returns a deliberately weak item we want the player
+// to salvage so we can demonstrate the salvage system.
+func injectTutorialBadItem() *Item {
+	return &Item{
+		Name:        "Defective Cell",
+		Type:        ItemTrinket,
+		Rarity:      RarityNormal,
+		Description: "Faulty component -- good for spare parts",
+		Stats: []ItemStat{
+			{StatType: "RPGain", Value: 0.01, BaseValue: 0.01, Growth: 0.0},
+		},
+		SalvageValue: 30,
+	}
+}
+
 func initBasePlayer() Player {
 	p := Player{
 		Radius:    30.0,
@@ -180,7 +216,7 @@ func initBasePlayer() Player {
 		Damage:    5.0,
 		Range:     BaseRange,
 
-		AutoAbilities: [4]bool{false, false, false, false},
+		AutoAbilities: meta.AutoAbilities,
 		UpgradeCounts: make(map[string]int),
 
 		BaseASDelay:    0.5,
@@ -479,7 +515,7 @@ func initEnemy(wave int) *Enemy {
 
 	// modify the enemy as needed like a mad scientist.
 	size := float32(20.0)
-	// Base HP raised 5x to compensate for speed being reduced to 1/5 —
+	// Base HP raised 5x to compensate for speed being reduced to 1/5 --
 	// enemies take longer to reach the player so need more HP to maintain pressure.
 	baseHP := 25 * hpScale
 	xpGiven := int32(10 + (wave-1)/5)

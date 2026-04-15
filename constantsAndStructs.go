@@ -15,17 +15,29 @@ const (
 	ScreenGame     = 1
 	ScreenResearch = 2
 	ScreenItems    = 3
+	ScreenLoading  = 4
 
-	//Tutorial state tracker
-	TutorialNone         = 0
-	TutorialGoToResearch = 1
-	TutorialBuyAbility   = 2
-	TutorialEquipAbility = 3
-	TutorialGoToGear     = 4
-	TutorialOpenFab      = 5
-	TutorialCraftWeapon  = 6
-	TutorialEquipItem    = 7
-	TutorialReady        = 8
+	// How long the pre-run load screen shows (seconds).
+	// Enemies spawn and move during this window so they're already
+	// approaching when the overlay lifts and control is handed to the player.
+	LoadScreenDuration = float32(6.0)
+
+	// Tutorial step constants — pre-run lobby flow.
+	// Steps advance only when the player performs the required action;
+	// they never advance silently on room entry alone.
+	TutorialNone              = 0  // tutorial complete or not yet started
+	TutorialGoToResearch      = 1  // start screen: flash Research Lab, show bubble
+	TutorialBuyAbility        = 2  // research room: buy Rapid Fire
+	TutorialEquipAbility      = 3  // research room: equip it, then toggle AUTO on
+	TutorialPickBranch        = 4  // research room: explain branches, pick one
+	TutorialBackFromResearch  = 5  // research room: prompt player to click Back
+	TutorialGoToGear          = 6  // start screen: flash Gear button, show bubble
+	TutorialCraftFirst        = 7  // gear room: craft the free "bad" item first
+	TutorialCraftBad          = 8  // gear room: craft the free "good" item second
+	TutorialSalvageBad        = 9  // gear room: salvage the bad item to reclaim RP
+	TutorialEquipItem         = 10 // gear room: equip the good weapon
+	TutorialBackFromGear      = 11 // gear room: prompt player to click Back
+	TutorialReady             = 12 // all pre-run steps done; start button unlocked
 
 	//Item type flags.
 	ItemWeapon  = 0
@@ -110,6 +122,7 @@ const (
 
 	//Some ability constants. Mostly CD's. but also gravity pull rate and the bombardment rate.
 	RapidFireBaseCD      = 15
+	RapidFireBSBaseCD    = 10 // Bullet Storm branch: shorter cooldown, more frequent bursts
 	DeathRayBaseCD       = 20
 	DeathRayPrismHitMult = 0.05 // Prism spin-beam damage factor: keeps hit ~0.5x base damage at DeathRayDamageMult=10
 	GravityForce         = 300
@@ -129,7 +142,7 @@ const (
 
 	// Talent branch choices. Empty string = not yet chosen.
 	// Active ability branches
-	BranchRapidFireBulletStorm = "BulletStorm" // shorter, higher multiplier
+	BranchRapidFireBulletStorm = "BulletStorm" // shorter cooldown, higher fire rate multiplier
 	BranchRapidFireOvercharge  = "Overcharge"  // lower mult, grants crit+multishot
 
 	BranchDeathRayAnnihilator = "Annihilator" // focused single beam, ramps
@@ -233,7 +246,7 @@ const (
 	DamageAccumInterval = 0.1  // seconds between DoT damage number flushes
 
 	// Delay between player death and game over screen appearing.
-	PlayerDeathDelay = 4.0
+	PlayerDeathDelay = 2.5
 )
 
 // enemy color globals
@@ -270,9 +283,11 @@ type MetaProgression struct {
 	ChainCountLevel     int
 
 	// Persistent settings
-	MusicVolume  float32
-	SFXVolume    float32
-	TutorialStep int
+	MusicVolume      float32
+	SFXVolume        float32
+	TutorialStep        int
+	TutorialComplete    bool // set true after the player dies for the first time
+	TutorialDeathShown  bool // set true after the "polygons got you" popup is shown once
 
 	//Ability unlock states.
 	RapidFireUnlocked       bool
@@ -303,6 +318,9 @@ type MetaProgression struct {
 	//Currently equipped abilities.
 	EquippedAbilities    [4]string
 	EquippedItemsByIndex [4]int
+
+	// Per-slot auto-fire preference — persists between runs.
+	AutoAbilities [4]bool
 
 	//Current items. read from save file
 	Inventory []Item
@@ -453,8 +471,10 @@ type Player struct {
 	Inventory     []*Item
 	EquippedItems [4]*Item
 
-	RapidFireDuration   float32
-	RapidFireMultiplier float32
+	RapidFireDuration    float32
+	RapidFireMultiplier  float32
+	BulletStormDmgBonus float32 // cumulative per-shot damage bonus from Sustained upgrades
+	BulletStormCDR      float32 // flat cooldown reduction (seconds) from Overclock upgrades
 
 	DeathRayPath       int
 	DeathRayDuration   float32
@@ -632,6 +652,9 @@ type GameState struct {
 	//track runtime in seconds
 	RunTime float32
 
+	// Total RP earned this run (passive trickle + enemy drops combined).
+	RunRP int
+
 	SpawnQueue []SpawnQueueEntry
 
 	EnemiesAlive            int
@@ -660,6 +683,21 @@ type GameState struct {
 
 	//ignores sound when marshalling. was causing errors in saving the mid run save thingy
 	MenuClickSound rl.Sound `json:"-"`
+
+	// Countdown for the pre-run load screen. Non-zero while ScreenLoading is active.
+	LoadScreenTimer float32 `json:"-"`
+
+	// ── In-run tutorial tracking ─────────────────────────────────────────────
+	// Active only while meta.TutorialComplete == false.
+	// These fields do NOT need to survive a save/load (they live for one run only),
+	// so they are excluded from JSON marshalling.
+	TutActiveTip    string       `json:"-"` // tip text currently shown; "" = none (driven by tutTipQueue in gameLogic)
+	TutTipTimer     float32      `json:"-"` // seconds until current tip auto-dismisses
+	TutIntroShown   bool         `json:"-"` // opening "here's your ability" reminder
+	TutEnemySeen    map[int]bool `json:"-"` // which enemy types have been introduced
+	TutRPDropShown  bool         `json:"-"` // "you earned RP!" tip
+	TutLevelUpShown bool         `json:"-"` // "level up: pick an upgrade" tip
+	TutScalingShown bool         `json:"-"` // "enemies are getting stronger" warning
 }
 
 // global vars.

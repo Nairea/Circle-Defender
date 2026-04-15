@@ -83,7 +83,7 @@ func isStatStatic(statType string) bool {
 
 // rarityWeights computes a normalized probability for each rarity tier at a
 // given RP investment. All five weights always sum to 1.0, so every tier is
-// possible at any investment — the distribution just shifts toward rarer results.
+// possible at any investment -- the distribution just shifts toward rarer results.
 //
 // Each tier's raw weight is a log-normal bell centered at its "peak" RP:
 //
@@ -100,11 +100,11 @@ func isStatStatic(statType string) bool {
 func rarityWeights(amount int) [5]float64 {
 	type tierDef struct{ peak, sigma float64 }
 	tiers := [5]tierDef{
-		{800, 1.1},    // Normal    — peaks around 800 RP
-		{2500, 1.0},   // Uncommon  — peaks around 2500 RP
-		{7000, 1.0},   // Rare      — peaks around 7000 RP
-		{30000, 1.05}, // Epic      — peaks around 30000 RP
-		{120000, 1.2}, // Legendary — peaks around 120000 RP (always climbing)
+		{800, 1.1},    // Normal    -- peaks around 800 RP
+		{2500, 1.0},   // Uncommon  -- peaks around 2500 RP
+		{7000, 1.0},   // Rare      -- peaks around 7000 RP
+		{30000, 1.05}, // Epic      -- peaks around 30000 RP
+		{120000, 1.2}, // Legendary -- peaks around 120000 RP (always climbing)
 	}
 
 	rp := math.Max(float64(amount), 1.0)
@@ -255,7 +255,7 @@ func buyItem(amount int, targetType int) {
 		salvageVal = 0
 	}
 
-	// Roll rarity first — this drives how many stats and whether there's a modifier.
+	// Roll rarity first -- this drives how many stats and whether there's a modifier.
 	rarity := rollRarity(amount)
 
 	// Stat power still scales with RP investment (diminishing returns).
@@ -554,9 +554,12 @@ func startRun() {
 
 	// Reset and rebuild all on-hit/on-kill/etc. event subscribers for the new run.
 	RebuildEventSubscriptions(&p)
+	// Reset the tutorial tip queue so stale tips from a previous run never carry over.
+	tutTipQueue = nil
 
 	state = GameState{
-		CurrentScreen:           ScreenGame,
+		CurrentScreen:           ScreenLoading,
+		LoadScreenTimer:         LoadScreenDuration,
 		Player:                  p,
 		Enemies:                 make([]*Enemy, 0),
 		Projectiles:             make([]*Projectile, 0),
@@ -581,6 +584,7 @@ func startRun() {
 		MusicVolume:             meta.MusicVolume,
 		SFXVolume:               meta.SFXVolume,
 		MenuClickSound:          cachedSound,
+		TutEnemySeen:            make(map[int]bool),
 	}
 }
 
@@ -684,8 +688,15 @@ func dropResearchPoint(x, y float32, isBoss bool) {
 			points++
 		}
 		meta.ResearchPoints += points
+		state.RunRP += points
 		// RP Pop-up
 		spawnFloatingText(x, y+20, fmt.Sprintf("+%d RP", points), rl.Gold)
+
+		// First-run tutorial: explain RP on the first drop.
+		if !meta.TutorialComplete && !state.TutRPDropShown {
+			state.TutRPDropShown = true
+			pushTutTip("Research Points! You earn some passively over time, plus bonus drops from enemies. Spend them between runs to get stronger.", 8.0)
+		}
 	}
 }
 
@@ -699,6 +710,14 @@ func playerShoot() {
 		minDistSq := math.MaxFloat64
 		for _, enemy := range state.Enemies {
 			if excludedIDs[enemy.ID] {
+				continue
+			}
+			// Skip shielded enemies -- bullets are wasted on them.
+			if isEnemyProtected(enemy) {
+				continue
+			}
+			// Skip phased enemies -- bullets pass through them.
+			if enemy.Type == EnemyPhaser && enemy.IsPhased {
 				continue
 			}
 			dx := float64(enemy.X - state.Player.X)
@@ -728,14 +747,26 @@ func playerShoot() {
 		}
 	}
 
+	// Fallback: if every in-range enemy is shielded/phased, at least shoot at
+	// the closest unphased one so the player isn't completely idle.
 	if primaryTarget == nil {
-		potentialTarget := findClosestEnemy(state.Player.X, state.Player.Y, 0)
-		if potentialTarget != nil {
-			dx := potentialTarget.X - state.Player.X
-			dy := potentialTarget.Y - state.Player.Y
+		for _, enemy := range state.Enemies {
+			if enemy.Type == EnemyPhaser && enemy.IsPhased {
+				continue
+			}
+			dx := enemy.X - state.Player.X
+			dy := enemy.Y - state.Player.Y
 			dist := float32(math.Sqrt(float64(dx*dx + dy*dy)))
 			if dist <= state.Player.Range {
-				primaryTarget = potentialTarget
+				if primaryTarget == nil {
+					primaryTarget = enemy
+				} else {
+					pdx := primaryTarget.X - state.Player.X
+					pdy := primaryTarget.Y - state.Player.Y
+					if dist*dist < pdx*pdx+pdy*pdy {
+						primaryTarget = enemy
+					}
+				}
 			}
 		}
 	}
@@ -790,6 +821,13 @@ func fireProjectile(target *Enemy) {
 			}
 		}
 		remainingChance -= 1.0
+	}
+
+	// Bullet Storm: Sustained upgrade adds a flat % bonus to each shot during the burst.
+	if state.Player.IsRapidFiring &&
+		meta.RapidFireBranch == BranchRapidFireBulletStorm &&
+		state.Player.BulletStormDmgBonus > 0 {
+		damage *= (1.0 + state.Player.BulletStormDmgBonus)
 	}
 
 	dx := target.X - state.Player.X
@@ -1006,7 +1044,7 @@ func moveProjectiles(dt float32) {
 					}
 				}
 
-				// ExplosiveShots unique modifier — smaller blast, separate chance roll,
+				// ExplosiveShots unique modifier -- smaller blast, separate chance roll,
 				// stacks alongside but independent of ExplosiveShotChance.
 				if state.Player.ExplosiveModChance >= 0.01 && rand.Float32() < state.Player.ExplosiveModChance {
 					const modRadius = float32(80)
@@ -1325,7 +1363,7 @@ func moveEnemies(dt float32) {
 		if enemy.Type == EnemyBerserker {
 			speedMult += float32(enemy.RageStacks) * 0.10 // +10% speed per stack
 		}
-		if !state.Player.IsChronoActive && state.Player.ChronoPassiveSlow > 0 {
+		if !state.Player.IsChronoActive && state.Player.ChronoPassiveSlow > 0 && isAbilityEquipped(AbilityChrono) {
 			speedMult -= state.Player.ChronoPassiveSlow
 		} else if state.Player.IsChronoActive {
 			if enemy.IsBoss {
@@ -1640,6 +1678,12 @@ func checkXP() {
 			applyRandomUpgrade()
 		}
 
+		// First-run tutorial: explain the level-up screen on first level.
+		if !meta.TutorialComplete && !state.TutLevelUpShown {
+			state.TutLevelUpShown = true
+			pushTutTip("Level up! Pick an upgrade -- in-run boosts that last until you die.", 6.0)
+		}
+
 		setupLevelUpOptions()
 	}
 }
@@ -1707,14 +1751,21 @@ func setupLevelUpOptions() {
 			addOpt("RapidFireFrenzy", 5, "Rapid Fire: Frenzy", "+0.2 Frenzy Chance", func(p *Player) { p.FrenzyChance += 0.002 })
 
 			switch meta.RapidFireBranch {
-			case BranchRapidFireBulletStorm: // Bullet Storm — lean into fire rate
-				addOpt("RapidFireSpeed", 10, "Bullet Storm: Overclock", "+0.5x Fire Rate Multiplier", func(p *Player) { p.RapidFireMultiplier += 0.5 })
-				addOpt("RapidFireBSDur", 5, "Bullet Storm: Sustained", "+0.5s Duration", func(p *Player) { p.RapidFireDuration += 0.5 })
-			case BranchRapidFireOvercharge: // Overcharge — lean into crit / multishot payoff
+			case BranchRapidFireBulletStorm: // Bullet Storm -- high fire rate, short cooldown
+				// Overclock: capped at 5 ranks. Each rank adds fire rate and shaves 0.6s
+				// off the Rapid Fire cooldown only -- does not affect other abilities.
+				addOpt("RapidFireSpeed", 5, "Bullet Storm: Overclock", "+0.5x Fire Rate, -0.6s Cooldown", func(p *Player) {
+					p.RapidFireMultiplier += 0.5
+					p.BulletStormCDR += 0.6
+				})
+				addOpt("RapidFireBSDur", 5, "Bullet Storm: Sustained", "+5% burst damage per shot", func(p *Player) {
+					p.BulletStormDmgBonus += 0.05
+				})
+			case BranchRapidFireOvercharge: // Overcharge -- lean into crit / multishot payoff
 				addOpt("RapidFireSpeed", 5, "Overcharge: Amplifier", "+0.25x Fire Rate Multiplier", func(p *Player) { p.RapidFireMultiplier += 0.25 })
 				addOpt("RapidFireOCCrit", 8, "Overcharge: Hot Shots", "+5% Base Crit Chance", func(p *Player) { p.CritChance += 0.05 })
 				addOpt("RapidFireOCMulti", 5, "Overcharge: Scatter", "+10% Multishot Chance", func(p *Player) { p.MultishotChance += 0.10 })
-			default: // No branch chosen — neutral options
+			default: // No branch chosen -- neutral options
 				addOpt("RapidFireSpeed", 10, "Rapid Fire: Overclock", "+0.5x Fire Rate Multiplier", func(p *Player) { p.RapidFireMultiplier += 0.5 })
 			}
 
@@ -1724,15 +1775,15 @@ func setupLevelUpOptions() {
 			addOpt("DeathRayDuration", 5, "Death Ray: Extended Beam", "+1.0s Duration", func(p *Player) { p.DeathRayDuration += 1.0 })
 
 			switch meta.DeathRayBranch {
-			case BranchDeathRayAnnihilator: // Annihilator — single focused beam
+			case BranchDeathRayAnnihilator: // Annihilator -- single focused beam
 				addOpt("DeathRayDmg", 5, "Annihilator: Intensity", "+2.0x Damage Multiplier", func(p *Player) { p.DeathRayDamageMult += 2.0 })
 				addOpt("DeathRayScale", 5, "Annihilator: Escalation", "+0.5 Damage Ramp Rate", func(p *Player) { p.DeathRayScaling += 0.5 })
 				addOpt("DeathRayCount", 3, "Annihilator: Split Focus", "+1 Targeted Beam", func(p *Player) { p.DeathRayCount++ })
-			case BranchDeathRayPrism: // Prism — spinning beams
+			case BranchDeathRayPrism: // Prism -- spinning beams
 				addOpt("DeathRaySpinCount", 4, "Prism: Party Light", "+1 Spinning Beam", func(p *Player) { p.DeathRaySpinCount++ })
 				addOpt("DeathRaySpinSpeed", 5, "Prism: Strobe", "+50% Spin Speed", func(p *Player) { p.DeathRaySpinSpeed += 0.5 })
 				addOpt("DeathRayDmg", 5, "Prism: Intensity", "+1.0x Damage Multiplier", func(p *Player) { p.DeathRayDamageMult += 1.0 })
-			default: // No branch — offer both path starters
+			default: // No branch -- offer both path starters
 				addOpt("DeathRayDmg", 5, "Death Ray: Intensity", "+2.0x Damage Multiplier", func(p *Player) { p.DeathRayDamageMult += 2.0 })
 				addOpt("DeathRayCount", 5, "Death Ray: Multi-Beam", "+1 Beam", func(p *Player) { p.DeathRayCount++ })
 				addOpt("DeathRayScale", 5, "Death Ray: Escalation", "Damage ramps over duration", func(p *Player) { p.DeathRayScaling += 0.5 })
@@ -1745,11 +1796,11 @@ func setupLevelUpOptions() {
 			addOpt("GravityDuration", 5, "Gravity: Prolonged", "+1.0s Duration", func(p *Player) { p.GravityDuration += 1.0 })
 
 			switch meta.GravityBranch {
-			case BranchGravitySingularity: // Singularity — tight, explosive
+			case BranchGravitySingularity: // Singularity -- tight, explosive
 				addOpt("GravityExplode", 1, "Singularity: Collapse", "Final explosion (if not already)", func(p *Player) { p.GravityExplode = true })
 				addOpt("GravityRadius", 3, "Singularity: Compression", "+20 Pull Radius", func(p *Player) { p.GravityRadius += 20.0 })
 				addOpt("GravitySingDmg", 5, "Singularity: Critical Mass", "+8% Max HP as DPS", func(p *Player) { p.GravityDmgPct += 0.08 })
-			case BranchGravityAnomaly: // Anomaly — passive zones
+			case BranchGravityAnomaly: // Anomaly -- passive zones
 				addOpt("GravityRadius", 4, "Anomaly: Horizon", "+25 Field Radius", func(p *Player) { p.GravityRadius += 25.0 })
 				addOpt("GravityPassive", 5, "Anomaly: Proliferate", "Passive zones spawn faster", func(p *Player) {
 					p.GravityAnomalyUnlocked = true
@@ -1774,10 +1825,10 @@ func setupLevelUpOptions() {
 			addOpt("BombardDmg", 10, "Bombard: Payload", "+1.0x Damage Multiplier", func(p *Player) { p.BombardDmgMult += 1.0 })
 
 			switch meta.BombardBranch {
-			case BranchBombardCarpet: // Carpet Bomb — duration and frequency
+			case BranchBombardCarpet: // Carpet Bomb -- duration and frequency
 				addOpt("BombardDuration", 10, "Carpet Bomb: Relentless", "+1.0s Duration", func(p *Player) { p.BombardDuration += 1.0 })
 				addOpt("BombardRadius", 5, "Carpet Bomb: Shrapnel", "+10 Explosion Radius", func(p *Player) { p.BombardRadius += 10.0 })
-			case BranchBombardSiege: // Siege Strike — massive radius
+			case BranchBombardSiege: // Siege Strike -- massive radius
 				addOpt("BombardRadius", 7, "Siege Strike: Blast Radius", "+20 Explosion Radius", func(p *Player) { p.BombardRadius += 20.0 })
 				addOpt("BombardDuration", 5, "Siege Strike: Prolonged", "+1.0s Duration", func(p *Player) { p.BombardDuration += 1.0 })
 				addOpt("BombardSiegeDmg", 5, "Siege Strike: Overkill", "+1.5x Damage Multiplier", func(p *Player) { p.BombardDmgMult += 1.5 })
@@ -1793,10 +1844,10 @@ func setupLevelUpOptions() {
 			addOpt("StaticFree", 10, "Static: Efficiency", "+10% Free Cast Chance", func(p *Player) { p.StaticFreeChance += 0.1 })
 
 			switch meta.StaticBranch {
-			case BranchStaticChain: // Chain Lightning — more arcs, CDR synergy
+			case BranchStaticChain: // Chain Lightning -- more arcs, CDR synergy
 				addOpt("StaticChain", 5, "Chain Lightning: Conductor", "+0.2x damage on each arc", func(p *Player) { p.StaticDmgMult += 0.2 })
 				addOpt("StaticCDR", 7, "Chain Lightning: Overcharge", "+CDR while Ready", func(p *Player) { p.StaticPassiveCDR += 0.1 })
-			case BranchStaticOverload: // Overload — fewer targets, maximize per-hit damage
+			case BranchStaticOverload: // Overload -- fewer targets, maximize per-hit damage
 				addOpt("StaticShield", 20, "Overload: Capacitor", "Consume Shield for +Targets", func(p *Player) { p.StaticShieldCost += 5.0 })
 				addOpt("StaticCDR", 5, "Overload: Surge", "+CDR while Ready", func(p *Player) { p.StaticPassiveCDR += 0.15 })
 				addOpt("StaticOverloadDmg", 5, "Overload: Critical Voltage", "+1.0x Damage Multiplier", func(p *Player) { p.StaticDmgMult += 1.0 })
@@ -1812,12 +1863,12 @@ func setupLevelUpOptions() {
 			addOpt("ChronoPassive", 5, "Chrono: Time Warp", "+5% Passive Slow", func(p *Player) { p.ChronoPassiveSlow += 0.05 })
 
 			switch meta.ChronoBranch {
-			case BranchChronoTimeStop: // Time Stop — maximize the freeze window
+			case BranchChronoTimeStop: // Time Stop -- maximize the freeze window
 				addOpt("ChronoSlow", 5, "Time Stop: Stasis", "+10% Boss Slow Strength", func(p *Player) {
 					p.ChronoBossSlow = float32(math.Max(0.05, float64(p.ChronoBossSlow-0.1)))
 				})
 				addOpt("ChronoStopDur", 5, "Time Stop: Extended", "+0.5s Duration", func(p *Player) { p.ChronoDuration += 0.5 })
-			case BranchChronoEntropy: // Entropy — DoT payoff during slow
+			case BranchChronoEntropy: // Entropy -- DoT payoff during slow
 				addOpt("ChronoDoT", 6, "Entropy: Decay", "+5 DoT per second in field", func(p *Player) { p.ChronoDoT += 5.0 })
 				addOpt("ChronoSlow", 3, "Entropy: Drag", "+5% Boss Slow Strength", func(p *Player) {
 					p.ChronoBossSlow = float32(math.Max(0.05, float64(p.ChronoBossSlow-0.05)))
@@ -1854,12 +1905,12 @@ func setupLevelUpOptions() {
 			})
 
 			switch meta.SatellitesBranch {
-			case BranchSatSentry: // Sentry — bullet damage upgrades
+			case BranchSatSentry: // Sentry -- bullet damage upgrades
 				addOpt("SatSentryDmg", 8, "Sentry: Calibration", "+3 Bullet Damage per Satellite", func(p *Player) { p.SatelliteDamage += 3.0 })
-			case BranchSatOverdrive: // Overdrive — contact damage upgrades
+			case BranchSatOverdrive: // Overdrive -- contact damage upgrades
 				addOpt("SatOverdriveDmg", 8, "Overdrive: Supercharge", "+4 Contact Damage per Satellite", func(p *Player) { p.SatelliteDamage += 4.0 })
 			default:
-				// No branch chosen yet — offer a neutral damage upgrade
+				// No branch chosen yet -- offer a neutral damage upgrade
 				addOpt("SatDmg", 8, "Satellite: Power Cell", "+2 Damage per Satellite", func(p *Player) { p.SatelliteDamage += 2.0 })
 			}
 		}
@@ -1878,10 +1929,10 @@ func setupLevelUpOptions() {
 				}
 			})
 			switch meta.ShockwaveBranch {
-			case BranchShockwaveRepulsor: // Repulsor — range and stun
+			case BranchShockwaveRepulsor: // Repulsor -- range and stun
 				addOpt("RepulsorRange", 3, "Repulsor: Reach", "+30 Shockwave Radius", func(p *Player) { _ = p })    // visual only; radius is constant for now
 				addOpt("RepulsorStun", 4, "Repulsor: Concussive", "+0.5s Stun Duration", func(p *Player) { _ = p }) // placeholder for future ShockwaveStunDuration player field
-			case BranchShockwaveShatter: // Shatter — stack debuff faster
+			case BranchShockwaveShatter: // Shatter -- stack debuff faster
 				addOpt("ShatterDebuff", 5, "Shatter: Fracture", "+10% Armor Debuff per hit", func(p *Player) { _ = p }) // debuff amount set in triggerShockwave; this is an upgrade hook
 			}
 		}
@@ -1977,6 +2028,23 @@ func updateGame(dt float32) {
 			handleResearchInput()
 		} else if state.CurrentScreen == ScreenItems {
 			handleItemsInput()
+		} else if state.CurrentScreen == ScreenLoading {
+			// Tick the load screen countdown. Enemies spawn and move so they're
+			// already approaching when the overlay lifts -- no empty-arena feeling.
+			state.LoadScreenTimer -= dt
+			spawnInterval := 1.5 / (1.0 + ((state.RunTime / 5.0) / 100.0))
+			state.SpawnTimer += dt
+			for state.SpawnTimer >= spawnInterval {
+				state.SpawnTimer -= spawnInterval
+				if state.EnemiesAlive < 150 {
+					state.Enemies = append(state.Enemies, initEnemy(state.Wave))
+					state.EnemiesAlive++
+				}
+			}
+			moveEnemies(dt)
+			if state.LoadScreenTimer <= 0 {
+				state.CurrentScreen = ScreenGame
+			}
 		}
 		return
 	}
@@ -2002,7 +2070,7 @@ func updateGame(dt float32) {
 			return
 		}
 		// Keep the world running at half speed so the death animation plays.
-		// Skip all input, spawning, and player actions — just update visuals.
+		// Skip all input, spawning, and player actions -- just update visuals.
 		effectiveDt := dt * 0.5
 		updateAbilityTimers(effectiveDt)
 		updateGravityZones(effectiveDt)
@@ -2049,7 +2117,7 @@ func updateGame(dt float32) {
 		p := &state.Player
 		ready := false
 
-		// update CD's for all abilities.
+		// Cooldown / active-state check -- same as before.
 		switch name {
 		case AbilityRapidFire:
 			ready = !p.IsRapidFiring && p.RapidFireCooldown <= 0
@@ -2065,19 +2133,81 @@ func updateGame(dt float32) {
 			ready = !p.IsChronoActive && p.ChronoCooldown <= 0
 		}
 
-		if ready {
-			if name == AbilityGravity {
-				if len(state.Enemies) > 0 {
-					target := state.Enemies[rand.Intn(len(state.Enemies))]
-					state.Player.GravityX = target.X
-					state.Player.GravityY = target.Y
-					state.Player.IsGravityActive = true
-					state.Player.GravityTimer = state.Player.GravityDuration
-					// Cooldown starts in updateAbilityTimers when effect ends
-				}
+		if !ready {
+			continue
+		}
+
+		// Smart targeting check -- only fire if there is something useful to hit.
+		shouldFire := false
+		switch name {
+		case AbilityRapidFire:
+			// Worth firing when there is at least one hittable enemy in range.
+			shouldFire = hasViableTargetInRange(p.Range)
+
+		case AbilityDeathRay:
+			// Prism branch spins regardless of targets; targeted branch needs an
+			// enemy in range to lock onto.
+			if p.DeathRaySpinCount > 0 {
+				shouldFire = hasViableTargetInRange(p.Range * 1.5)
 			} else {
-				triggerAbility(name)
+				shouldFire = hasViableTargetInRange(p.Range)
 			}
+
+		case AbilityGravity:
+			// Only pull when enemies are close enough to actually get caught.
+			// Use 1.5× range so the field has meaningful prey when it fires.
+			shouldFire = hasViableTargetInRange(p.Range * 1.5)
+
+		case AbilityBombard:
+			// Bombs land within rangeDist (450) of the player -- only useful
+			// when something is inside that blast zone.
+			const bombRangeDist = float32(450)
+			shouldFire = hasViableTargetInRange(bombRangeDist)
+
+		case AbilityStatic:
+			// Chain: needs a target within player range for the first hop.
+			// Non-chain: the hard-coded arc radius is 600.
+			if meta.StaticBranch == BranchStaticChain {
+				shouldFire = hasViableTargetInRange(p.Range)
+			} else {
+				shouldFire = hasViableTargetInRange(600)
+			}
+
+		case AbilityChrono:
+			// Slowing field is useful whenever enemies are anywhere nearby.
+			shouldFire = hasViableTargetInRange(p.Range * 2.0)
+		}
+
+		if !shouldFire {
+			continue
+		}
+
+		if name == AbilityGravity {
+			if len(state.Enemies) > 0 {
+				// Pick the closest viable enemy as the gravity anchor.
+				var bestTarget *Enemy
+				bestDistSq := float32(math.MaxFloat32)
+				for _, e := range state.Enemies {
+					if e.HP <= 0 || isEnemyProtected(e) {
+						continue
+					}
+					dx := e.X - p.X
+					dy := e.Y - p.Y
+					dsq := dx*dx + dy*dy
+					if dsq < bestDistSq {
+						bestDistSq = dsq
+						bestTarget = e
+					}
+				}
+				if bestTarget != nil {
+					p.GravityX = bestTarget.X
+					p.GravityY = bestTarget.Y
+					p.IsGravityActive = true
+					p.GravityTimer = p.GravityDuration
+				}
+			}
+		} else {
+			triggerAbility(name)
 		}
 	}
 
@@ -2128,7 +2258,15 @@ func updateGame(dt float32) {
 
 	//add to runtime, update spawn rate.
 	state.RunTime += effectiveDt
-	spawnInterval := 0.75 / (1.0 + ((state.RunTime / 5.0) / 100.0))
+
+	// Passive RP trickle -- 1 point every 5 seconds of in-run time.
+	prevTicks := int(state.RunTime-effectiveDt) / 5
+	currTicks := int(state.RunTime) / 5
+	if currTicks > prevTicks {
+		meta.ResearchPoints++
+		state.RunRP++
+	}
+	spawnInterval := 1.5 / (1.0 + ((state.RunTime / 5.0) / 100.0))
 	state.SpawnTimer += effectiveDt
 	for state.SpawnTimer >= spawnInterval {
 		state.SpawnTimer -= spawnInterval
@@ -2177,4 +2315,68 @@ func updateGame(dt float32) {
 	updateFloatingTexts(dt)
 	moveEnemies(effectiveDt)
 	checkXP()
+
+	// Update in-run tutorial last so new tips set this frame are visible immediately.
+	if !meta.TutorialComplete {
+		updateInRunTutorial(effectiveDt)
+	}
+}
+
+// tutTipEntry pairs a message with its display duration.
+type tutTipEntry struct {
+	text     string
+	duration float32
+}
+
+// tutTipQueue is the ordered list of pending tutorial tips.
+var tutTipQueue []tutTipEntry
+
+// pushTutTip appends a tip. The front entry is shown; when its timer expires
+// it is popped and the next entry starts automatically.
+func pushTutTip(text string, duration float32) {
+	tutTipQueue = append(tutTipQueue, tutTipEntry{text, duration})
+	if len(tutTipQueue) == 1 {
+		// First item -- start it immediately.
+		state.TutActiveTip = text
+		state.TutTipTimer = duration
+	}
+}
+
+// updateInRunTutorial manages the sequence of contextual tips shown during
+// the player's first run. Each tip fires exactly once, keyed by a bool flag
+// on GameState. Tips auto-dismiss when TutTipTimer reaches zero.
+func updateInRunTutorial(dt float32) {
+	// Tick the front tip's timer.
+	if state.TutTipTimer > 0 {
+		state.TutTipTimer -= dt
+		if state.TutTipTimer < 0 {
+			state.TutTipTimer = 0
+		}
+		if state.TutTipTimer == 0 {
+			// Pop the front entry and start the next one if any.
+			if len(tutTipQueue) > 0 {
+				tutTipQueue = tutTipQueue[1:]
+			}
+			if len(tutTipQueue) > 0 {
+				next := tutTipQueue[0]
+				state.TutActiveTip = next.text
+				state.TutTipTimer = next.duration
+			} else {
+				state.TutActiveTip = ""
+			}
+		}
+	}
+
+	// ── Step 5a: Opening tip -- fires ~3 s into the run ───────────────────────
+	if !state.TutIntroShown && state.RunTime > 3.0 {
+		state.TutIntroShown = true
+		pushTutTip("Your ability fires from the action bar at the bottom. AUTO mode fires it automatically -- at 70% reduced power.", 8.0)
+	}
+
+	// ── Step 6: Scaling warning -- enemies ramp hard around 2 minutes in ──────
+	if !state.TutScalingShown && state.RunTime > 120.0 {
+		state.TutScalingShown = true
+		pushTutTip("Heads up -- the polygons are getting stronger over time. Survive as long as you can!", 8.0)
+	}
+	// RP and level-up tips are pushed from dropResearchPoint / checkXP directly.
 }
