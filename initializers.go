@@ -541,7 +541,7 @@ func initEnemy(wave int) *Enemy {
 		size = 30.0
 	case EnemyBerserker:
 		baseSpeed = BerserkerBaseSpeed
-		baseHP *= 1.2
+		baseHP *= 5.0
 	}
 
 	if isBoss {

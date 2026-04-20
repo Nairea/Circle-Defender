@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
@@ -950,7 +951,7 @@ func drawAndHandleSpeedButtons() {
 func drawLevelUpMenu() {
 	rl.DrawRectangle(0, 0, ScreenWidth, ScreenHeight, rl.Fade(rl.Black, 0.8))
 	const menuW = 500
-	const menuH = 350
+	const menuH = 380
 	const menuY = ScreenHeight/2 - menuH/2
 	menuX := ScreenWidth/2 - menuW/2
 	rl.DrawRectangle(int32(menuX), int32(menuY), int32(menuW), int32(menuH), rl.NewColor(30, 30, 50, 255))
@@ -962,8 +963,8 @@ func drawLevelUpMenu() {
 	instructionsText := "Choose one upgrade to continue"
 	rl.DrawText(instructionsText, ScreenWidth/2-rl.MeasureText(instructionsText, 20)/2, int32(menuY+60), 20, rl.White)
 
-	const buttonWidth = 400
-	const buttonHeight = 60
+	const buttonWidth = 440
+	const buttonHeight = 72
 	const margin = 10
 	startY := menuY + 100
 
@@ -977,11 +978,41 @@ func drawLevelUpMenu() {
 		rl.DrawRectangleRec(rect, color)
 		rl.DrawRectangleLinesEx(rect, 1, rl.White)
 		rl.DrawText(opt.Name, int32(rect.X)+10, int32(rect.Y)+8, 20, rl.Yellow)
-		descriptionSize := int32(14)
-		if rl.MeasureText(opt.Description, descriptionSize) > int32(rect.Width)-20 {
-			descriptionSize = 10
+
+		// Fit description: try 14px on one line, then 11px, then wrap at 11px.
+		const maxW = buttonWidth - 20
+		desc := opt.Description
+		descX := int32(rect.X) + 10
+		descY := int32(rect.Y) + 34
+
+		if rl.MeasureText(desc, 14) <= maxW {
+			rl.DrawText(desc, descX, descY, 14, rl.RayWhite)
+		} else if rl.MeasureText(desc, 11) <= maxW {
+			rl.DrawText(desc, descX, descY, 11, rl.RayWhite)
+		} else {
+			// Word-wrap at 11px across two lines.
+			words := strings.Fields(desc)
+			line1, line2 := "", ""
+			for _, w := range words {
+				candidate := line1
+				if candidate != "" {
+					candidate += " "
+				}
+				candidate += w
+				if rl.MeasureText(candidate, 11) <= maxW {
+					line1 = candidate
+				} else {
+					if line2 != "" {
+						line2 += " "
+					}
+					line2 += w
+				}
+			}
+			rl.DrawText(line1, descX, descY, 11, rl.RayWhite)
+			if line2 != "" {
+				rl.DrawText(line2, descX, descY+15, 11, rl.RayWhite)
+			}
 		}
-		rl.DrawText(opt.Description, int32(rect.X)+10, int32(rect.Y)+35, descriptionSize, rl.RayWhite)
 	}
 }
 
@@ -1899,6 +1930,47 @@ func drawGame() {
 			fontSize := int32(FloatTextFontSize) // Small pop up size
 			textWidth := rl.MeasureText(ft.Text, fontSize)
 			rl.DrawText(ft.Text, int32(ft.X)-textWidth/2, int32(ft.Y), fontSize, color)
+		}
+
+		// ── Cursor aim reticle ─────────────────────────────────────────────────
+		// Drawn when LMB is held and a cursor target has been snapped.
+		// Four corner brackets rotate slowly around the enemy to signal lock-on.
+		if state.CursorAimTarget != nil {
+			e := state.CursorAimTarget
+			// Only draw if the target is still alive.
+			if e.HP > 0 {
+				reticleRadius := e.Size*0.8 + 8
+				// Pulse the radius slightly so it feels alive.
+				pulse := float32(math.Sin(float64(rl.GetTime())*8.0)) * 3.0
+				reticleRadius += pulse
+
+				// Spin angle — slow constant rotation.
+				angle := float32(rl.GetTime()) * 1.5
+
+				// Four corner brackets, 90 degrees apart.
+				bracketLen := float32(10.0)
+				bracketGap := float32(0.3) // radians inset from corner
+				for i := 0; i < 4; i++ {
+					base := angle + float32(i)*math.Pi/2
+
+					// Two points per bracket (an L-shape from the corner outward).
+					ax := e.X + float32(math.Cos(float64(base-bracketGap)))*reticleRadius
+					ay := e.Y + float32(math.Sin(float64(base-bracketGap)))*reticleRadius
+					bx := e.X + float32(math.Cos(float64(base)))*reticleRadius
+					by := e.Y + float32(math.Sin(float64(base)))*reticleRadius
+					cx := e.X + float32(math.Cos(float64(base+bracketGap)))*reticleRadius
+					cy := e.Y + float32(math.Sin(float64(base+bracketGap)))*reticleRadius
+
+					// Extend outward along the radial at the bracket tip.
+					tipX := e.X + float32(math.Cos(float64(base)))*(reticleRadius+bracketLen)
+					tipY := e.Y + float32(math.Sin(float64(base)))*(reticleRadius+bracketLen)
+
+					reticleColor := rl.NewColor(255, 80, 80, 220)
+					rl.DrawLineEx(rl.NewVector2(ax, ay), rl.NewVector2(bx, by), 1.5, reticleColor)
+					rl.DrawLineEx(rl.NewVector2(cx, cy), rl.NewVector2(bx, by), 1.5, reticleColor)
+					rl.DrawLineEx(rl.NewVector2(bx, by), rl.NewVector2(tipX, tipY), 1.5, reticleColor)
+				}
+			}
 		}
 
 		rl.EndMode2D()

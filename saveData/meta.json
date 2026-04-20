@@ -1,5 +1,5 @@
 {
-  "ResearchPoints": 1603,
+  "ResearchPoints": 35,
   "DmgLevel": 0,
   "ASLevel": 0,
   "RegenLevel": 0,
@@ -8,47 +8,47 @@
   "ThornsLevel": 0,
   "MultishotCountLevel": 0,
   "ChainCountLevel": 0,
-  "MusicVolume": 0.5,
+  "MusicVolume": 0,
   "SFXVolume": 0.5,
   "TutorialStep": 12,
   "TutorialComplete": true,
   "TutorialDeathShown": true,
   "RapidFireUnlocked": true,
-  "DeathRayUnlocked": false,
+  "DeathRayUnlocked": true,
   "GravityFieldUnlocked": false,
   "BombardmentUnlocked": false,
-  "StaticDischargeUnlocked": false,
+  "StaticDischargeUnlocked": true,
   "ChronoFieldUnlocked": false,
-  "MinesUnlocked": false,
+  "MinesUnlocked": true,
   "SatellitesUnlocked": false,
   "ShockwaveUnlocked": false,
   "RapidFireBranch": "BulletStorm",
-  "DeathRayBranch": "",
+  "DeathRayBranch": "Annihilator",
   "GravityBranch": "",
   "BombardBranch": "",
   "StaticBranch": "",
   "ChronoBranch": "",
-  "MinesBranch": "",
+  "MinesBranch": "HellfireMines",
   "SatellitesBranch": "",
   "ShockwaveBranch": "",
   "Speed3xUnlocked": true,
   "OpeningSprintUnlocked": false,
   "EquippedAbilities": [
     "Rapid Fire",
-    "",
-    "",
+    "Death Ray",
+    "Static Discharge",
     ""
   ],
   "EquippedItemsByIndex": [
     0,
+    2,
     -1,
-    -1,
-    -1
+    1
   ],
   "AutoAbilities": [
     true,
-    false,
-    false,
+    true,
+    true,
     false
   ],
   "Inventory": [
@@ -59,19 +59,53 @@
       "Stats": [
         {
           "StatType": "Damage",
-          "Value": 6,
+          "Value": 56,
           "BaseValue": 2,
           "Growth": 2
         },
         {
           "StatType": "Haste",
-          "Value": 0.03,
+          "Value": 0.28,
           "BaseValue": 0.01,
           "Growth": 0.01
         }
       ],
       "Description": "High-energy cutting tool",
       "SalvageValue": 40,
+      "UniqueModifier": "",
+      "SetID": ""
+    },
+    {
+      "Name": "Sniper Scope",
+      "Type": 3,
+      "Rarity": 0,
+      "Stats": [
+        {
+          "StatType": "DmgDist",
+          "Value": 0.42863357,
+          "BaseValue": 0.015308337,
+          "Growth": 0.015308337
+        }
+      ],
+      "Description": "Long Shot",
+      "SalvageValue": 40,
+      "UniqueModifier": "",
+      "SetID": ""
+    },
+    {
+      "Name": "Iron Plating",
+      "Type": 1,
+      "Rarity": 0,
+      "Stats": [
+        {
+          "StatType": "Armor",
+          "Value": 0.028974615,
+          "BaseValue": 0.028974615,
+          "Growth": 0.028974615
+        }
+      ],
+      "Description": "Solid Defense",
+      "SalvageValue": 50,
       "UniqueModifier": "",
       "SetID": ""
     }

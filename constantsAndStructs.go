@@ -25,19 +25,19 @@ const (
 	// Tutorial step constants — pre-run lobby flow.
 	// Steps advance only when the player performs the required action;
 	// they never advance silently on room entry alone.
-	TutorialNone              = 0  // tutorial complete or not yet started
-	TutorialGoToResearch      = 1  // start screen: flash Research Lab, show bubble
-	TutorialBuyAbility        = 2  // research room: buy Rapid Fire
-	TutorialEquipAbility      = 3  // research room: equip it, then toggle AUTO on
-	TutorialPickBranch        = 4  // research room: explain branches, pick one
-	TutorialBackFromResearch  = 5  // research room: prompt player to click Back
-	TutorialGoToGear          = 6  // start screen: flash Gear button, show bubble
-	TutorialCraftFirst        = 7  // gear room: craft the free "bad" item first
-	TutorialCraftBad          = 8  // gear room: craft the free "good" item second
-	TutorialSalvageBad        = 9  // gear room: salvage the bad item to reclaim RP
-	TutorialEquipItem         = 10 // gear room: equip the good weapon
-	TutorialBackFromGear      = 11 // gear room: prompt player to click Back
-	TutorialReady             = 12 // all pre-run steps done; start button unlocked
+	TutorialNone             = 0  // tutorial complete or not yet started
+	TutorialGoToResearch     = 1  // start screen: flash Research Lab, show bubble
+	TutorialBuyAbility       = 2  // research room: buy Rapid Fire
+	TutorialEquipAbility     = 3  // research room: equip it, then toggle AUTO on
+	TutorialPickBranch       = 4  // research room: explain branches, pick one
+	TutorialBackFromResearch = 5  // research room: prompt player to click Back
+	TutorialGoToGear         = 6  // start screen: flash Gear button, show bubble
+	TutorialCraftFirst       = 7  // gear room: craft the free "bad" item first
+	TutorialCraftBad         = 8  // gear room: craft the free "good" item second
+	TutorialSalvageBad       = 9  // gear room: salvage the bad item to reclaim RP
+	TutorialEquipItem        = 10 // gear room: equip the good weapon
+	TutorialBackFromGear     = 11 // gear room: prompt player to click Back
+	TutorialReady            = 12 // all pre-run steps done; start button unlocked
 
 	//Item type flags.
 	ItemWeapon  = 0
@@ -118,7 +118,7 @@ const (
 	//Divider
 	DividerBaseSpeed = 15
 	//Berserker
-	BerserkerBaseSpeed = 24
+	BerserkerBaseSpeed = 14
 
 	//Some ability constants. Mostly CD's. but also gravity pull rate and the bombardment rate.
 	RapidFireBaseCD      = 15
@@ -283,11 +283,11 @@ type MetaProgression struct {
 	ChainCountLevel     int
 
 	// Persistent settings
-	MusicVolume      float32
-	SFXVolume        float32
-	TutorialStep        int
-	TutorialComplete    bool // set true after the player dies for the first time
-	TutorialDeathShown  bool // set true after the "polygons got you" popup is shown once
+	MusicVolume        float32
+	SFXVolume          float32
+	TutorialStep       int
+	TutorialComplete   bool // set true after the player dies for the first time
+	TutorialDeathShown bool // set true after the "polygons got you" popup is shown once
 
 	//Ability unlock states.
 	RapidFireUnlocked       bool
@@ -471,8 +471,8 @@ type Player struct {
 	Inventory     []*Item
 	EquippedItems [4]*Item
 
-	RapidFireDuration    float32
-	RapidFireMultiplier  float32
+	RapidFireDuration   float32
+	RapidFireMultiplier float32
 	BulletStormDmgBonus float32 // cumulative per-shot damage bonus from Sustained upgrades
 	BulletStormCDR      float32 // flat cooldown reduction (seconds) from Overclock upgrades
 
@@ -663,6 +663,7 @@ type GameState struct {
 	GameOver                bool
 	DeathTimer              float32 // counts down after death before showing game over
 	LevelUpOptions          []LevelOption
+	CursorAimTarget         *Enemy // non-nil when LMB is held and cursor is near a valid target
 	GameSpeedMultiplier     float32
 	PreviousSpeedMultiplier float32
 	IsPaused                bool
