@@ -1921,15 +1921,79 @@ func drawGame() {
 		}
 
 		for _, ft := range state.FloatingTexts {
-			// Fade out based on time left
+			// Progress runs 0 (just spawned) -> 1 (about to expire).
+			progress := 1.0 - (ft.Timer / ft.MaxDuration)
+
+			// Fade out based on time left.
 			alpha := uint8(255 * (ft.Timer / ft.MaxDuration))
 			color := ft.Color
 			color.A = alpha
 
-			// Center text
-			fontSize := int32(FloatTextFontSize) // Small pop up size
+			fontSize := int32(FloatTextFontSize)
 			textWidth := rl.MeasureText(ft.Text, fontSize)
-			rl.DrawText(ft.Text, int32(ft.X)-textWidth/2, int32(ft.Y), fontSize, color)
+
+			// Per-type micro-animations. Kept subtle so they read as texture,
+			// not as a separate VFX layer. All offsets are in screen pixels.
+			offsetX := float32(0)
+			offsetY := float32(0)
+			scale := float32(1.0)
+			drawGlow := false
+
+			switch ft.DmgType {
+			case DmgPhysical:
+				// Snappy pop in the first ~15% of life, then settle to 1.0.
+				if progress < 0.15 {
+					scale = 1.0 + (0.15-progress)*1.5 // peak ~1.22 at spawn
+				}
+			case DmgEnergy:
+				// Calm, steady. Soft white halo underneath for a "beam" feel.
+				drawGlow = true
+			case DmgLightning:
+				// Flicker horizontally. Uses GetTime so neighbouring texts
+				// don't jitter in lockstep.
+				t := float32(rl.GetTime())*40.0 + ft.X*0.1
+				offsetX = float32(math.Sin(float64(t))) * 2.0
+			case DmgFire:
+				// Rises a touch faster and hue-shifts toward yellow as it fades,
+				// like an ember cooling upward.
+				offsetY = -progress * 6.0
+				// Blend toward yellow (255, 220, 60) over life.
+				r := float32(ft.Color.R)
+				g := float32(ft.Color.G) + (220-float32(ft.Color.G))*progress
+				b := float32(ft.Color.B) + (60-float32(ft.Color.B))*progress
+				color.R = uint8(r)
+				color.G = uint8(g)
+				color.B = uint8(b)
+			case DmgPure:
+				// Sharp impact shake for the first 20%, then hold steady.
+				if progress < 0.20 {
+					shake := (0.20 - progress) * 5.0
+					t := float32(rl.GetTime()) * 60.0
+					offsetX = float32(math.Sin(float64(t))) * shake
+					offsetY = float32(math.Cos(float64(t*1.3))) * shake
+				}
+			}
+
+			drawX := int32(ft.X+offsetX) - textWidth/2
+			drawY := int32(ft.Y + offsetY)
+
+			// Energy gets a faint white halo rendered behind the main text.
+			if drawGlow {
+				glowCol := rl.NewColor(255, 255, 255, alpha/3)
+				for _, d := range [4][2]int32{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
+					rl.DrawText(ft.Text, drawX+d[0], drawY+d[1], fontSize, glowCol)
+				}
+			}
+
+			// Scale is implemented by rendering at a slightly-enlarged font size,
+			// since raylib's DrawText only takes an int font size.
+			if scale != 1.0 {
+				scaledSize := int32(float32(fontSize) * scale)
+				scaledWidth := rl.MeasureText(ft.Text, scaledSize)
+				rl.DrawText(ft.Text, int32(ft.X+offsetX)-scaledWidth/2, drawY, scaledSize, color)
+			} else {
+				rl.DrawText(ft.Text, drawX, drawY, fontSize, color)
+			}
 		}
 
 		// ── Cursor aim reticle ─────────────────────────────────────────────────

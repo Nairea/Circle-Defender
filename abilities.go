@@ -157,6 +157,9 @@ func triggerAbility(name string) {
 		if !p.IsBombardmentActive && p.BombardmentCooldown <= 0 {
 			p.IsBombardmentActive = true
 			p.BombardmentTimer = p.BombardDuration
+			// Seed the Carpet Bomb guarantee timer so the first forced-hit
+			// window starts counting from the moment the ability fires.
+			p.CarpetGuaranteeTimer = 2.0
 		}
 	case AbilityStatic:
 		if p.StaticCooldown <= 0 {
@@ -205,13 +208,15 @@ func triggerStaticDischarge() {
 	}
 
 	if meta.StaticBranch == BranchStaticChain {
-		// Nearest-neighbour chain: seed from the closest enemy within player range,
-		// then hop freely to the nearest unhit enemy with no distance cap —
-		// once the bolt is in flight it jumps across the entire screen.
+		// Nearest-neighbour chain: seed from the closest enemy within player
+		// range, then hop to the nearest unhit enemy within ChainHopRange.
+		// Capping the hop distance keeps the effect readable as a chain
+		// reaction rather than a bolt teleporting across the whole screen.
 		// Each enemy is damaged exactly once — 60% of a full hit — when the
 		// bolt reaches them. Visuals are staggered per hop.
 		const hopInterval = float32(0.07)
 		const arcDuration = float32(2.0)
+		const ChainHopRange = float32(300.0)
 		dmg := p.Damage * dmgMult * 0.60 * mult
 
 		usedIDs := make(map[int]bool)
@@ -238,11 +243,13 @@ func triggerStaticDischarge() {
 		chain = append(chain, first)
 		usedIDs[first.ID] = true
 
-		// Hop to nearest unhit enemy with no range cap — bolt jumps anywhere.
+		// Hop to nearest unhit enemy within ChainHopRange. If nothing is in
+		// reach, the chain stops early — this is what gives the effect its
+		// visual coherence.
 		cur := first
 		for len(chain) < targetLimit {
 			var next *Enemy
-			bestDist := float32(math.MaxFloat32)
+			bestDist := ChainHopRange
 			for _, e := range state.Enemies {
 				if usedIDs[e.ID] || isEnemyProtected(e) {
 					continue
@@ -266,12 +273,13 @@ func triggerStaticDischarge() {
 		// Apply damage and spawn staggered arcs
 		// Arc 0: player -> first enemy, no delay
 		chain[0].HP -= dmg
-		spawnFloatingText(chain[0].X, chain[0].Y-chain[0].Size, fmt.Sprintf("%.0f", dmg), rl.SkyBlue)
+		spawnDamageText(chain[0].X, chain[0].Y-chain[0].Size, dmg, DmgLightning, false)
 		Dispatch(GameEvent{
 			Type:     EventOnHit,
 			Player:   p,
 			Enemy:    chain[0],
 			Damage:   dmg,
+			DmgType:  DmgLightning,
 			Position: rl.Vector2{X: chain[0].X, Y: chain[0].Y},
 		})
 		state.LightningArcs = append(state.LightningArcs, &LightningArc{
@@ -288,12 +296,13 @@ func triggerStaticDischarge() {
 			src := chain[i]
 			dst := chain[i+1]
 			dst.HP -= dmg
-			spawnFloatingText(dst.X, dst.Y-dst.Size, fmt.Sprintf("%.0f", dmg), rl.Blue)
+			spawnDamageText(dst.X, dst.Y-dst.Size, dmg, DmgLightning, false)
 			Dispatch(GameEvent{
 				Type:     EventOnHit,
 				Player:   p,
 				Enemy:    dst,
 				Damage:   dmg,
+				DmgType:  DmgLightning,
 				Position: rl.Vector2{X: dst.X, Y: dst.Y},
 			})
 			state.LightningArcs = append(state.LightningArcs, &LightningArc{
@@ -321,12 +330,13 @@ func triggerStaticDischarge() {
 				if !isEnemyProtected(e) {
 					dmg := p.Damage * dmgMult * mult
 					e.HP -= dmg
-					spawnFloatingText(e.X, e.Y-e.Size, fmt.Sprintf("%.0f", dmg), rl.SkyBlue)
+					spawnDamageText(e.X, e.Y-e.Size, dmg, DmgLightning, false)
 					Dispatch(GameEvent{
 						Type:     EventOnHit,
 						Player:   p,
 						Enemy:    e,
 						Damage:   dmg,
+						DmgType:  DmgLightning,
 						Position: rl.Vector2{X: e.X, Y: e.Y},
 					})
 					hitTargets = append(hitTargets, e)
@@ -403,6 +413,15 @@ func triggerGravityEffect(dt float32) {
 				deltaY := centerY - enemy.Y
 				if deltaX*deltaX+deltaY*deltaY < explodeRadius*explodeRadius {
 					enemy.HP -= explodeDmg
+					spawnDamageText(enemy.X, enemy.Y-enemy.Size, explodeDmg, DmgFire, false)
+					Dispatch(GameEvent{
+						Type:     EventOnHit,
+						Player:   p,
+						Enemy:    enemy,
+						Damage:   explodeDmg,
+						DmgType:  DmgFire,
+						Position: rl.Vector2{X: enemy.X, Y: enemy.Y},
+					})
 				}
 			}
 		}
@@ -462,6 +481,7 @@ func updateGravityZones(dt float32) {
 							Player:   &state.Player,
 							Enemy:    enemy,
 							Damage:   damage,
+							DmgType:  DmgPhysical,
 							Position: rl.Vector2{X: enemy.X, Y: enemy.Y},
 						})
 
@@ -564,6 +584,14 @@ func updateLingerZones(dt float32) {
 						dmg := zone.DPS * mult * dt
 						enemy.HP -= dmg
 						accumulateDamage(enemy, "Hellfire", dmg)
+						Dispatch(GameEvent{
+							Type:     EventOnHit,
+							Player:   &state.Player,
+							Enemy:    enemy,
+							Damage:   dmg,
+							DmgType:  DmgFire,
+							Position: rl.Vector2{X: enemy.X, Y: enemy.Y},
+						})
 					}
 				}
 			}
@@ -754,12 +782,13 @@ func updateAbilityTimers(dt float32) {
 								// Mark as hit so it doesn't damage again until it leaves
 								// Draw floating dmg
 								e.DeathRayHitStatus[beamIdx] = true
-								spawnFloatingText(e.X, e.Y-e.Size, fmt.Sprintf("%.0f", damage), rl.Purple)
+								spawnDamageText(e.X, e.Y-e.Size, damage, DmgEnergy, false)
 								Dispatch(GameEvent{
 									Type:     EventOnHit,
 									Player:   p,
 									Enemy:    e,
 									Damage:   damage,
+									DmgType:  DmgEnergy,
 									Position: rl.Vector2{X: e.X, Y: e.Y},
 								})
 
@@ -870,6 +899,7 @@ func updateAbilityTimers(dt float32) {
 						Player:   p,
 						Enemy:    target,
 						Damage:   dmg,
+						DmgType:  DmgEnergy,
 						Position: rl.Vector2{X: target.X, Y: target.Y},
 					})
 				}
@@ -927,6 +957,13 @@ func updateAbilityTimers(dt float32) {
 	if p.IsBombardmentActive {
 		p.BombardmentTimer -= dt
 		p.BombardNextSpawn -= dt
+		// Carpet Bomb secretly forces a hit every 2 seconds. We tick the timer
+		// only for the Carpet branch so the other branches keep their
+		// fully-random behaviour. The actual override happens further down,
+		// right before we pick the bomb's target coordinates.
+		if meta.BombardBranch == BranchBombardCarpet && p.CarpetGuaranteeTimer > 0 {
+			p.CarpetGuaranteeTimer -= dt
+		}
 		if p.BombardNextSpawn <= 0 {
 			rangeDist := float32(450.0)
 
@@ -937,7 +974,7 @@ func updateAbilityTimers(dt float32) {
 			switch meta.BombardBranch {
 			case BranchBombardCarpet:
 				spawnRate = BombardSpawnRate * 0.4
-				bombRadius = p.BombardRadius * 0.55
+				bombRadius = p.BombardRadius * 1.1
 			case BranchBombardSiege:
 				spawnRate = BombardSpawnRate * 2.5
 				bombRadius = p.BombardRadius * 2.2
@@ -946,6 +983,24 @@ func updateAbilityTimers(dt float32) {
 			//keeps a random distribution of LA BOMBAS left or right of player. or up/down.
 			targetX := p.X + (rand.Float32()*2.0-1.0)*rangeDist
 			targetY := p.Y + (rand.Float32()*2.0-1.0)*rangeDist
+
+			// Carpet Bomb secret pity timer: if the 2s window has elapsed and
+			// there's a valid target, drop this bomb directly on a random live
+			// enemy so the branch never feels like it's whiffing.
+			if meta.BombardBranch == BranchBombardCarpet && p.CarpetGuaranteeTimer <= 0 {
+				var candidates []*Enemy
+				for _, e := range state.Enemies {
+					if !isEnemyProtected(e) {
+						candidates = append(candidates, e)
+					}
+				}
+				if len(candidates) > 0 {
+					pick := candidates[rand.Intn(len(candidates))]
+					targetX = pick.X
+					targetY = pick.Y
+					p.CarpetGuaranteeTimer = 2.0
+				}
+			}
 
 			state.Explosions = append(state.Explosions, &Explosion{
 				X: targetX, Y: targetY, Radius: bombRadius,
@@ -965,7 +1020,15 @@ func updateAbilityTimers(dt float32) {
 					distSq := dx*dx + dy*dy
 					if distSq < bombRadius*bombRadius {
 						enm.HP -= dmg
-						spawnFloatingText(enm.X, enm.Y-enm.Size, fmt.Sprintf("%.0f", dmg), rl.Orange)
+						spawnDamageText(enm.X, enm.Y-enm.Size, dmg, DmgFire, false)
+						Dispatch(GameEvent{
+							Type:     EventOnHit,
+							Player:   p,
+							Enemy:    enm,
+							Damage:   dmg,
+							DmgType:  DmgFire,
+							Position: rl.Vector2{X: enm.X, Y: enm.Y},
+						})
 					}
 				}
 			}

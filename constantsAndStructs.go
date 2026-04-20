@@ -529,6 +529,11 @@ type Player struct {
 	BombardmentTimer    float32
 	BombardmentCooldown float32
 	BombardNextSpawn    float32
+	// CarpetGuaranteeTimer counts down while Carpet Bomb bombardment is active.
+	// When it reaches 0, the next bomb is secretly forced onto a live enemy so
+	// the branch always lands at least one hit every 2 seconds even when the
+	// random spread rolls poorly. Resets on each guaranteed hit and on cast start.
+	CarpetGuaranteeTimer float32
 
 	StaticDischargeUnlocked bool
 	StaticCooldown          float32
@@ -625,12 +630,66 @@ type SpawnQueueEntry struct {
 	IsBoss bool
 }
 
+// DamageType categorizes where damage came from. It drives floating number
+// color and is the hook that future skills/items will branch on (e.g. "leech
+// only on Physical", "Lightning hits stun", "enemy resists Fire").
+//
+// When adding a new type: add the constant, add a case in DamageTypeColor,
+// and add a short label in DamageTypeName.
+type DamageType int
+
+const (
+	DmgPhysical  DamageType = iota // basic shots, thorns, satellite contact, shield spike, gravity pull/collapse
+	DmgEnergy                      // death ray beams, chrono entropy DoT
+	DmgLightning                   // static discharge, chain arcs, static burst
+	DmgFire                        // hellfire linger, bombardment, mines, volatile/explosive shots
+	DmgPure                        // damage dealt to the player after armor; ignores typing
+)
+
+// DamageTypeColor returns the floating-text color for a damage type.
+// Change it here and every damage number in the game updates.
+func DamageTypeColor(t DamageType) rl.Color {
+	switch t {
+	case DmgPhysical:
+		return rl.White
+	case DmgEnergy:
+		return rl.Purple
+	case DmgLightning:
+		return rl.SkyBlue
+	case DmgFire:
+		return rl.NewColor(255, 90, 40, 255) // bright orange-red, more legible than rl.Red
+	case DmgPure:
+		return rl.NewColor(255, 80, 80, 255)
+	default:
+		return rl.White
+	}
+}
+
+// DamageTypeName returns a short human label, useful for tooltips/logs later.
+func DamageTypeName(t DamageType) string {
+	switch t {
+	case DmgPhysical:
+		return "Physical"
+	case DmgEnergy:
+		return "Energy"
+	case DmgLightning:
+		return "Lightning"
+	case DmgFire:
+		return "Fire"
+	case DmgPure:
+		return "Pure"
+	default:
+		return "Unknown"
+	}
+}
+
 type FloatingText struct {
 	X, Y        float32
 	Text        string
 	Color       rl.Color
 	Timer       float32
 	MaxDuration float32
+	DmgType     DamageType // source category; zero-value (Physical) is fine for XP/RP text
 }
 
 type GameState struct {

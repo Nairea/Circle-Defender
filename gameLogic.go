@@ -390,6 +390,31 @@ func spawnFloatingText(x, y float32, text string, color rl.Color) {
 	})
 }
 
+// spawnDamageText is the preferred way to show a damage number. It applies
+// the color mapped to the DamageType, appends a "!" on crit, and tags the
+// FloatingText with the type so UI code can re-style later (bigger font for
+// crits, outlines per type, etc.) without another refactor.
+func spawnDamageText(x, y, amount float32, dmgType DamageType, isCrit bool) {
+	if amount < 1.0 {
+		return
+	}
+	text := fmt.Sprintf("%.0f", amount)
+	color := DamageTypeColor(dmgType)
+	if isCrit {
+		text += "!"
+		color = rl.Yellow // crits always read yellow regardless of type
+	}
+	state.FloatingTexts = append(state.FloatingTexts, &FloatingText{
+		X:           x + rand.Float32()*FloatTextJitter - FloatTextJitter/2,
+		Y:           y,
+		Text:        text,
+		Color:       color,
+		Timer:       FloatTextDuration,
+		MaxDuration: FloatTextDuration,
+		DmgType:     dmgType,
+	})
+}
+
 // updates atksp for meta investment/item alterations.
 func recalculateAttackSpeed(p *Player) {
 	metaBonus := float32(meta.ASLevel) * 0.05
@@ -1016,13 +1041,8 @@ func moveProjectiles(dt float32) {
 								}
 							}
 							enemy.HP -= finalDmg
-							color := rl.White
-							text := fmt.Sprintf("%.0f", finalDmg)
-							if p.IsCrit {
-								color = rl.Yellow
-								text += "!"
-							}
-							spawnFloatingText(enemy.X, enemy.Y-enemy.Size, text, color)
+							// Basic shots are Physical damage.
+							spawnDamageText(enemy.X, enemy.Y-enemy.Size, finalDmg, DmgPhysical, p.IsCrit)
 
 							hitPos := rl.Vector2{X: p.X, Y: p.Y}
 							Dispatch(GameEvent{
@@ -1030,6 +1050,7 @@ func moveProjectiles(dt float32) {
 								Player:   &state.Player,
 								Enemy:    enemy,
 								Damage:   finalDmg,
+								DmgType:  DmgPhysical,
 								IsCrit:   p.IsCrit,
 								Position: hitPos,
 							})
@@ -1039,6 +1060,7 @@ func moveProjectiles(dt float32) {
 									Player:   &state.Player,
 									Enemy:    enemy,
 									Damage:   finalDmg,
+									DmgType:  DmgPhysical,
 									IsCrit:   true,
 									Position: hitPos,
 								})
@@ -1082,7 +1104,7 @@ func moveProjectiles(dt float32) {
 						if distSq < colRad*colRad {
 							if !isEnemyProtected(e) {
 								e.HP -= bombDmg
-								spawnFloatingText(e.X, e.Y-e.Size, fmt.Sprintf("%.0f", bombDmg), rl.Orange)
+								spawnDamageText(e.X, e.Y-e.Size, bombDmg, DmgFire, false)
 							}
 						}
 					}
@@ -1105,7 +1127,7 @@ func moveProjectiles(dt float32) {
 						if distSq < colRad*colRad {
 							if !isEnemyProtected(e) {
 								e.HP -= bombDmg
-								spawnFloatingText(e.X, e.Y-e.Size, fmt.Sprintf("%.0f", bombDmg), rl.Orange)
+								spawnDamageText(e.X, e.Y-e.Size, bombDmg, DmgFire, false)
 							}
 						}
 					}
@@ -1178,6 +1200,7 @@ func moveProjectiles(dt float32) {
 					Type:     EventOnPlayerHit,
 					Player:   &state.Player,
 					Damage:   damage,
+					DmgType:  DmgPure,
 					Position: rl.Vector2{X: p.X, Y: p.Y},
 				})
 
@@ -1241,7 +1264,7 @@ func moveMines(dt float32) {
 						MaxDuration: 0.4,
 					})
 					enemy.HP -= mine.Damage
-					spawnFloatingText(enemy.X, enemy.Y-enemy.Size, fmt.Sprintf("%.0f", mine.Damage), rl.Red)
+					spawnDamageText(enemy.X, enemy.Y-enemy.Size, mine.Damage, DmgFire, false)
 
 					// Hellfire branch: spawn a lingering fire zone
 					if meta.MinesBranch == BranchMinesHellfire && state.Player.MineLingerDamage > 0 {
@@ -1383,20 +1406,24 @@ func moveEnemies(dt float32) {
 
 			for source, damage := range enemy.DamageAccumulator {
 				if damage >= 1.0 {
-					color := rl.White
-
+					// Map the source string to a DamageType so the color
+					// and future type-based effects stay consistent with
+					// one-shot damage numbers.
+					var dmgType DamageType
 					switch source {
 					case "Gravity":
-						color = rl.Violet
+						dmgType = DmgPhysical
 					case "DeathRay":
-						color = rl.Purple
+						dmgType = DmgEnergy
 					case "Chrono":
-						color = rl.Gold
+						dmgType = DmgEnergy
+					case "Hellfire":
+						dmgType = DmgFire
+					default:
+						dmgType = DmgPhysical
 					}
-
-					text := fmt.Sprintf("%.0f", damage)
 					// Randomize position slightly so multiple sources don't stack perfectly
-					spawnFloatingText(enemy.X, enemy.Y-enemy.Size-20, text, color)
+					spawnDamageText(enemy.X, enemy.Y-enemy.Size-20, damage, dmgType, false)
 					// Reset accumulator for this source
 					enemy.DamageAccumulator[source] = 0
 				}
@@ -1567,7 +1594,7 @@ func moveEnemies(dt float32) {
 						if !isEnemyProtected(enemy) {
 							enemy.HP -= state.Player.SatelliteDamage
 							enemy.SatelliteHitTimers[k] = SatelliteDamageRate
-							spawnFloatingText(enemy.X, enemy.Y-enemy.Size, fmt.Sprintf("%.0f", state.Player.SatelliteDamage), rl.SkyBlue)
+							spawnDamageText(enemy.X, enemy.Y-enemy.Size, state.Player.SatelliteDamage, DmgPhysical, false)
 						}
 					}
 				}
@@ -1581,7 +1608,7 @@ func moveEnemies(dt float32) {
 			if enemy.AttackTimer <= 0 {
 				if state.Player.ThornsDamage > 0 {
 					enemy.HP -= state.Player.ThornsDamage
-					spawnFloatingText(enemy.X, enemy.Y-enemy.Size, fmt.Sprintf("%.0f", state.Player.ThornsDamage), rl.Green)
+					spawnDamageText(enemy.X, enemy.Y-enemy.Size, state.Player.ThornsDamage, DmgPhysical, false)
 				}
 				if state.Player.ShockwaveUnlocked && state.Player.ShockwaveCooldown <= 0 {
 					triggerShockwave()
@@ -1627,6 +1654,7 @@ func moveEnemies(dt float32) {
 					Player:   &state.Player,
 					Enemy:    enemy,
 					Damage:   actualDamage,
+					DmgType:  DmgPure,
 					Position: rl.Vector2{X: enemy.X, Y: enemy.Y},
 				})
 			}

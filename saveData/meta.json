@@ -1,5 +1,5 @@
 {
-  "ResearchPoints": 35,
+  "ResearchPoints": 9949,
   "DmgLevel": 0,
   "ASLevel": 0,
   "RegenLevel": 0,
@@ -16,28 +16,28 @@
   "RapidFireUnlocked": true,
   "DeathRayUnlocked": true,
   "GravityFieldUnlocked": false,
-  "BombardmentUnlocked": false,
+  "BombardmentUnlocked": true,
   "StaticDischargeUnlocked": true,
   "ChronoFieldUnlocked": false,
-  "MinesUnlocked": true,
+  "MinesUnlocked": false,
   "SatellitesUnlocked": false,
-  "ShockwaveUnlocked": false,
-  "RapidFireBranch": "BulletStorm",
-  "DeathRayBranch": "Annihilator",
+  "ShockwaveUnlocked": true,
+  "RapidFireBranch": "Overcharge",
+  "DeathRayBranch": "Prism",
   "GravityBranch": "",
-  "BombardBranch": "",
-  "StaticBranch": "",
+  "BombardBranch": "CarpetBomb",
+  "StaticBranch": "ChainLightning",
   "ChronoBranch": "",
-  "MinesBranch": "HellfireMines",
+  "MinesBranch": "",
   "SatellitesBranch": "",
-  "ShockwaveBranch": "",
+  "ShockwaveBranch": "Repulsor",
   "Speed3xUnlocked": true,
   "OpeningSprintUnlocked": false,
   "EquippedAbilities": [
-    "Rapid Fire",
     "Death Ray",
+    "Bombardment",
     "Static Discharge",
-    ""
+    "Rapid Fire"
   ],
   "EquippedItemsByIndex": [
     0,
@@ -49,7 +49,7 @@
     true,
     true,
     true,
-    false
+    true
   ],
   "Inventory": [
     {
@@ -59,13 +59,13 @@
       "Stats": [
         {
           "StatType": "Damage",
-          "Value": 56,
+          "Value": 10,
           "BaseValue": 2,
           "Growth": 2
         },
         {
           "StatType": "Haste",
-          "Value": 0.28,
+          "Value": 0.049999997,
           "BaseValue": 0.01,
           "Growth": 0.01
         }
@@ -82,7 +82,7 @@
       "Stats": [
         {
           "StatType": "DmgDist",
-          "Value": 0.42863357,
+          "Value": 0.076541685,
           "BaseValue": 0.015308337,
           "Growth": 0.015308337
         }
@@ -99,7 +99,7 @@
       "Stats": [
         {
           "StatType": "Armor",
-          "Value": 0.028974615,
+          "Value": 0.14487308,
           "BaseValue": 0.028974615,
           "Growth": 0.028974615
         }

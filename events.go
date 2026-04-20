@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"math/rand"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
@@ -28,6 +27,11 @@ type GameEvent struct {
 
 	// Damage actually dealt after reductions
 	Damage float32
+
+	// DmgType categorizes the damage source (Physical, Energy, Lightning, Fire, Pure).
+	// Handlers can branch on this to implement type-specific interactions like
+	// "leech only on Physical" or "double damage vs. Fire-vulnerable enemies".
+	DmgType DamageType
 
 	// Hit metadata
 	IsCrit   bool
@@ -145,7 +149,7 @@ func RebuildEventSubscriptions(p *Player) {
 								IsChain:     true,
 								Seed:        rand.Int31(),
 							})
-							spawnFloatingText(e.X, e.Y-e.Size, fmt.Sprintf("%.0f", arcDmg), rl.SkyBlue)
+							spawnDamageText(e.X, e.Y-e.Size, arcDmg, DmgLightning, false)
 						}
 						break
 					}
@@ -162,8 +166,7 @@ func RebuildEventSubscriptions(p *Player) {
 				}
 				if !isEnemyProtected(ev.Enemy) {
 					ev.Enemy.HP -= spikeDmg
-					spawnFloatingText(ev.Enemy.X, ev.Enemy.Y-ev.Enemy.Size,
-						fmt.Sprintf("%.0f", spikeDmg), rl.Magenta)
+					spawnDamageText(ev.Enemy.X, ev.Enemy.Y-ev.Enemy.Size, spikeDmg, DmgPhysical, false)
 				}
 			})
 
