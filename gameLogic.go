@@ -394,24 +394,26 @@ func spawnFloatingText(x, y float32, text string, color rl.Color) {
 // the color mapped to the DamageType, appends a "!" on crit, and tags the
 // FloatingText with the type so UI code can re-style later (bigger font for
 // crits, outlines per type, etc.) without another refactor.
+//
+// Crits keep the type color — the trailing "!" plus the upsized font (handled
+// in the draw loop via IsCrit) are the two crit tells.
 func spawnDamageText(x, y, amount float32, dmgType DamageType, isCrit bool) {
 	if amount < 1.0 {
 		return
 	}
 	text := fmt.Sprintf("%.0f", amount)
-	color := DamageTypeColor(dmgType)
 	if isCrit {
 		text += "!"
-		color = rl.Yellow // crits always read yellow regardless of type
 	}
 	state.FloatingTexts = append(state.FloatingTexts, &FloatingText{
 		X:           x + rand.Float32()*FloatTextJitter - FloatTextJitter/2,
 		Y:           y,
 		Text:        text,
-		Color:       color,
+		Color:       DamageTypeColor(dmgType),
 		Timer:       FloatTextDuration,
 		MaxDuration: FloatTextDuration,
 		DmgType:     dmgType,
+		IsCrit:      isCrit,
 	})
 }
 

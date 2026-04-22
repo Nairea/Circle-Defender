@@ -1,5 +1,5 @@
 {
-  "ResearchPoints": 9949,
+  "ResearchPoints": 30,
   "DmgLevel": 0,
   "ASLevel": 0,
   "RegenLevel": 0,
@@ -8,48 +8,49 @@
   "ThornsLevel": 0,
   "MultishotCountLevel": 0,
   "ChainCountLevel": 0,
-  "MusicVolume": 0,
-  "SFXVolume": 0.5,
+  "MusicVolume": 0.015,
+  "SFXVolume": 0,
+  "ShowFPS": true,
   "TutorialStep": 12,
   "TutorialComplete": true,
   "TutorialDeathShown": true,
   "RapidFireUnlocked": true,
   "DeathRayUnlocked": true,
-  "GravityFieldUnlocked": false,
-  "BombardmentUnlocked": true,
-  "StaticDischargeUnlocked": true,
+  "GravityFieldUnlocked": true,
+  "BombardmentUnlocked": false,
+  "StaticDischargeUnlocked": false,
   "ChronoFieldUnlocked": false,
   "MinesUnlocked": false,
   "SatellitesUnlocked": false,
-  "ShockwaveUnlocked": true,
+  "ShockwaveUnlocked": false,
   "RapidFireBranch": "Overcharge",
-  "DeathRayBranch": "Prism",
-  "GravityBranch": "",
-  "BombardBranch": "CarpetBomb",
-  "StaticBranch": "ChainLightning",
+  "DeathRayBranch": "Annihilator",
+  "GravityBranch": "Singularity",
+  "BombardBranch": "",
+  "StaticBranch": "",
   "ChronoBranch": "",
   "MinesBranch": "",
   "SatellitesBranch": "",
-  "ShockwaveBranch": "Repulsor",
-  "Speed3xUnlocked": true,
+  "ShockwaveBranch": "",
+  "Speed3xUnlocked": false,
   "OpeningSprintUnlocked": false,
   "EquippedAbilities": [
-    "Death Ray",
-    "Bombardment",
-    "Static Discharge",
-    "Rapid Fire"
+    "Rapid Fire",
+    "",
+    "",
+    ""
   ],
   "EquippedItemsByIndex": [
     0,
-    2,
     -1,
-    1
+    -1,
+    -1
   ],
   "AutoAbilities": [
     true,
-    true,
-    true,
-    true
+    false,
+    false,
+    false
   ],
   "Inventory": [
     {
@@ -59,53 +60,19 @@
       "Stats": [
         {
           "StatType": "Damage",
-          "Value": 10,
+          "Value": 2,
           "BaseValue": 2,
           "Growth": 2
         },
         {
           "StatType": "Haste",
-          "Value": 0.049999997,
+          "Value": 0.01,
           "BaseValue": 0.01,
           "Growth": 0.01
         }
       ],
       "Description": "High-energy cutting tool",
       "SalvageValue": 40,
-      "UniqueModifier": "",
-      "SetID": ""
-    },
-    {
-      "Name": "Sniper Scope",
-      "Type": 3,
-      "Rarity": 0,
-      "Stats": [
-        {
-          "StatType": "DmgDist",
-          "Value": 0.076541685,
-          "BaseValue": 0.015308337,
-          "Growth": 0.015308337
-        }
-      ],
-      "Description": "Long Shot",
-      "SalvageValue": 40,
-      "UniqueModifier": "",
-      "SetID": ""
-    },
-    {
-      "Name": "Iron Plating",
-      "Type": 1,
-      "Rarity": 0,
-      "Stats": [
-        {
-          "StatType": "Armor",
-          "Value": 0.14487308,
-          "BaseValue": 0.028974615,
-          "Growth": 0.028974615
-        }
-      ],
-      "Description": "Solid Defense",
-      "SalvageValue": 50,
       "UniqueModifier": "",
       "SetID": ""
     }

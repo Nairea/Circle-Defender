@@ -8,6 +8,57 @@ import (
 )
 
 func handleStartInput() {
+	// When the options overlay is up, it owns all input and blocks anything
+	// else — same behaviour as the in-run pause → options flow.
+	if state.InOptions {
+		mousePos := rl.GetMousePosition()
+
+		// Back button dismisses the overlay.
+		backRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight)/2 + 100, Width: 200, Height: 50}
+		if rl.IsMouseButtonReleased(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(mousePos, backRect) {
+			playButtonSound()
+			state.InOptions = false
+			SaveMetaProg() // persist volume changes made on the start screen
+			return
+		}
+
+		// Music slider — drag while LMB is held anywhere over a padded hitbox.
+		musicBarRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight)/2 - 60, Width: 200, Height: 20}
+		if rl.IsMouseButtonDown(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: musicBarRect.X - 10, Y: musicBarRect.Y - 10, Width: musicBarRect.Width + 20, Height: musicBarRect.Height + 20}) {
+			val := (mousePos.X - musicBarRect.X) / musicBarRect.Width
+			if val < 0 {
+				val = 0
+			}
+			if val > 1 {
+				val = 1
+			}
+			state.MusicVolume = val
+			meta.MusicVolume = val
+		}
+
+		// SFX slider — same pattern as music.
+		sfxBarRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight)/2 + 20, Width: 200, Height: 20}
+		if rl.IsMouseButtonDown(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: sfxBarRect.X - 10, Y: sfxBarRect.Y - 10, Width: sfxBarRect.Width + 20, Height: sfxBarRect.Height + 20}) {
+			val := (mousePos.X - sfxBarRect.X) / sfxBarRect.Width
+			if val < 0 {
+				val = 0
+			}
+			if val > 1 {
+				val = 1
+			}
+			state.SFXVolume = val
+			meta.SFXVolume = val
+		}
+
+		// FPS counter toggle — matches the rect in drawOptionsMenu.
+		fpsToggleRect := rl.Rectangle{X: float32(ScreenWidth)/2 + 70, Y: float32(ScreenHeight)/2 + 53, Width: 30, Height: 24}
+		if rl.IsMouseButtonReleased(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(mousePos, fpsToggleRect) {
+			playButtonSound()
+			meta.ShowFPS = !meta.ShowFPS
+		}
+		return
+	}
+
 	if rl.IsKeyPressed(rl.KeySpace) {
 		// prevents starting a run if in tutorial
 		if meta.TutorialStep == TutorialNone || meta.TutorialStep == TutorialReady {
@@ -80,10 +131,23 @@ func handleStartInput() {
 			return
 		}
 
+		//options button — opens the shared volume overlay (same visuals as
+		//the in-run pause → options menu).
+		optionsRect := rl.Rectangle{
+			X:     float32(ScreenWidth)/2 - 110,
+			Y:     float32(ScreenHeight)/2 + 260,
+			Width: 220, Height: 50,
+		}
+		if rl.CheckCollisionPointRec(mousePos, optionsRect) {
+			playButtonSound()
+			state.InOptions = true
+			return
+		}
+
 		//close game button
 		exitRect := rl.Rectangle{
 			X:     float32(ScreenWidth)/2 - 110,
-			Y:     float32(ScreenHeight)/2 + 260,
+			Y:     float32(ScreenHeight)/2 + 330,
 			Width: 220, Height: 50,
 		}
 		if rl.CheckCollisionPointRec(mousePos, exitRect) {
@@ -215,10 +279,30 @@ func drawStartMenu() {
 	itemsTextW := rl.MeasureText(itemsText, 20)
 	rl.DrawText(itemsText, int32(itemsButtonX+itemsButtonWidth/2-float32(itemsTextW)/2), int32(itemsButtonY+15), 20, itemsTextColor)
 
+	//options button
+	optionsButtonWidth := float32(220)
+	optionsButtonHeight := float32(50)
+	optionsButtonY := float32(ScreenHeight)/2 + 260
+	optionsButtonX := float32(ScreenWidth)/2 - optionsButtonWidth/2
+
+	optionsRect := rl.Rectangle{X: optionsButtonX, Y: optionsButtonY, Width: optionsButtonWidth, Height: optionsButtonHeight}
+	optionsColor := rl.NewColor(60, 60, 90, 255)
+
+	if rl.CheckCollisionPointRec(rl.GetMousePosition(), optionsRect) {
+		optionsColor = rl.NewColor(100, 100, 140, 255)
+	}
+
+	rl.DrawRectangleRec(optionsRect, optionsColor)
+	rl.DrawRectangleLinesEx(optionsRect, 2, rl.White)
+
+	optionsText := "OPTIONS"
+	optionsTextW := rl.MeasureText(optionsText, 20)
+	rl.DrawText(optionsText, int32(optionsButtonX+optionsButtonWidth/2-float32(optionsTextW)/2), int32(optionsButtonY+15), 20, rl.White)
+
 	//close game button
 	exitButtonWidth := float32(220)
 	exitButtonHeight := float32(50)
-	exitButtonY := float32(ScreenHeight)/2 + 260
+	exitButtonY := float32(ScreenHeight)/2 + 330
 	exitButtonX := float32(ScreenWidth)/2 - exitButtonWidth/2
 
 	exitRect := rl.Rectangle{X: exitButtonX, Y: exitButtonY, Width: exitButtonWidth, Height: exitButtonHeight}

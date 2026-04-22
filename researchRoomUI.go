@@ -303,36 +303,44 @@ func handleResearchInput() {
 			}
 		}
 
-		if *t.Unlocked && *t.Branch == "" && !HasSaveFile() {
-			// Block branch selection before we reach the pick-branch tutorial step,
-			// and block non-RapidFire branches even during that step.
+		if *t.Unlocked && !HasSaveFile() {
+			// Block branch selection during early tutorial steps, and block
+			// non-RapidFire branches during the pick-branch tutorial step.
 			branchClickLocked :=
 				(meta.TutorialStep == TutorialBuyAbility ||
 					meta.TutorialStep == TutorialEquipAbility) ||
 				(meta.TutorialStep == TutorialPickBranch && t.Name != AbilityRapidFire)
-			if branchClickLocked {
-				continue
-			}
+			if !branchClickLocked {
+				branchARect := rl.Rectangle{X: x, Y: y + 44, Width: lay.branchW, Height: 36}
+				branchBRect := rl.Rectangle{X: x + lay.branchW + 8, Y: y + 44, Width: lay.branchW, Height: 36}
 
-			branchARect := rl.Rectangle{X: x, Y: y + 44, Width: lay.branchW, Height: 36}
-			branchBRect := rl.Rectangle{X: x + lay.branchW + 8, Y: y + 44, Width: lay.branchW, Height: 36}
-			if rl.CheckCollisionPointRec(mousePos, branchARect) && meta.ResearchPoints >= t.BranchCost {
-				playButtonSound()
-				meta.ResearchPoints -= t.BranchCost
-				*t.Branch = t.BranchAValue
-				if meta.TutorialStep == TutorialPickBranch {
-					meta.TutorialStep = TutorialBackFromResearch
+				// If a branch has already been purchased for this ability
+				// (*t.Branch != ""), clicking either button is a free swap.
+				// If not, the first click charges BranchCost and sets the branch.
+				firstPurchase := *t.Branch == ""
+
+				tryClick := func(rect rl.Rectangle, value string) {
+					if !rl.CheckCollisionPointRec(mousePos, rect) {
+						return
+					}
+					if *t.Branch == value {
+						return // already chosen
+					}
+					if firstPurchase {
+						if meta.ResearchPoints < t.BranchCost {
+							return
+						}
+						meta.ResearchPoints -= t.BranchCost
+					}
+					playButtonSound()
+					*t.Branch = value
+					if meta.TutorialStep == TutorialPickBranch && t.Name == AbilityRapidFire {
+						meta.TutorialStep = TutorialBackFromResearch
+					}
+					SaveMetaProg()
 				}
-				SaveMetaProg()
-			}
-			if rl.CheckCollisionPointRec(mousePos, branchBRect) && meta.ResearchPoints >= t.BranchCost {
-				playButtonSound()
-				meta.ResearchPoints -= t.BranchCost
-				*t.Branch = t.BranchBValue
-				if meta.TutorialStep == TutorialPickBranch {
-					meta.TutorialStep = TutorialBackFromResearch
-				}
-				SaveMetaProg()
+				tryClick(branchARect, t.BranchAValue)
+				tryClick(branchBRect, t.BranchBValue)
 			}
 		}
 	}
@@ -360,26 +368,36 @@ func handleResearchInput() {
 			}
 		}
 
-		if *t.Unlocked && *t.Branch == "" && !HasSaveFile() {
+		if *t.Unlocked && !HasSaveFile() {
 			branchARect := rl.Rectangle{X: x, Y: y + 44, Width: lay.branchW, Height: 36}
 			branchBRect := rl.Rectangle{X: x + lay.branchW + 8, Y: y + 44, Width: lay.branchW, Height: 36}
-			if rl.CheckCollisionPointRec(mousePos, branchARect) && meta.ResearchPoints >= t.BranchCost {
+			firstPurchase := *t.Branch == ""
+
+			tryClick := func(rect rl.Rectangle, value string) {
+				if !rl.CheckCollisionPointRec(mousePos, rect) {
+					return
+				}
+				if *t.Branch == value {
+					return
+				}
+				if firstPurchase {
+					if meta.ResearchPoints < t.BranchCost {
+						return
+					}
+					meta.ResearchPoints -= t.BranchCost
+				}
 				playButtonSound()
-				meta.ResearchPoints -= t.BranchCost
-				*t.Branch = t.BranchAValue
+				*t.Branch = value
 				SaveMetaProg()
 			}
-			if rl.CheckCollisionPointRec(mousePos, branchBRect) && meta.ResearchPoints >= t.BranchCost {
-				playButtonSound()
-				meta.ResearchPoints -= t.BranchCost
-				*t.Branch = t.BranchBValue
-				SaveMetaProg()
-			}
+			tryClick(branchARect, t.BranchAValue)
+			tryClick(branchBRect, t.BranchBValue)
 		}
 	}
 
 	passiveRows2 := (len(passives) + 1) / 2
 	utilY := passiveStartY + float32(passiveRows2)*lay.cardH
+
 	speedRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 125, Y: utilY, Width: 250, Height: 40}
 	if rl.CheckCollisionPointRec(mousePos, speedRect) && !meta.Speed3xUnlocked && meta.ResearchPoints >= 200 {
 		meta.ResearchPoints -= 200
@@ -548,117 +566,175 @@ func drawTalentEntry(t talentDef, x, y float32, mousePos rl.Vector2, isTutorialL
 				meta.TutorialStep == TutorialEquipAbility) ||
 			(meta.TutorialStep == TutorialPickBranch && t.Name != AbilityRapidFire)
 
-		if *t.Branch == "" {
-			// No branch chosen yet
-			if HasSaveFile() {
-				rl.DrawText("Branch locked during run", int32(x)+4, int32(y)+46, 13, rl.Gray)
-			} else if branchTutLocked {
-				// Tutorial hasn't reached the branch-pick step yet -- show dimmed placeholder.
-				rl.DrawText("Branch locked", int32(x)+4, int32(y)+46, 13, rl.Gray)
-			} else {
-				branchARect := rl.Rectangle{X: x, Y: y + 44, Width: lay.branchW, Height: 36}
-				branchBRect := rl.Rectangle{X: x + lay.branchW + 8, Y: y + 44, Width: lay.branchW, Height: 36}
-				canAfford := meta.ResearchPoints >= t.BranchCost
+		inRun := HasSaveFile()
 
-				colA := rl.NewColor(30, 30, 80, 255)
-				colB := rl.NewColor(80, 30, 30, 255)
-				borderA := rl.SkyBlue
-				borderB := rl.Orange
-				if !canAfford {
-					borderA = rl.DarkGray
-					borderB = rl.DarkGray
-				}
+		branchARect := rl.Rectangle{X: x, Y: y + 44, Width: lay.branchW, Height: 36}
+		branchBRect := rl.Rectangle{X: x + lay.branchW + 8, Y: y + 44, Width: lay.branchW, Height: 36}
 
-				if rl.CheckCollisionPointRec(mousePos, branchARect) {
-					if canAfford {
-						colA = rl.NewColor(50, 50, 140, 255)
-					}
-					tooltip = fmt.Sprintf("[A] %s: %s  (%d RP)", t.BranchAName, t.BranchADesc, t.BranchCost)
-				}
-				if rl.CheckCollisionPointRec(mousePos, branchBRect) {
-					if canAfford {
-						colB = rl.NewColor(140, 50, 50, 255)
-					}
-					tooltip = fmt.Sprintf("[B] %s: %s  (%d RP)", t.BranchBName, t.BranchBDesc, t.BranchCost)
-				}
+		switch {
+		case inRun:
+			// Mid-run: branch state is frozen, just render the current pick.
+			drawBranchesReadOnly(t, branchARect, branchBRect)
+			rl.DrawText("Branch locked during run", int32(x)+4, int32(y+44)+40, 11, rl.Gray)
 
-				rl.DrawRectangleRec(branchARect, colA)
-				rl.DrawRectangleLinesEx(branchARect, 2, borderA)
-				rl.DrawRectangleRec(branchBRect, colB)
-				rl.DrawRectangleLinesEx(branchBRect, 2, borderB)
+		case branchTutLocked:
+			rl.DrawText("Branch locked", int32(x)+4, int32(y)+46, 13, rl.Gray)
 
-				rl.DrawText("[A] "+trimLabel(t.BranchAName, 13), int32(x)+4, int32(y)+51, 13, rl.White)
-				rl.DrawText("[B] "+trimLabel(t.BranchBName, 13), int32(x+lay.branchW+8)+4, int32(y)+51, 13, rl.White)
+		case *t.Branch == "":
+			// No branch purchased yet — show both as clickable choices with
+			// the unlock cost stamped on each. The first click charges
+			// BranchCost; every click after that is a free swap.
+			drawBranchesForPurchase(t, branchARect, branchBRect, mousePos, &tooltip)
 
-				costLabel := fmt.Sprintf("%d RP", t.BranchCost)
-				costColor := rl.Gold
-				if !canAfford {
-					costColor = rl.Red
-				}
-				// Draw cost on each button individually rather than a shared "each" label.
-				rl.DrawText(costLabel, int32(x)+4, int32(y)+66, 12, costColor)
-				rl.DrawText(costLabel, int32(x+lay.branchW+8)+4, int32(y)+66, 12, costColor)
-			}
-		} else {
-			// Branch already chosen -- show both options side by side.
-			// Chosen is highlighted; unchosen is visible but dimmed. Neither is clickable.
-			chosenA := *t.Branch == t.BranchAValue
-			branchARect := rl.Rectangle{X: x, Y: y + 44, Width: lay.branchW, Height: 36}
-			branchBRect := rl.Rectangle{X: x + lay.branchW + 8, Y: y + 44, Width: lay.branchW, Height: 36}
-
-			var chosenRect, otherRect rl.Rectangle
-			var colChosen, colOther rl.Color
-			var borderChosen, borderOther rl.Color
-			var labelChosen, labelOther string
-			var descChosen, descOther string
-
-			if chosenA {
-				chosenRect = branchARect
-				otherRect = branchBRect
-				colChosen = rl.NewColor(20, 60, 120, 255)
-				borderChosen = rl.SkyBlue
-				labelChosen = "[A] " + trimLabel(t.BranchAName, 13)
-				descChosen = t.BranchADesc
-				colOther = rl.NewColor(25, 20, 20, 200)
-				borderOther = rl.NewColor(60, 60, 60, 200)
-				labelOther = "[B] " + trimLabel(t.BranchBName, 13)
-				descOther = t.BranchBDesc
-			} else {
-				chosenRect = branchBRect
-				otherRect = branchARect
-				colChosen = rl.NewColor(100, 45, 10, 255)
-				borderChosen = rl.Orange
-				labelChosen = "[B] " + trimLabel(t.BranchBName, 13)
-				descChosen = t.BranchBDesc
-				colOther = rl.NewColor(20, 20, 25, 200)
-				borderOther = rl.NewColor(60, 60, 60, 200)
-				labelOther = "[A] " + trimLabel(t.BranchAName, 13)
-				descOther = t.BranchADesc
-			}
-
-			// Unchosen (dimmed)
-			rl.DrawRectangleRec(otherRect, colOther)
-			rl.DrawRectangleLinesEx(otherRect, 1, borderOther)
-			rl.DrawText(labelOther, int32(otherRect.X)+4, int32(otherRect.Y)+4, 11, rl.NewColor(120, 120, 120, 200))
-			rl.DrawText(trimLabel(descOther, 18), int32(otherRect.X)+4, int32(otherRect.Y)+18, 10, rl.NewColor(90, 90, 90, 180))
-
-			// Chosen (highlighted)
-			rl.DrawRectangleRec(chosenRect, colChosen)
-			rl.DrawRectangleLinesEx(chosenRect, 2, borderChosen)
-			rl.DrawText(labelChosen, int32(chosenRect.X)+4, int32(chosenRect.Y)+4, 11, rl.White)
-			rl.DrawText(trimLabel(descChosen, 18), int32(chosenRect.X)+4, int32(chosenRect.Y)+18, 10, rl.LightGray)
-			rl.DrawText("[x]", int32(chosenRect.X+chosenRect.Width)-26, int32(chosenRect.Y)+4, 11, borderChosen)
-
-			if rl.CheckCollisionPointRec(mousePos, chosenRect) {
-				tooltip = fmt.Sprintf("Chosen: %s -- %s", labelChosen, descChosen)
-			}
-			if rl.CheckCollisionPointRec(mousePos, otherRect) {
-				tooltip = fmt.Sprintf("Not chosen: %s -- %s", labelOther, descOther)
-			}
+		default:
+			// Branch already paid for — both options stay clickable so the
+			// player can freely swap between them at no cost.
+			drawBranchesSwappable(t, branchARect, branchBRect, mousePos, &tooltip)
 		}
 	}
 
 	return tooltip
+}
+
+// drawBranchesReadOnly renders the A/B buttons in a frozen state (in-run, or
+// when the tier isn't unlocked yet). The chosen branch stays highlighted; the
+// other shows dimmed.
+func drawBranchesReadOnly(t talentDef, rectA, rectB rl.Rectangle) {
+	chosen := *t.Branch
+	drawOne := func(rect rl.Rectangle, label, desc, tag string, isChosen bool) {
+		var fill, border rl.Color
+		var textCol, descCol rl.Color
+		switch {
+		case isChosen && tag == "[A]":
+			fill = rl.NewColor(20, 60, 120, 255)
+			border = rl.SkyBlue
+			textCol = rl.White
+			descCol = rl.LightGray
+		case isChosen && tag == "[B]":
+			fill = rl.NewColor(100, 45, 10, 255)
+			border = rl.Orange
+			textCol = rl.White
+			descCol = rl.LightGray
+		default:
+			fill = rl.NewColor(20, 20, 25, 200)
+			border = rl.NewColor(60, 60, 60, 200)
+			textCol = rl.NewColor(120, 120, 120, 200)
+			descCol = rl.NewColor(90, 90, 90, 180)
+		}
+		rl.DrawRectangleRec(rect, fill)
+		rl.DrawRectangleLinesEx(rect, 1, border)
+		rl.DrawText(tag+" "+trimLabel(label, 13), int32(rect.X)+4, int32(rect.Y)+4, 11, textCol)
+		rl.DrawText(trimLabel(desc, 18), int32(rect.X)+4, int32(rect.Y)+18, 10, descCol)
+		if isChosen {
+			rl.DrawText("[x]", int32(rect.X+rect.Width)-26, int32(rect.Y)+4, 11, border)
+		}
+	}
+	drawOne(rectA, t.BranchAName, t.BranchADesc, "[A]", chosen == t.BranchAValue)
+	drawOne(rectB, t.BranchBName, t.BranchBDesc, "[B]", chosen == t.BranchBValue)
+}
+
+// drawBranchesForPurchase renders both branches as live clickable choices
+// that cost BranchCost on first purchase. Borders fade to gray when the
+// player can't afford. Tooltip calls out the cost so the click is never
+// surprising.
+func drawBranchesForPurchase(t talentDef, rectA, rectB rl.Rectangle, mousePos rl.Vector2, tooltip *string) {
+	canAfford := meta.ResearchPoints >= t.BranchCost
+
+	colA := rl.NewColor(30, 30, 80, 255)
+	colB := rl.NewColor(80, 30, 30, 255)
+	borderA := rl.SkyBlue
+	borderB := rl.Orange
+	if !canAfford {
+		borderA = rl.DarkGray
+		borderB = rl.DarkGray
+	}
+
+	if rl.CheckCollisionPointRec(mousePos, rectA) {
+		if canAfford {
+			colA = rl.NewColor(50, 50, 140, 255)
+		}
+		*tooltip = fmt.Sprintf("[A] %s: %s  (%d RP)", t.BranchAName, t.BranchADesc, t.BranchCost)
+	}
+	if rl.CheckCollisionPointRec(mousePos, rectB) {
+		if canAfford {
+			colB = rl.NewColor(140, 50, 50, 255)
+		}
+		*tooltip = fmt.Sprintf("[B] %s: %s  (%d RP)", t.BranchBName, t.BranchBDesc, t.BranchCost)
+	}
+
+	rl.DrawRectangleRec(rectA, colA)
+	rl.DrawRectangleLinesEx(rectA, 2, borderA)
+	rl.DrawRectangleRec(rectB, colB)
+	rl.DrawRectangleLinesEx(rectB, 2, borderB)
+
+	rl.DrawText("[A] "+trimLabel(t.BranchAName, 13), int32(rectA.X)+4, int32(rectA.Y)+4, 11, rl.White)
+	rl.DrawText(trimLabel(t.BranchADesc, 18), int32(rectA.X)+4, int32(rectA.Y)+18, 10, rl.LightGray)
+	rl.DrawText("[B] "+trimLabel(t.BranchBName, 13), int32(rectB.X)+4, int32(rectB.Y)+4, 11, rl.White)
+	rl.DrawText(trimLabel(t.BranchBDesc, 18), int32(rectB.X)+4, int32(rectB.Y)+18, 10, rl.LightGray)
+
+	// Cost stamp beneath each button. Red if unaffordable.
+	costLabel := fmt.Sprintf("%d RP", t.BranchCost)
+	costColor := rl.Gold
+	if !canAfford {
+		costColor = rl.Red
+	}
+	rl.DrawText(costLabel, int32(rectA.X)+4, int32(rectA.Y+rectA.Height)+4, 12, costColor)
+	rl.DrawText(costLabel, int32(rectB.X)+4, int32(rectB.Y+rectB.Height)+4, 12, costColor)
+}
+
+// drawBranchesSwappable is like Pickable but highlights the currently chosen
+// branch and keeps the other as a dimmed-but-clickable alternative so the
+// player sees at a glance which is active while still being able to swap.
+func drawBranchesSwappable(t talentDef, rectA, rectB rl.Rectangle, mousePos rl.Vector2, tooltip *string) {
+	chosenA := *t.Branch == t.BranchAValue
+
+	drawOne := func(rect rl.Rectangle, name, desc, tag string, isChosen bool, chosenColor, chosenBorder rl.Color) {
+		var fill, border rl.Color
+		var textCol, descCol rl.Color
+		hovered := rl.CheckCollisionPointRec(mousePos, rect)
+
+		if isChosen {
+			fill = chosenColor
+			border = chosenBorder
+			textCol = rl.White
+			descCol = rl.LightGray
+		} else {
+			// Dim but clearly clickable; brighten on hover.
+			fill = rl.NewColor(35, 35, 45, 255)
+			border = rl.NewColor(110, 110, 110, 255)
+			textCol = rl.NewColor(200, 200, 200, 255)
+			descCol = rl.NewColor(150, 150, 150, 255)
+			if hovered {
+				fill = rl.NewColor(55, 55, 70, 255)
+				border = rl.White
+			}
+		}
+
+		rl.DrawRectangleRec(rect, fill)
+		thickness := float32(1)
+		if isChosen || hovered {
+			thickness = 2
+		}
+		rl.DrawRectangleLinesEx(rect, thickness, border)
+		rl.DrawText(tag+" "+trimLabel(name, 13), int32(rect.X)+4, int32(rect.Y)+4, 11, textCol)
+		rl.DrawText(trimLabel(desc, 18), int32(rect.X)+4, int32(rect.Y)+18, 10, descCol)
+		if isChosen {
+			rl.DrawText("[x]", int32(rect.X+rect.Width)-26, int32(rect.Y)+4, 11, border)
+		}
+
+		if hovered {
+			if isChosen {
+				*tooltip = fmt.Sprintf("Chosen: [%s] %s -- %s", tag[1:2], name, desc)
+			} else {
+				*tooltip = fmt.Sprintf("Swap to [%s] %s -- %s (free)", tag[1:2], name, desc)
+			}
+		}
+	}
+
+	drawOne(rectA, t.BranchAName, t.BranchADesc, "[A]", chosenA,
+		rl.NewColor(20, 60, 120, 255), rl.SkyBlue)
+	drawOne(rectB, t.BranchBName, t.BranchBDesc, "[B]", !chosenA,
+		rl.NewColor(100, 45, 10, 255), rl.Orange)
 }
 
 func trimLabel(s string, maxLen int) string {

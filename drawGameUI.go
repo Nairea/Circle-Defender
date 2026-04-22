@@ -171,6 +171,14 @@ func handlePauseMenuInput() {
 			state.SFXVolume = val
 			meta.SFXVolume = val
 		}
+
+		// FPS counter toggle — flip on release so the click doesn't retrigger
+		// while the button is held.
+		fpsToggleRect := rl.Rectangle{X: float32(ScreenWidth)/2 + 70, Y: float32(ScreenHeight)/2 + 53, Width: 30, Height: 24}
+		if rl.IsMouseButtonReleased(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(mousePos, fpsToggleRect) {
+			playButtonSound()
+			meta.ShowFPS = !meta.ShowFPS
+		}
 		return
 	}
 
@@ -776,6 +784,38 @@ func drawOptionsMenu() {
 	rl.DrawRectangleRec(sfxRect, rl.DarkGray)
 	rl.DrawRectangle(int32(sfxRect.X), int32(sfxRect.Y), int32(float32(sfxRect.Width)*state.SFXVolume), int32(sfxRect.Height), rl.Green)
 	rl.DrawRectangleLinesEx(sfxRect, 2, rl.White)
+
+	//FPS counter toggle — checkbox-style button on the right of the label.
+	fpsLabelX := float32(ScreenWidth)/2 - 100
+	fpsRowY := float32(ScreenHeight)/2 + 55
+	rl.DrawText("FPS Counter", int32(fpsLabelX), int32(fpsRowY), 20, rl.White)
+	fpsToggleRect := rl.Rectangle{X: fpsLabelX + 170, Y: fpsRowY - 2, Width: 30, Height: 24}
+	toggleFill := rl.NewColor(60, 60, 80, 255)
+	if meta.ShowFPS {
+		toggleFill = rl.NewColor(0, 140, 0, 255)
+	}
+	if rl.CheckCollisionPointRec(rl.GetMousePosition(), fpsToggleRect) {
+		// subtle hover lift — add 30 to each channel, capped at 255.
+		bump := func(c uint8) uint8 {
+			v := int(c) + 30
+			if v > 255 {
+				v = 255
+			}
+			return uint8(v)
+		}
+		toggleFill.R = bump(toggleFill.R)
+		toggleFill.G = bump(toggleFill.G)
+		toggleFill.B = bump(toggleFill.B)
+	}
+	rl.DrawRectangleRec(fpsToggleRect, toggleFill)
+	rl.DrawRectangleLinesEx(fpsToggleRect, 2, rl.White)
+	if meta.ShowFPS {
+		// draw a simple checkmark
+		cx := fpsToggleRect.X + fpsToggleRect.Width/2
+		cy := fpsToggleRect.Y + fpsToggleRect.Height/2
+		rl.DrawLineEx(rl.NewVector2(cx-6, cy), rl.NewVector2(cx-1, cy+5), 3, rl.White)
+		rl.DrawLineEx(rl.NewVector2(cx-1, cy+5), rl.NewVector2(cx+7, cy-5), 3, rl.White)
+	}
 
 	//back button
 	backRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight)/2 + 100, Width: 200, Height: 50}
@@ -1477,23 +1517,60 @@ func drawUI(hudAlpha uint8) {
 	}
 }
 
+// drawFPSCounter renders the current FPS in the bottom-right corner when
+// meta.ShowFPS is on. Called right before rl.EndDrawing on every screen so
+// the overlay stays visible everywhere — menus, run, game-over.
+func drawFPSCounter() {
+	if !meta.ShowFPS {
+		return
+	}
+	fps := rl.GetFPS()
+	text := fmt.Sprintf("%d FPS", fps)
+	fontSize := int32(18)
+	tw := rl.MeasureText(text, fontSize)
+	// Color code so bad performance is obvious at a glance.
+	col := rl.Lime
+	if fps < 45 {
+		col = rl.Yellow
+	}
+	if fps < 25 {
+		col = rl.Red
+	}
+	x := int32(ScreenWidth) - tw - 10
+	y := int32(ScreenHeight) - int32(fontSize) - 8
+	// Tiny black backdrop keeps the number legible over any art underneath.
+	rl.DrawRectangle(x-4, y-2, tw+8, fontSize+4, rl.NewColor(0, 0, 0, 160))
+	rl.DrawText(text, x, y, fontSize, col)
+}
+
 // the meat of drawing...WHEEE.
 func drawGame() {
 	rl.BeginDrawing()
 	if state.CurrentScreen == ScreenStart {
 		drawStartMenu()
+		// Options overlay floats above the start menu; dim the backdrop so
+		// the modal reads clearly. Uses the same drawOptionsMenu() as the
+		// in-run pause flow so the visuals stay in sync.
+		if state.InOptions {
+			rl.DrawRectangle(0, 0, ScreenWidth, ScreenHeight, rl.NewColor(0, 0, 0, 180))
+			drawOptionsMenu()
+		}
+		drawFPSCounter()
 		rl.EndDrawing()
 		return
 	} else if state.CurrentScreen == ScreenResearch {
 		drawResearchMenu()
+		drawFPSCounter()
 		rl.EndDrawing()
 		return
 	} else if state.CurrentScreen == ScreenItems {
 		drawItemsMenu()
+		drawFPSCounter()
 		rl.EndDrawing()
 		return
 	} else if state.CurrentScreen == ScreenLoading {
 		drawLoadScreen()
+		drawFPSCounter()
 		rl.EndDrawing()
 		return
 	}
@@ -1930,20 +2007,28 @@ func drawGame() {
 			color.A = alpha
 
 			fontSize := int32(FloatTextFontSize)
+			if ft.IsCrit {
+				// Crits: ~2x font, kept in the type's color. The trailing "!"
+				// plus the size bump are the two crit tells.
+				fontSize *= 2
+			}
 			textWidth := rl.MeasureText(ft.Text, fontSize)
 
 			// Per-type micro-animations. Kept subtle so they read as texture,
 			// not as a separate VFX layer. All offsets are in screen pixels.
 			offsetX := float32(0)
 			offsetY := float32(0)
-			scale := float32(1.0)
 			drawGlow := false
 
 			switch ft.DmgType {
 			case DmgPhysical:
-				// Snappy pop in the first ~15% of life, then settle to 1.0.
-				if progress < 0.15 {
-					scale = 1.0 + (0.15-progress)*1.5 // peak ~1.22 at spawn
+				// Quick downward bounce at spawn: text drops ~4px, then eases
+				// back to its resting Y over the first ~25% of life.
+				if progress < 0.25 {
+					// 0 at spawn -> 1 at 25% life, eased with a sine curve
+					// so the bounce decelerates as it settles.
+					eased := float32(math.Sin(float64(progress/0.25) * math.Pi / 2))
+					offsetY = (1.0 - eased) * 4.0
 				}
 			case DmgEnergy:
 				// Calm, steady. Soft white halo underneath for a "beam" feel.
@@ -1985,15 +2070,7 @@ func drawGame() {
 				}
 			}
 
-			// Scale is implemented by rendering at a slightly-enlarged font size,
-			// since raylib's DrawText only takes an int font size.
-			if scale != 1.0 {
-				scaledSize := int32(float32(fontSize) * scale)
-				scaledWidth := rl.MeasureText(ft.Text, scaledSize)
-				rl.DrawText(ft.Text, int32(ft.X+offsetX)-scaledWidth/2, drawY, scaledSize, color)
-			} else {
-				rl.DrawText(ft.Text, drawX, drawY, fontSize, color)
-			}
+			rl.DrawText(ft.Text, drawX, drawY, fontSize, color)
 		}
 
 		// ── Cursor aim reticle ─────────────────────────────────────────────────
@@ -2057,5 +2134,6 @@ func drawGame() {
 		}
 	}
 
+	drawFPSCounter()
 	rl.EndDrawing()
 }

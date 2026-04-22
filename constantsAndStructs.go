@@ -170,7 +170,9 @@ const (
 	BranchShockwaveRepulsor = "Repulsor" // big knockback, long stun, short CD
 	BranchShockwaveShatter  = "Shatter"  // armor debuff on hit, weaker knockback
 
-	// Branch RP costs (paid on top of the base unlock cost, one per ability)
+	// Branch RP costs. Paid once per ability the first time a branch is picked.
+	// After that first purchase, the player can freely swap between the two
+	// branches of that ability at no additional cost (outside an active run).
 	BranchCostRapidFire  = 50
 	BranchCostDeathRay   = 75
 	BranchCostGravity    = 100
@@ -285,6 +287,7 @@ type MetaProgression struct {
 	// Persistent settings
 	MusicVolume        float32
 	SFXVolume          float32
+	ShowFPS            bool // display FPS counter in bottom-right corner
 	TutorialStep       int
 	TutorialComplete   bool // set true after the player dies for the first time
 	TutorialDeathShown bool // set true after the "polygons got you" popup is shown once
@@ -690,6 +693,7 @@ type FloatingText struct {
 	Timer       float32
 	MaxDuration float32
 	DmgType     DamageType // source category; zero-value (Physical) is fine for XP/RP text
+	IsCrit      bool       // drives ~2x font size in the draw loop
 }
 
 type GameState struct {
