@@ -1,5 +1,5 @@
 {
-  "ResearchPoints": 30,
+  "ResearchPoints": 99061,
   "DmgLevel": 0,
   "ASLevel": 0,
   "RegenLevel": 0,
@@ -17,28 +17,28 @@
   "RapidFireUnlocked": true,
   "DeathRayUnlocked": true,
   "GravityFieldUnlocked": true,
-  "BombardmentUnlocked": false,
-  "StaticDischargeUnlocked": false,
-  "ChronoFieldUnlocked": false,
-  "MinesUnlocked": false,
-  "SatellitesUnlocked": false,
-  "ShockwaveUnlocked": false,
-  "RapidFireBranch": "Overcharge",
-  "DeathRayBranch": "Annihilator",
-  "GravityBranch": "Singularity",
-  "BombardBranch": "",
-  "StaticBranch": "",
+  "BombardmentUnlocked": true,
+  "StaticDischargeUnlocked": true,
+  "ChronoFieldUnlocked": true,
+  "MinesUnlocked": true,
+  "SatellitesUnlocked": true,
+  "ShockwaveUnlocked": true,
+  "RapidFireBranch": "BulletStorm",
+  "DeathRayBranch": "Prism",
+  "GravityBranch": "",
+  "BombardBranch": "CarpetBomb",
+  "StaticBranch": "ChainLightning",
   "ChronoBranch": "",
-  "MinesBranch": "",
-  "SatellitesBranch": "",
-  "ShockwaveBranch": "",
-  "Speed3xUnlocked": false,
+  "MinesBranch": "HellfireMines",
+  "SatellitesBranch": "SentryMode",
+  "ShockwaveBranch": "Repulsor",
+  "Speed3xUnlocked": true,
   "OpeningSprintUnlocked": false,
   "EquippedAbilities": [
+    "Bombardment",
     "Rapid Fire",
-    "",
-    "",
-    ""
+    "Death Ray",
+    "Static Discharge"
   ],
   "EquippedItemsByIndex": [
     0,
@@ -48,9 +48,9 @@
   ],
   "AutoAbilities": [
     true,
-    false,
-    false,
-    false
+    true,
+    true,
+    true
   ],
   "Inventory": [
     {
@@ -60,13 +60,13 @@
       "Stats": [
         {
           "StatType": "Damage",
-          "Value": 2,
+          "Value": 44,
           "BaseValue": 2,
           "Growth": 2
         },
         {
           "StatType": "Haste",
-          "Value": 0.01,
+          "Value": 0.22000003,
           "BaseValue": 0.01,
           "Growth": 0.01
         }

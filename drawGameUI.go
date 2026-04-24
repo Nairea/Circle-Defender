@@ -2018,17 +2018,24 @@ func drawGame() {
 			// not as a separate VFX layer. All offsets are in screen pixels.
 			offsetX := float32(0)
 			offsetY := float32(0)
+			scale := float32(1.0)
 			drawGlow := false
 
 			switch ft.DmgType {
 			case DmgPhysical:
-				// Quick downward bounce at spawn: text drops ~4px, then eases
-				// back to its resting Y over the first ~25% of life.
+				// Combined "punch" effect:
+				//  - Quick downward bounce (~7px) easing back to rest over the
+				//    first 25% of life.
+				//  - Simultaneous pop-scale that peaks ~1.25x at spawn and
+				//    settles to 1.0 over the first 15% of life.
+				// Together these read as a satisfying impact without any one
+				// effect being overbearing.
 				if progress < 0.25 {
-					// 0 at spawn -> 1 at 25% life, eased with a sine curve
-					// so the bounce decelerates as it settles.
 					eased := float32(math.Sin(float64(progress/0.25) * math.Pi / 2))
-					offsetY = (1.0 - eased) * 4.0
+					offsetY = (1.0 - eased) * 7.0
+				}
+				if progress < 0.15 {
+					scale = 1.0 + (0.15-progress)*1.67 // peak ~1.25 at spawn
 				}
 			case DmgEnergy:
 				// Calm, steady. Soft white halo underneath for a "beam" feel.
@@ -2059,6 +2066,15 @@ func drawGame() {
 				}
 			}
 
+			// Resolve scale into an effective font size. raylib's DrawText only
+			// accepts integer sizes, so the scaling is stepped (e.g. 16→18→20)
+			// rather than perfectly smooth — fine for a brief pop animation.
+			effFontSize := fontSize
+			if scale != 1.0 {
+				effFontSize = int32(float32(fontSize) * scale)
+				textWidth = rl.MeasureText(ft.Text, effFontSize)
+			}
+
 			drawX := int32(ft.X+offsetX) - textWidth/2
 			drawY := int32(ft.Y + offsetY)
 
@@ -2066,11 +2082,20 @@ func drawGame() {
 			if drawGlow {
 				glowCol := rl.NewColor(255, 255, 255, alpha/3)
 				for _, d := range [4][2]int32{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
-					rl.DrawText(ft.Text, drawX+d[0], drawY+d[1], fontSize, glowCol)
+					rl.DrawText(ft.Text, drawX+d[0], drawY+d[1], effFontSize, glowCol)
 				}
 			}
 
-			rl.DrawText(ft.Text, drawX, drawY, fontSize, color)
+			// Dark outline behind every damage number so it stays legible over
+			// bright enemy sprites and explosion flashes. Offset by 1px on
+			// each axis; uses the same alpha ramp as the main text so it
+			// fades out cleanly.
+			outlineCol := rl.NewColor(0, 0, 0, alpha)
+			for _, d := range [4][2]int32{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
+				rl.DrawText(ft.Text, drawX+d[0], drawY+d[1], effFontSize, outlineCol)
+			}
+
+			rl.DrawText(ft.Text, drawX, drawY, effFontSize, color)
 		}
 
 		// ── Cursor aim reticle ─────────────────────────────────────────────────

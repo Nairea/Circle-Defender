@@ -242,8 +242,8 @@ const (
 
 	//Floating damage text / "death particles"
 	FloatTextFontSize   = 16   // font size for damage pop-ups
-	FloatTextRiseSpeed  = 30.0 // pixels per second the text drifts upward
-	FloatTextDuration   = 1.0  // seconds a floating text lives
+	FloatTextRiseSpeed  = 15.0 // pixels per second the text drifts upward
+	FloatTextDuration   = 2.0  // seconds a floating text lives
 	FloatTextJitter     = 20.0 // horizontal spawn scatter (+/- half)
 	DamageAccumInterval = 0.1  // seconds between DoT damage number flushes
 
@@ -654,7 +654,7 @@ const (
 func DamageTypeColor(t DamageType) rl.Color {
 	switch t {
 	case DmgPhysical:
-		return rl.White
+		return rl.NewColor(255, 245, 220, 255) // pale cream — warmer than pure white, reads better on varied backgrounds
 	case DmgEnergy:
 		return rl.Purple
 	case DmgLightning:
