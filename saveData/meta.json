@@ -1,5 +1,9 @@
 {
+<<<<<<< HEAD
   "ResearchPoints": 267,
+=======
+  "ResearchPoints": 99061,
+>>>>>>> 0895961d4e28198fb86e688fa6df06596b5d4663
   "DmgLevel": 0,
   "ASLevel": 0,
   "RegenLevel": 0,
@@ -8,13 +12,20 @@
   "ThornsLevel": 0,
   "MultishotCountLevel": 0,
   "ChainCountLevel": 0,
+<<<<<<< HEAD
   "MusicVolume": 0.5,
   "SFXVolume": 0.5,
   "ShowFPS": false,
+=======
+  "MusicVolume": 0.015,
+  "SFXVolume": 0,
+  "ShowFPS": true,
+>>>>>>> 0895961d4e28198fb86e688fa6df06596b5d4663
   "TutorialStep": 12,
   "TutorialComplete": true,
   "TutorialDeathShown": true,
   "RapidFireUnlocked": true,
+<<<<<<< HEAD
   "DeathRayUnlocked": false,
   "GravityFieldUnlocked": false,
   "BombardmentUnlocked": false,
@@ -25,10 +36,23 @@
   "ShockwaveUnlocked": false,
   "RapidFireBranch": "",
   "DeathRayBranch": "",
+=======
+  "DeathRayUnlocked": true,
+  "GravityFieldUnlocked": true,
+  "BombardmentUnlocked": true,
+  "StaticDischargeUnlocked": true,
+  "ChronoFieldUnlocked": true,
+  "MinesUnlocked": true,
+  "SatellitesUnlocked": true,
+  "ShockwaveUnlocked": true,
+  "RapidFireBranch": "BulletStorm",
+  "DeathRayBranch": "Prism",
+>>>>>>> 0895961d4e28198fb86e688fa6df06596b5d4663
   "GravityBranch": "",
-  "BombardBranch": "",
-  "StaticBranch": "",
+  "BombardBranch": "CarpetBomb",
+  "StaticBranch": "ChainLightning",
   "ChronoBranch": "",
+<<<<<<< HEAD
   "MinesBranch": "",
   "SatellitesBranch": "",
   "ShockwaveBranch": "",
@@ -39,6 +63,18 @@
     "",
     "",
     ""
+=======
+  "MinesBranch": "HellfireMines",
+  "SatellitesBranch": "SentryMode",
+  "ShockwaveBranch": "Repulsor",
+  "Speed3xUnlocked": true,
+  "OpeningSprintUnlocked": false,
+  "EquippedAbilities": [
+    "Bombardment",
+    "Rapid Fire",
+    "Death Ray",
+    "Static Discharge"
+>>>>>>> 0895961d4e28198fb86e688fa6df06596b5d4663
   ],
   "EquippedItemsByIndex": [
     0,
@@ -47,10 +83,17 @@
     -1
   ],
   "AutoAbilities": [
+<<<<<<< HEAD
     false,
     false,
     false,
     false
+=======
+    true,
+    true,
+    true,
+    true
+>>>>>>> 0895961d4e28198fb86e688fa6df06596b5d4663
   ],
   "AutoAbilitiesByName": {
     "Rapid Fire": true
@@ -63,13 +106,21 @@
       "Stats": [
         {
           "StatType": "Damage",
+<<<<<<< HEAD
           "Value": 14,
+=======
+          "Value": 44,
+>>>>>>> 0895961d4e28198fb86e688fa6df06596b5d4663
           "BaseValue": 2,
           "Growth": 2
         },
         {
           "StatType": "Haste",
+<<<<<<< HEAD
           "Value": 0.06999999,
+=======
+          "Value": 0.22000003,
+>>>>>>> 0895961d4e28198fb86e688fa6df06596b5d4663
           "BaseValue": 0.01,
           "Growth": 0.01
         }
