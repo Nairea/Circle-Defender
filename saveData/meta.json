@@ -1,5 +1,5 @@
 {
-  "ResearchPoints": 1603,
+  "ResearchPoints": 267,
   "DmgLevel": 0,
   "ASLevel": 0,
   "RegenLevel": 0,
@@ -10,6 +10,7 @@
   "ChainCountLevel": 0,
   "MusicVolume": 0.5,
   "SFXVolume": 0.5,
+  "ShowFPS": false,
   "TutorialStep": 12,
   "TutorialComplete": true,
   "TutorialDeathShown": true,
@@ -22,7 +23,7 @@
   "MinesUnlocked": false,
   "SatellitesUnlocked": false,
   "ShockwaveUnlocked": false,
-  "RapidFireBranch": "BulletStorm",
+  "RapidFireBranch": "",
   "DeathRayBranch": "",
   "GravityBranch": "",
   "BombardBranch": "",
@@ -31,10 +32,10 @@
   "MinesBranch": "",
   "SatellitesBranch": "",
   "ShockwaveBranch": "",
-  "Speed3xUnlocked": true,
+  "Speed3xUnlocked": false,
   "OpeningSprintUnlocked": false,
   "EquippedAbilities": [
-    "Rapid Fire",
+    "",
     "",
     "",
     ""
@@ -46,11 +47,14 @@
     -1
   ],
   "AutoAbilities": [
-    true,
+    false,
     false,
     false,
     false
   ],
+  "AutoAbilitiesByName": {
+    "Rapid Fire": true
+  },
   "Inventory": [
     {
       "Name": "Plasma Cutter",
@@ -59,13 +63,13 @@
       "Stats": [
         {
           "StatType": "Damage",
-          "Value": 6,
+          "Value": 14,
           "BaseValue": 2,
           "Growth": 2
         },
         {
           "StatType": "Haste",
-          "Value": 0.03,
+          "Value": 0.06999999,
           "BaseValue": 0.01,
           "Growth": 0.01
         }
@@ -75,5 +79,13 @@
       "UniqueModifier": "",
       "SetID": ""
     }
-  ]
+  ],
+  "MetaLevel": 3,
+  "MetaXP": 381,
+  "TalentPointsEarned": 9,
+  "TalentRanks": {
+    "dmg_pyro": 2,
+    "dmg_rapidfire_unlock": 1
+  },
+  "TalentsMigrated": true
 }

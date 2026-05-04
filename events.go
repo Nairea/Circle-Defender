@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"math/rand"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
@@ -29,6 +28,11 @@ type GameEvent struct {
 	// Damage actually dealt after reductions
 	Damage float32
 
+	// DmgType categorizes the damage source (Physical, Energy, Lightning, Fire, Pure).
+	// Handlers can branch on this to implement type-specific interactions like
+	// "leech only on Physical" or "double damage vs. Fire-vulnerable enemies".
+	DmgType DamageType
+
 	// Hit metadata
 	IsCrit   bool
 	Position rl.Vector2 // world-space position of the hit
@@ -49,7 +53,20 @@ func Subscribe(t GameEventType, h EventHandler) {
 
 // Dispatch fires all handlers registered for the event's type.
 // Safe to call even when no handlers are registered.
+//
+// Side effect: OnKill events also tick the run-scoped kill counters on
+// GameState so end-of-run MetaXP awarding has a true count. Boss kills
+// are detected by enemy size (bosses are visibly larger) since there's
+// no IsBoss flag on Enemy — this matches the spawn tracking in gameLogic.
 func Dispatch(e GameEvent) {
+	if e.Type == EventOnKill && e.Enemy != nil {
+		state.RunKills++
+		// Bosses are ~3x+ larger than base enemies and come from SpawnQueue.
+		// A size-based proxy is reliable enough for XP scoring.
+		if e.Enemy.Size >= 40 {
+			state.RunBossKills++
+		}
+	}
 	for _, h := range eventBus[e.Type] {
 		h(e)
 	}
@@ -145,7 +162,7 @@ func RebuildEventSubscriptions(p *Player) {
 								IsChain:     true,
 								Seed:        rand.Int31(),
 							})
-							spawnFloatingText(e.X, e.Y-e.Size, fmt.Sprintf("%.0f", arcDmg), rl.SkyBlue)
+							spawnDamageText(e.X, e.Y-e.Size, arcDmg, DmgLightning, false)
 						}
 						break
 					}
@@ -162,8 +179,7 @@ func RebuildEventSubscriptions(p *Player) {
 				}
 				if !isEnemyProtected(ev.Enemy) {
 					ev.Enemy.HP -= spikeDmg
-					spawnFloatingText(ev.Enemy.X, ev.Enemy.Y-ev.Enemy.Size,
-						fmt.Sprintf("%.0f", spikeDmg), rl.Magenta)
+					spawnDamageText(ev.Enemy.X, ev.Enemy.Y-ev.Enemy.Size, spikeDmg, DmgPhysical, false)
 				}
 			})
 

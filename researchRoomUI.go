@@ -7,443 +7,1197 @@ import (
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
-// researchScrollY tracks the vertical scroll offset for the research menu.
-var researchScrollY float32
+// researchRoomUI.go — Talent Lab UI.
+//
+// Layout (1500x1200):
+//   ┌────────────────────────────────────────────────────────────────┐
+//   │ TALENT LAB     Meta Lv X    TP avail/total    RP        RESET │
+//   │ ▰▰▰▰▰▰▰▱▱▱  XP bar to next meta level                          │
+//   │ [DAMAGE 3] [CONTROL 0] [DEFENSE 0] [PASSIVE 0]   ← tabs        │
+//   ├────────────────────────────────────────────────────────────────┤
+//   │ ── Tier 1 ─────────────────────────────────────────────────    │
+//   │   ▢ Sharpshooter        ▢ Pyromaniac        ▢ Precision        │
+//   │ ── Tier 2 ──── (need 5 in tree) ───────────────────────────    │
+//   │   ▢ Ext Magazine        ★ Rapid Fire        ▢ Marksman         │
+//   │   …                                                           │
+//   ├────────────────────────────────────────────────────────────────┤
+//   │                          [ BACK ]                              │
+//   └────────────────────────────────────────────────────────────────┘
+//
+// Visual decisions:
+//   - Tier dividers: thin gold horizontal line + "Tier N" label, with the
+//     point cost shown only on locked tiers ("(need 5 more)").
+//   - Side-stripe color tag: kind is shown via a 4px colored bar on the
+//     left edge of the card, not a cryptic glyph.
+//   - Mutex arcs: when two nodes share Exclusive, a thin red arc curves
+//     between them so the player sees the conflict at a glance.
+//   - Hover-highlight prereq path: hovering a node lights up the chain
+//     of ancestors with a brighter line + a faint glow on each ancestor
+//     card so the player can trace what they need to take.
+//
+// Interaction:
+//   - Left-click an allocatable node → +1 rank.
+//   - Right-click an allocated node → refund 1 rank (if no orphans created).
+//   - "RESET ALL" wipes everything and refunds RP for legacy stat investments.
 
-// researchMenuContentHeight is the total scrollable content height (set each frame).
-const researchMenuHeaderH = 200 // pixels reserved for fixed header
-const researchMenuFooterH = 70  // pixels reserved for fixed back button
+// ── Module state ─────────────────────────────────────────────────────────
 
-// researchLayout holds all derived layout values for the talent grid.
-// Computed once per frame/input tick so input and draw always agree.
-type researchLayout struct {
-	cardW   float32 // width of each talent card
-	cardH   float32 // row height (card + gap)
-	colGap  float32 // gap between columns
-	branchW float32 // width of each branch button
-	originX float32 // X of the left column card
+var activeTreeIdx = 0
+var hoveredNodeID = ""
+
+// researchTabIdx is the special tab index for the RP-cost research panel.
+// It sits one past the real talent trees so the existing trees logic
+// doesn't need to care about it.
+var researchTabIdx = len(TreesInOrder)
+
+// researchScrollY tracks the vertical scroll offset of the research panel
+// so a long catalog can extend past the visible area.
+var researchScrollY float32 = 0
+
+// ── Research catalog ─────────────────────────────────────────────────────
+
+// researchEntry describes one purchasable item in the RP-cost research
+// panel. `kind` selects between a multi-rank stat (rising cost ladder) and
+// a single-toggle unlock (flat cost, one-time purchase).
+type researchEntry struct {
+	id          string // stable identifier
+	name        string // shown in the card header
+	description string // shown below the name
+
+	// kind == "rank": multi-purchase. baseCost + step*currentLevel each buy.
+	// kind == "toggle": one-time unlock, costs flatCost.
+	kind string
+
+	// rank-only fields
+	baseCost int                   // RP cost of the first rank
+	step     int                   // additional cost added each subsequent rank
+	maxRank  int                   // hard cap (0 = uncapped)
+	getRank  func() int            // reads current rank from meta
+	setRank  func(r int)           // writes new rank to meta
+	applyAt  func(p *Player, r int) // applied at run start (analogous to TalentNode.Apply)
+
+	// toggle-only fields
+	flatCost  int
+	isOwned   func() bool
+	setOwned  func(on bool)
 }
 
-func calcResearchLayout() researchLayout {
-	cardW := float32(ScreenWidth) * 0.26  // ~390px at 1500
-	colGap := float32(ScreenWidth) * 0.02 // ~30px gap between columns
-	cardH := float32(130)
-	originX := float32(ScreenWidth)/2 - cardW - colGap/2
-	branchW := (cardW - 8) / 2
-	return researchLayout{cardW, cardH, colGap, branchW, originX}
+// researchCatalog defines the order and content of the RP-cost panel.
+// To add a new permanent upgrade, append an entry here.
+var researchCatalog = []researchEntry{
+	{
+		id:          "research_attack_speed",
+		name:        "Weapon Calibration",
+		description: "Permanent +5% attack speed per rank. Stacks with Haste talents.",
+		kind:        "rank",
+		baseCost:    5,
+		step:        5,
+		maxRank:     5,
+		getRank:     func() int { return meta.ASLevel },
+		setRank:     func(r int) { meta.ASLevel = r },
+		// ASLevel is consumed directly by recalculateAttackSpeed in
+		// gameLogic.go so no per-run apply hook is needed here.
+	},
+	{
+		id:          "research_3x_spawn",
+		name:        "Quickstart Boot Sequence",
+		description: "Triples spawn-fade speed at the start of each run. Skip the slow intro.",
+		kind:        "toggle",
+		flatCost:    200,
+		isOwned:     func() bool { return meta.Speed3xUnlocked },
+		setOwned:    func(on bool) { meta.Speed3xUnlocked = on },
+	},
+	{
+		id:          "research_opening_sprint",
+		name:        "Opening Sprint",
+		description: "Free movement-speed boost during the first 30 seconds of each run.",
+		kind:        "toggle",
+		flatCost:    500,
+		isOwned:     func() bool { return meta.OpeningSprintUnlocked },
+		setOwned:    func(on bool) { meta.OpeningSprintUnlocked = on },
+	},
 }
 
-// talentDef describes one ability/passive row in the Talent Lab UI.
-type talentDef struct {
-	Name         string
-	Cost         int
-	Unlocked     *bool
-	Branch       *string
-	BranchCost   int
-	BranchAValue string // actual string stored in meta when A is chosen
-	BranchAName  string // display label
-	BranchADesc  string
-	BranchBValue string
-	BranchBName  string
-	BranchBDesc  string
+// researchEntryRankCost returns the RP cost of buying the next rank of a
+// "rank"-kind entry, given its current rank.
+func researchEntryRankCost(e researchEntry, currentRank int) int {
+	return e.baseCost + e.step*currentRank
 }
 
-func buildTalentList() []talentDef {
-	return []talentDef{
-		{
-			Name: AbilityRapidFire, Cost: 25, Unlocked: &meta.RapidFireUnlocked,
-			Branch: &meta.RapidFireBranch, BranchCost: BranchCostRapidFire,
-			BranchAValue: BranchRapidFireBulletStorm,
-			BranchAName:  "Bullet Storm",
-			BranchADesc:  "Higher fire rate, shorter cooldown.",
-			BranchBValue: BranchRapidFireOvercharge,
-			BranchBName:  "Overcharge",
-			BranchBDesc:  "+Crit & Multishot while active.",
-		},
-		{
-			Name: AbilityDeathRay, Cost: 50, Unlocked: &meta.DeathRayUnlocked,
-			Branch: &meta.DeathRayBranch, BranchCost: BranchCostDeathRay,
-			BranchAValue: BranchDeathRayAnnihilator,
-			BranchAName:  "Annihilator",
-			BranchADesc:  "Focused beam, ramps up over time.",
-			BranchBValue: BranchDeathRayPrism,
-			BranchBName:  "Prism",
-			BranchBDesc:  "Spinning multi-beams from the start.",
-		},
-		{
-			Name: AbilityGravity, Cost: 75, Unlocked: &meta.GravityFieldUnlocked,
-			Branch: &meta.GravityBranch, BranchCost: BranchCostGravity,
-			BranchAValue: BranchGravitySingularity,
-			BranchAName:  "Singularity",
-			BranchADesc:  "Tighter pull, always explodes on end.",
-			BranchBValue: BranchGravityAnomaly,
-			BranchBName:  "Anomaly",
-			BranchBDesc:  "Wider field, passive zones spawn nearby.",
-		},
-		{
-			Name: AbilityBombard, Cost: 75, Unlocked: &meta.BombardmentUnlocked,
-			Branch: &meta.BombardBranch, BranchCost: BranchCostBombard,
-			BranchAValue: BranchBombardCarpet,
-			BranchAName:  "Carpet Bomb",
-			BranchADesc:  "Rapid small strikes, longer duration.",
-			BranchBValue: BranchBombardSiege,
-			BranchBName:  "Siege Strike",
-			BranchBDesc:  "Slow massive blasts, +damage mult.",
-		},
-		{
-			Name: AbilityStatic, Cost: 60, Unlocked: &meta.StaticDischargeUnlocked,
-			Branch: &meta.StaticBranch, BranchCost: BranchCostStatic,
-			BranchAValue: BranchStaticChain,
-			BranchAName:  "Chain Lightning",
-			BranchADesc:  "Arcs to extra nearby enemies.",
-			BranchBValue: BranchStaticOverload,
-			BranchBName:  "Overload",
-			BranchBDesc:  "Fewer targets, massively more damage.",
-		},
-		{
-			Name: AbilityChrono, Cost: 100, Unlocked: &meta.ChronoFieldUnlocked,
-			Branch: &meta.ChronoBranch, BranchCost: BranchCostChrono,
-			BranchAValue: BranchChronoTimeStop,
-			BranchAName:  "Time Stop",
-			BranchADesc:  "Non-bosses fully frozen.",
-			BranchBValue: BranchChronoEntropy,
-			BranchBName:  "Entropy",
-			BranchBDesc:  "Weaker slow but strong DoT.",
-		},
-	}
-}
+// ── Layout constants ─────────────────────────────────────────────────────
 
-func buildPassiveTalentList() []talentDef {
-	return []talentDef{
-		{
-			Name: "Prox. Mines", Cost: 150, Unlocked: &meta.MinesUnlocked,
-			Branch: &meta.MinesBranch, BranchCost: BranchCostMines,
-			BranchAValue: BranchMinesCluster,
-			BranchAName:  "Cluster",
-			BranchADesc:  "More mines, faster cooldown.",
-			BranchBValue: BranchMinesHellfire,
-			BranchBName:  "Hellfire",
-			BranchBDesc:  "Fewer mines, huge blast + lingering fire.",
-		},
-		{
-			Name: "Satellites", Cost: 150, Unlocked: &meta.SatellitesUnlocked,
-			Branch: &meta.SatellitesBranch, BranchCost: BranchCostSatellites,
-			BranchAValue: BranchSatSentry,
-			BranchAName:  "Sentry Mode",
-			BranchADesc:  "Stationary turrets that shoot bullets.",
-			BranchBValue: BranchSatOverdrive,
-			BranchBName:  "Overdrive",
-			BranchBDesc:  "Fast orbit, contact damage only.",
-		},
-		{
-			Name: "Shockwave", Cost: 150, Unlocked: &meta.ShockwaveUnlocked,
-			Branch: &meta.ShockwaveBranch, BranchCost: BranchCostShockwave,
-			BranchAValue: BranchShockwaveRepulsor,
-			BranchAName:  "Repulsor",
-			BranchADesc:  "Bigger knockback and longer stun.",
-			BranchBValue: BranchShockwaveShatter,
-			BranchBName:  "Shatter",
-			BranchBDesc:  "Weaker knockback, applies armor debuff.",
-		},
-	}
-}
+const (
+	talentLabHeaderH = 180 // header (title + meta line + xp bar + tabs)
+	treeTabH         = 38
+	talentLabFooterH = 70
 
-// researchMenuContentBottom returns the Y pixel where the last scrollable element ends.
-func researchMenuContentBottom() int {
-	lay := calcResearchLayout()
-	passiveRows := 2 // 3 passives in a 2-col grid = 2 rows
-	passiveStartY := float32(researchMenuHeaderH) + 3*lay.cardH + 18
-	utilY := passiveStartY + float32(passiveRows)*lay.cardH
-	return int(utilY) + 40 + 50 + 40 + 20 // two util buttons + padding
-}
+	// Card dimensions — wider than the previous pass so descriptions fit.
+	nodeW    = 200
+	nodeH    = 78
+	nodeHGap = 28
+
+	// Tier row vertical layout.
+	tierLabelH = 24 // height reserved for "Tier N" divider above each row
+	tierVGap   = 14 // gap between divider and the cards in that tier
+	tierRowH   = nodeH + tierLabelH + tierVGap
+
+	// Side-stripe tag width.
+	stripeW = 5
+)
+
+// ── Input handling ───────────────────────────────────────────────────────
 
 func handleResearchInput() {
 	if rl.IsKeyPressed(rl.KeyEscape) || rl.IsKeyPressed(rl.KeyB) {
 		playButtonSound()
 		state.CurrentScreen = ScreenStart
-		researchScrollY = 0
 		return
 	}
 
 	if meta.TutorialStep == TutorialGoToResearch {
-		meta.TutorialStep = TutorialBuyAbility
+		meta.TutorialStep = TutorialSpendTP
 		SaveMetaProg()
 	}
 
-	// Scroll via mouse wheel or keyboard arrow keys
-	wheel := rl.GetMouseWheelMove()
-	if wheel != 0 {
-		researchScrollY -= wheel * 40
-	}
-	if rl.IsKeyDown(rl.KeyDown) {
-		researchScrollY += 6
-	}
-	if rl.IsKeyDown(rl.KeyUp) {
-		researchScrollY -= 6
-	}
-	// Clamp scroll: max content bottom is roughly utilY + 2 rows of util + padding
-	maxScroll := float32(researchMenuContentBottom() - (ScreenHeight - researchMenuFooterH - researchMenuHeaderH))
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if researchScrollY < 0 {
-		researchScrollY = 0
-	}
-	if researchScrollY > maxScroll {
-		researchScrollY = maxScroll
+	mousePos := rl.GetMousePosition()
+
+	// Tree tabs (real talent trees).
+	if rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
+		for i := range TreesInOrder {
+			r := treeTabRect(i)
+			if rl.CheckCollisionPointRec(mousePos, r) {
+				playButtonSound()
+				activeTreeIdx = i
+				return
+			}
+		}
+		// Research tab (one past the talent trees).
+		r := treeTabRect(researchTabIdx)
+		if rl.CheckCollisionPointRec(mousePos, r) {
+			playButtonSound()
+			activeTreeIdx = researchTabIdx
+			researchScrollY = 0
+			return
+		}
 	}
 
-	respecRect := rl.Rectangle{X: float32(ScreenWidth) - 130, Y: 20, Width: 110, Height: 40}
-	if rl.IsMouseButtonPressed(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(rl.GetMousePosition(), respecRect) {
+	// Respec.
+	if rl.IsMouseButtonPressed(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(mousePos, respecButtonRect()) {
 		playButtonSound()
 		if !HasSaveFile() {
 			performRespec()
 		}
+		return
 	}
 
-	// AUTO toggle buttons below each loadout slot
-	if rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
-		for i, name := range meta.EquippedAbilities {
-			if name == "" {
+	// If we're on the Research tab, skip talent-tree input handling and
+	// run the catalog input flow instead.
+	if activeTreeIdx == researchTabIdx {
+		handleResearchPanelInput(mousePos)
+		// Back button at the bottom is handled below — don't return early.
+	} else {
+		// Talent-tree node click handling.
+		tree := TreesInOrder[activeTreeIdx]
+		for _, n := range TalentsByTree[tree] {
+			r := nodeRect(n)
+			if !rl.CheckCollisionPointRec(mousePos, r) {
 				continue
 			}
-			autoX := float32(ScreenWidth/2 - 115 + i*60)
-			autoY := float32(112 + 54)
-			autoRect := rl.Rectangle{X: autoX, Y: autoY, Width: 50, Height: 18}
-			if rl.CheckCollisionPointRec(rl.GetMousePosition(), autoRect) {
-				playButtonSound()
-				meta.AutoAbilities[i] = !meta.AutoAbilities[i]
-				// Keep player in sync if a run is active.
-				state.Player.AutoAbilities[i] = meta.AutoAbilities[i]
-				SaveMetaProg()
-
-				// Tutorial: once the player enables AUTO on Rapid Fire,
-				// show a "click Back" prompt instead of jumping straight to the start screen.
-				if meta.TutorialStep == TutorialEquipAbility &&
-					name == AbilityRapidFire &&
-					meta.AutoAbilities[i] {
-					meta.TutorialStep = TutorialBackFromResearch
+			if rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
+				if AllocatePoint(n.ID) {
+					playButtonSound()
 					SaveMetaProg()
-				}			}
-		}
-	}
-
-	backRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight) - 60, Width: 200, Height: 50}
-	if rl.IsMouseButtonReleased(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(rl.GetMousePosition(), backRect) {
-		// Block leaving during steps where the player still has required actions.
-		if meta.TutorialStep == TutorialBuyAbility ||
-			meta.TutorialStep == TutorialEquipAbility ||
-			meta.TutorialStep == TutorialPickBranch {
-			return
-		}
-		// During TutorialBackFromResearch, also block if AUTO hasn't been toggled on yet.
-		if meta.TutorialStep == TutorialBackFromResearch {
-			autoOn := false
-			for i, name := range meta.EquippedAbilities {
-				if name == AbilityRapidFire && meta.AutoAbilities[i] {
-					autoOn = true
-					break
+					if meta.TutorialStep == TutorialSpendTP && n.ID == "dmg_rapidfire_unlock" {
+						meta.TutorialStep = TutorialBackFromResearch
+						SaveMetaProg()
+					}
 				}
+				return
 			}
-			if !autoOn {
+			if rl.IsMouseButtonPressed(rl.MouseButtonRight) && !HasSaveFile() {
+				if rankOf(n.ID) > 0 && canRefundRank(n.ID) {
+					playButtonSound()
+					meta.TalentRanks[n.ID]--
+					if meta.TalentRanks[n.ID] == 0 {
+						delete(meta.TalentRanks, n.ID)
+					}
+					SaveMetaProg()
+				}
 				return
 			}
 		}
+	}
+
+	// Back button.
+	back := backButtonRect()
+	if rl.IsMouseButtonReleased(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(mousePos, back) {
+		// Tutorial gate: spent TP step blocks Back.
+		if meta.TutorialStep == TutorialSpendTP {
+			return
+		}
 		playButtonSound()
-		researchScrollY = 0
-		// Clicking Back during TutorialBackFromResearch advances to GoToGear.
 		if meta.TutorialStep == TutorialBackFromResearch {
 			meta.TutorialStep = TutorialGoToGear
 			SaveMetaProg()
 		}
 		state.CurrentScreen = ScreenStart
 	}
+}
 
+// canRefundRank returns true if removing 1 rank would not orphan any other
+// allocated node by breaking its prereq chain or tier gate.
+func canRefundRank(id string) bool {
+	saved := meta.TalentRanks[id]
+	meta.TalentRanks[id]--
+	if meta.TalentRanks[id] == 0 {
+		delete(meta.TalentRanks, id)
+	}
+	defer func() {
+		meta.TalentRanks[id] = saved
+	}()
+
+	for otherID, rank := range meta.TalentRanks {
+		if rank == 0 {
+			continue
+		}
+		n := TalentRegistry[otherID]
+		if n == nil {
+			continue
+		}
+		for _, reqID := range n.Prereqs {
+			if rankOf(reqID) == 0 {
+				return false
+			}
+		}
+		if !isTierUnlocked(n) {
+			return false
+		}
+	}
+	return true
+}
+
+// ── Layout helpers ───────────────────────────────────────────────────────
+
+func respecButtonRect() rl.Rectangle {
+	return rl.Rectangle{X: float32(ScreenWidth) - 130, Y: 16, Width: 110, Height: 36}
+}
+
+func backButtonRect() rl.Rectangle {
+	return rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight) - 60, Width: 200, Height: 50}
+}
+
+// treeTabRect returns the screen rect for tab index i, where indices
+// 0..len(TreesInOrder)-1 are real talent trees and len(TreesInOrder) is
+// the special RP-cost Research tab.
+func treeTabRect(i int) rl.Rectangle {
+	tabW := float32(170)
+	totalTabs := len(TreesInOrder) + 1 // +1 for the Research tab
+	totalW := tabW * float32(totalTabs)
+	startX := float32(ScreenWidth)/2 - totalW/2
+	return rl.Rectangle{X: startX + float32(i)*tabW, Y: talentLabHeaderH - treeTabH - 4, Width: tabW - 4, Height: treeTabH}
+}
+
+// nodeRect returns the screen-space rect for a talent node. Tiers always
+// use a fixed 3-column grid (one column per ability/path). Mutex-pair
+// members share a Tier+Col slot and render as side-by-side half-cards
+// with a small gap and an "OR" badge between them.
+func nodeRect(n *TalentNode) rl.Rectangle {
+	const fixedCols = 3
+	totalW := float32(fixedCols)*nodeW + float32(fixedCols-1)*nodeHGap
+	startX := float32(ScreenWidth)/2 - totalW/2
+
+	gridY := talentLabHeaderH + tierLabelH
+	y := float32(gridY) + float32(n.Tier-1)*tierRowH + tierVGap
+	x := startX + float32(n.Col)*(nodeW+nodeHGap)
+
+	// Mutex pair: split slot into left/right halves with a gap for the badge.
+	if n.MutexGroupID != "" {
+		const orBadgeW float32 = 28
+		halfW := (float32(nodeW) - orBadgeW) / 2
+		group := mutexGroupMembers(n.Tree, n.MutexGroupID)
+		// Determine if `n` is the left or right half (sorted by node ID
+		// for determinism — first ID alphabetically goes left).
+		left := group[0]
+		if len(group) >= 2 && n.ID == left.ID {
+			return rl.Rectangle{X: x, Y: y, Width: halfW, Height: nodeH}
+		}
+		// Right half.
+		return rl.Rectangle{X: x + halfW + orBadgeW, Y: y, Width: halfW, Height: nodeH}
+	}
+
+	return rl.Rectangle{X: x, Y: y, Width: nodeW, Height: nodeH}
+}
+
+// slotCenterX returns the horizontal center of a (tree-tier-col) slot,
+// including for mutex pairs (returns the visual center of the whole pair).
+// Used for drawing prereq lines from a child to a single point above.
+func slotCenterX(tree string, tier, col int) float32 {
+	const fixedCols = 3
+	totalW := float32(fixedCols)*nodeW + float32(fixedCols-1)*nodeHGap
+	startX := float32(ScreenWidth)/2 - totalW/2
+	return startX + float32(col)*(nodeW+nodeHGap) + nodeW/2
+}
+
+// mutexGroupMembers returns nodes sharing the given MutexGroupID in the
+// given tree, sorted alphabetically by ID for stable ordering.
+func mutexGroupMembers(tree, groupID string) []*TalentNode {
+	var out []*TalentNode
+	for _, n := range TalentsByTree[tree] {
+		if n.MutexGroupID == groupID {
+			out = append(out, n)
+		}
+	}
+	// Bubble sort by ID for stability (only ever 2 items).
+	if len(out) >= 2 && out[0].ID > out[1].ID {
+		out[0], out[1] = out[1], out[0]
+	}
+	return out
+}
+
+// tierDividerY returns the y-coordinate of the tier divider line for tier N.
+func tierDividerY(tier int) float32 {
+	gridY := talentLabHeaderH
+	return float32(gridY) + float32(tier-1)*tierRowH
+}
+
+// nodeKindColor returns the side-stripe color for a node's Kind.
+func nodeKindColor(kind string) rl.Color {
+	switch kind {
+	case NodeUnlock:
+		return rl.NewColor(255, 200, 60, 255) // gold — ability unlock
+	case NodeKeystone:
+		return rl.NewColor(80, 180, 255, 255) // sky-blue — branch/capstone
+	case NodeSynergy:
+		return rl.NewColor(190, 130, 230, 255) // purple — cross-tree synergy
+	}
+	return rl.NewColor(180, 180, 200, 255) // neutral — scaling
+}
+
+// ── Draw ─────────────────────────────────────────────────────────────────
+
+func drawResearchMenu() {
+	rl.ClearBackground(rl.NewColor(10, 10, 20, 255))
+	mousePos := rl.GetMousePosition()
+	hoveredNodeID = ""
+
+	drawTalentHeader()
+	drawRespecButton(mousePos)
+
+	if HasSaveFile() {
+		warn := "RUN IN PROGRESS -- TALENTS LOCKED"
+		rl.DrawText(warn, ScreenWidth/2-rl.MeasureText(warn, 16)/2, 102, 16, rl.Red)
+	}
+
+	drawTreeTabs(mousePos)
+
+	rl.BeginScissorMode(0, int32(talentLabHeaderH), ScreenWidth, int32(ScreenHeight-talentLabHeaderH-talentLabFooterH))
+	if activeTreeIdx == researchTabIdx {
+		drawResearchPanel(mousePos)
+	} else {
+		drawActiveTreeGrid(mousePos)
+	}
+	rl.EndScissorMode()
+
+	drawBackButton(mousePos)
+
+	if hoveredNodeID != "" {
+		drawNodeTooltip(hoveredNodeID, mousePos)
+	}
+
+	drawResearchTutorialOverlay()
+}
+
+func drawTalentHeader() {
+	title := "TALENT LAB"
+	rl.DrawText(title, ScreenWidth/2-rl.MeasureText(title, 36)/2, 12, 36, rl.Purple)
+
+	avail := availableTalentPoints()
+	total := meta.TalentPointsEarned
+	header := fmt.Sprintf("Meta Lv %d   ·   TP: %d / %d   ·   RP: %d",
+		meta.MetaLevel, avail, total, meta.ResearchPoints)
+	rl.DrawText(header, ScreenWidth/2-rl.MeasureText(header, 18)/2, 54, 18, rl.Gold)
+
+	if meta.MetaLevel < MaxMetaLevel {
+		cur := meta.MetaXP
+		prev := metaXPForLevel(meta.MetaLevel)
+		next := metaXPForLevel(meta.MetaLevel + 1)
+		into := cur - prev
+		span := next - prev
+		if span <= 0 {
+			span = 1
+		}
+		pct := float32(into) / float32(span)
+		if pct < 0 {
+			pct = 0
+		}
+		if pct > 1 {
+			pct = 1
+		}
+		barW := float32(420)
+		barX := float32(ScreenWidth)/2 - barW/2
+		barY := float32(78)
+		rl.DrawRectangle(int32(barX), int32(barY), int32(barW), 8, rl.NewColor(40, 40, 60, 255))
+		rl.DrawRectangle(int32(barX), int32(barY), int32(barW*pct), 8, rl.NewColor(140, 100, 220, 255))
+		rl.DrawRectangleLines(int32(barX), int32(barY), int32(barW), 8, rl.Gray)
+		xpTxt := fmt.Sprintf("%d / %d XP to ML %d", into, span, meta.MetaLevel+1)
+		rl.DrawText(xpTxt, ScreenWidth/2-rl.MeasureText(xpTxt, 12)/2, int32(barY)+10, 12, rl.LightGray)
+	}
+}
+
+func drawRespecButton(mousePos rl.Vector2) {
+	r := respecButtonRect()
+	col := rl.DarkGray
+	if HasSaveFile() {
+		col = rl.NewColor(40, 40, 40, 255)
+	} else if rl.CheckCollisionPointRec(mousePos, r) {
+		col = rl.NewColor(80, 80, 80, 255)
+	}
+	rl.DrawRectangleRec(r, col)
+	rl.DrawRectangleLinesEx(r, 2, rl.RayWhite)
+	rl.DrawText("RESET ALL", int32(r.X+10), int32(r.Y+10), 16, rl.White)
+}
+
+func drawTreeTabs(mousePos rl.Vector2) {
+	for i, tree := range TreesInOrder {
+		r := treeTabRect(i)
+		accent := TreeAccentColors[tree]
+		fill := rl.NewColor(30, 30, 45, 255)
+		border := rl.NewColor(accent[0]/2, accent[1]/2, accent[2]/2, 255)
+		if i == activeTreeIdx {
+			fill = rl.NewColor(accent[0]/3, accent[1]/3, accent[2]/3, 255)
+			border = rl.NewColor(accent[0], accent[1], accent[2], accent[3])
+		} else if rl.CheckCollisionPointRec(mousePos, r) {
+			fill = rl.NewColor(50, 50, 70, 255)
+		}
+		rl.DrawRectangleRec(r, fill)
+		rl.DrawRectangleLinesEx(r, 2, border)
+		spent := pointsSpentInTree(tree)
+		lbl := fmt.Sprintf("%s (%d)", tree, spent)
+		lw := rl.MeasureText(lbl, 16)
+		rl.DrawText(lbl, int32(r.X+r.Width/2)-lw/2, int32(r.Y)+10, 16, rl.White)
+	}
+
+	// Research tab — RP-cost shop, visually distinguished by gold accent.
+	r := treeTabRect(researchTabIdx)
+	gold := [4]uint8{220, 180, 60, 255}
+	fill := rl.NewColor(35, 32, 18, 255)
+	border := rl.NewColor(gold[0]/2, gold[1]/2, gold[2]/2, 255)
+	if activeTreeIdx == researchTabIdx {
+		fill = rl.NewColor(gold[0]/4, gold[1]/4, gold[2]/4, 255)
+		border = rl.NewColor(gold[0], gold[1], gold[2], gold[3])
+	} else if rl.CheckCollisionPointRec(mousePos, r) {
+		fill = rl.NewColor(60, 50, 30, 255)
+	}
+	rl.DrawRectangleRec(r, fill)
+	rl.DrawRectangleLinesEx(r, 2, border)
+	lbl := fmt.Sprintf("Research (%d RP)", meta.ResearchPoints)
+	lw := rl.MeasureText(lbl, 16)
+	rl.DrawText(lbl, int32(r.X+r.Width/2)-lw/2, int32(r.Y)+10, 16, rl.Gold)
+}
+
+func drawActiveTreeGrid(mousePos rl.Vector2) {
+	tree := TreesInOrder[activeTreeIdx]
+	nodes := TalentsByTree[tree]
+
+	// 1) Tier dividers (drawn first, behind everything).
+	drawTierDividers(tree)
+
+	// 2) Hover detection — find which node the mouse is over so we know
+	// which prereq chain to highlight.
+	hoverID := ""
+	for _, n := range nodes {
+		if rl.CheckCollisionPointRec(mousePos, nodeRect(n)) {
+			hoverID = n.ID
+			break
+		}
+	}
+	prereqChain := buildPrereqChain(hoverID)
+
+	// 3) Prereq lines — straight verticals from parent to child slot.
+	drawPrereqLines(tree, prereqChain)
+
+	// 4) Nodes themselves.
+	for _, n := range nodes {
+		drawTalentNode(n, mousePos, prereqChain)
+	}
+
+	// 5) Mutex "OR" badges — drawn last so they sit on top of any line
+	// that might pass behind them between the two half-cards.
+	drawMutexBadges(tree)
+}
+
+// drawTierDividers renders horizontal divider lines + tier labels showing
+// each tier's point requirement and current open/locked state.
+func drawTierDividers(tree string) {
+	spent := pointsSpentInTree(tree)
+	for tier := 1; tier <= 7; tier++ {
+		// Skip tiers with no nodes in this tree.
+		hasNode := false
+		for _, n := range TalentsByTree[tree] {
+			if n.Tier == tier {
+				hasNode = true
+				break
+			}
+		}
+		if !hasNode {
+			continue
+		}
+		y := tierDividerY(tier)
+		gate := TierGates[tier-1]
+		open := spent >= gate
+
+		lineCol := rl.NewColor(80, 70, 30, 220)
+		labelCol := rl.NewColor(220, 190, 100, 255)
+		if !open {
+			lineCol = rl.NewColor(70, 50, 50, 220)
+			labelCol = rl.NewColor(160, 110, 110, 255)
+		}
+
+		// Horizontal line.
+		rl.DrawLine(80, int32(y)+12, int32(ScreenWidth)-80, int32(y)+12, lineCol)
+
+		// Centered label box on top of the line.
+		var label string
+		if open {
+			label = fmt.Sprintf("  Tier %d  ", tier)
+		} else {
+			need := gate - spent
+			label = fmt.Sprintf("  Tier %d — need %d more in %s  ", tier, need, tree)
+		}
+		lw := rl.MeasureText(label, 14)
+		labelX := ScreenWidth/2 - lw/2
+		// Cover the line behind the label so it reads cleanly.
+		rl.DrawRectangle(labelX-4, int32(y)+4, lw+8, 18, rl.NewColor(10, 10, 20, 255))
+		rl.DrawText(label, labelX, int32(y)+6, 14, labelCol)
+	}
+}
+
+// drawPrereqLines draws straight vertical lines from each node up to its
+// prereq slot in the row above. Because every prereq is now in the same
+// column one tier up, lines are purely vertical — no diagonals, no
+// cross-tier spans. For OR-prereqs (mutex parents), one line is drawn
+// from the mutex slot center down to the child.
+func drawPrereqLines(tree string, prereqChain map[string]bool) {
+	drawnPrereq := map[string]bool{} // dedupe: one line per (parent slot → child)
+	for _, n := range TalentsByTree[tree] {
+		if len(n.Prereqs) == 0 {
+			continue
+		}
+		// Resolve the prereq's slot. If multiple prereqs (mutex OR-pair),
+		// they share Tier+Col so any of them gives the right slot center.
+		req := TalentRegistry[n.Prereqs[0]]
+		if req == nil {
+			continue
+		}
+		// Dedup: identify the line by (parent slot, child id).
+		key := fmt.Sprintf("%d_%d_%s", req.Tier, req.Col, n.ID)
+		if drawnPrereq[key] {
+			continue
+		}
+		drawnPrereq[key] = true
+
+		// Compute endpoints. Use slot centers (col-aligned) so mutex pair
+		// half-cards still produce a clean centered vertical line.
+		ax := slotCenterX(tree, req.Tier, req.Col)
+		bx := slotCenterX(tree, n.Tier, n.Col)
+		// y of the bottom-edge of the prereq tier row.
+		gridY := float32(talentLabHeaderH + tierLabelH)
+		yTop := gridY + float32(req.Tier-1)*tierRowH + tierVGap + nodeH
+		yBot := gridY + float32(n.Tier-1)*tierRowH + tierVGap
+
+		// Determine line state for color.
+		// "Active path" = at least one prereq is allocated AND child is allocated.
+		anyParentTaken := false
+		for _, reqID := range n.Prereqs {
+			if rankOf(reqID) > 0 {
+				anyParentTaken = true
+				break
+			}
+		}
+		childTaken := rankOf(n.ID) > 0
+
+		lineCol := rl.NewColor(70, 70, 90, 180)
+		thickness := float32(3)
+		if anyParentTaken && childTaken {
+			lineCol = rl.NewColor(180, 160, 80, 230)
+		} else if anyParentTaken {
+			lineCol = rl.NewColor(110, 110, 150, 220)
+		}
+		// Highlight if hovered chain.
+		anyOnChain := prereqChain[n.ID]
+		for _, reqID := range n.Prereqs {
+			if prereqChain[reqID] {
+				anyOnChain = true
+				break
+			}
+		}
+		if anyOnChain && prereqChain[n.ID] {
+			lineCol = rl.NewColor(255, 220, 100, 255)
+			thickness = 4
+		}
+
+		// If parent and child are in different columns (rare — only if a
+		// future node violates the layout rule), draw an L-bend rather
+		// than a diagonal: down from parent to mid-y, across to child col,
+		// then down to child top.
+		if ax == bx {
+			rl.DrawLineEx(rl.Vector2{X: ax, Y: yTop}, rl.Vector2{X: bx, Y: yBot}, thickness, lineCol)
+		} else {
+			midY := (yTop + yBot) / 2
+			rl.DrawLineEx(rl.Vector2{X: ax, Y: yTop}, rl.Vector2{X: ax, Y: midY}, thickness, lineCol)
+			rl.DrawLineEx(rl.Vector2{X: ax, Y: midY}, rl.Vector2{X: bx, Y: midY}, thickness, lineCol)
+			rl.DrawLineEx(rl.Vector2{X: bx, Y: midY}, rl.Vector2{X: bx, Y: yBot}, thickness, lineCol)
+		}
+
+		// Draw a small arrowhead at the child end pointing down.
+		drawArrowhead(bx, yBot, thickness, lineCol)
+	}
+}
+
+// drawArrowhead draws a small downward-pointing triangle at (x, y).
+func drawArrowhead(x, y, thickness float32, col rl.Color) {
+	size := 5 + thickness // scale with line thickness for visibility
+	rl.DrawTriangle(
+		rl.Vector2{X: x, Y: y},
+		rl.Vector2{X: x - size, Y: y - size},
+		rl.Vector2{X: x + size, Y: y - size},
+		col,
+	)
+}
+
+// drawMutexBadges renders the small "OR" pill between mutex pair members.
+func drawMutexBadges(tree string) {
+	drawn := map[string]bool{}
+	for _, n := range TalentsByTree[tree] {
+		if n.MutexGroupID == "" || drawn[n.MutexGroupID] {
+			continue
+		}
+		group := mutexGroupMembers(tree, n.MutexGroupID)
+		if len(group) < 2 {
+			continue
+		}
+		drawn[n.MutexGroupID] = true
+		left := nodeRect(group[0])
+		right := nodeRect(group[1])
+		// Badge sits in the gap between the two halves.
+		bx := left.X + left.Width
+		bw := right.X - bx
+		by := left.Y + left.Height/2 - 9
+		// Tinted background pill.
+		rl.DrawRectangleRounded(
+			rl.Rectangle{X: bx + 2, Y: by, Width: bw - 4, Height: 18},
+			0.4, 6, rl.NewColor(200, 70, 70, 220),
+		)
+		// "OR" text centered.
+		lbl := "OR"
+		lw := rl.MeasureText(lbl, 12)
+		rl.DrawText(lbl, int32(bx+(bw-float32(lw))/2), int32(by)+3, 12, rl.White)
+	}
+}
+
+// buildPrereqChain returns the set of node IDs that are ancestors (transitively)
+// of the given hoverID, plus the hover node itself. Used to highlight the path
+// the player needs to take to reach a deep node.
+func buildPrereqChain(hoverID string) map[string]bool {
+	out := map[string]bool{}
+	if hoverID == "" {
+		return out
+	}
+	stack := []string{hoverID}
+	for len(stack) > 0 {
+		id := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if out[id] {
+			continue
+		}
+		out[id] = true
+		n := TalentRegistry[id]
+		if n == nil {
+			continue
+		}
+		for _, reqID := range n.Prereqs {
+			if !out[reqID] {
+				stack = append(stack, reqID)
+			}
+		}
+	}
+	return out
+}
+
+func drawTalentNode(n *TalentNode, mousePos rl.Vector2, prereqChain map[string]bool) {
+	r := nodeRect(n)
+	rank := rankOf(n.ID)
+	canAlloc, _ := CanAllocate(n.ID)
+	hovered := rl.CheckCollisionPointRec(mousePos, r)
+	if hovered {
+		hoveredNodeID = n.ID
+	}
+
+	// Card fill / border based on state.
+	var fill, border rl.Color
+	switch {
+	case rank >= n.MaxRank:
+		accent := TreeAccentColors[n.Tree]
+		fill = rl.NewColor(accent[0]/2, accent[1]/2, accent[2]/2, 255)
+		border = rl.NewColor(accent[0], accent[1], accent[2], 255)
+	case rank > 0:
+		accent := TreeAccentColors[n.Tree]
+		fill = rl.NewColor(accent[0]/3, accent[1]/3, accent[2]/3, 255)
+		border = rl.NewColor(accent[0]*3/4, accent[1]*3/4, accent[2]*3/4, 255)
+	case canAlloc:
+		fill = rl.NewColor(38, 38, 52, 255)
+		border = rl.NewColor(180, 180, 200, 255)
+	default:
+		fill = rl.NewColor(22, 22, 32, 255)
+		border = rl.NewColor(70, 70, 80, 255)
+	}
+	if hovered && canAlloc {
+		fill = rl.NewColor(60, 60, 80, 255)
+		border = rl.White
+	}
+	// Faint glow for nodes on the hovered prereq chain.
+	if prereqChain[n.ID] && !hovered {
+		// Bump border up.
+		border = rl.NewColor(255, 220, 100, 255)
+	}
+
+	rl.DrawRectangleRec(r, fill)
+	thickness := float32(1.5)
+	if n.Kind == NodeKeystone || n.Kind == NodeUnlock {
+		thickness = 2.5
+	}
+	rl.DrawRectangleLinesEx(r, thickness, border)
+
+	// Side-stripe color tag.
+	stripeRect := rl.Rectangle{X: r.X, Y: r.Y, Width: stripeW, Height: r.Height}
+	rl.DrawRectangleRec(stripeRect, nodeKindColor(n.Kind))
+
+	// Header: name (left) + rank pill (right).
+	textX := int32(r.X) + stripeW + 6
+	nameCol := rl.White
+	if !canAlloc && rank == 0 {
+		nameCol = rl.NewColor(140, 140, 150, 255)
+	}
+	// Mutex half-cards have ~85px width vs full 200px, so we trim more
+	// aggressively and drop the rank pill (replaced with a small dot).
+	isMutexHalf := n.MutexGroupID != ""
+	nameMaxLen := 22
+	descMaxLen := 32
+	if isMutexHalf {
+		nameMaxLen = 11
+		descMaxLen = 16
+	}
+	rl.DrawText(trimLabel(n.Name, nameMaxLen), textX, int32(r.Y)+6, 14, nameCol)
+
+	// Rank pill in the top-right (skip on mutex halves to save space).
+	if !isMutexHalf {
+		rankTxt := fmt.Sprintf("%d/%d", rank, n.MaxRank)
+		rw := rl.MeasureText(rankTxt, 12)
+		pillX := int32(r.X+r.Width) - rw - 12
+		pillY := int32(r.Y) + 6
+		pillBg := rl.NewColor(20, 20, 30, 220)
+		if rank > 0 {
+			pillBg = rl.NewColor(50, 80, 50, 240)
+		}
+		rl.DrawRectangle(pillX-4, pillY-2, rw+8, 16, pillBg)
+		rl.DrawText(rankTxt, pillX, pillY, 12, rl.White)
+	} else if rank > 0 {
+		// Tiny "taken" indicator dot for mutex halves.
+		rl.DrawCircle(int32(r.X+r.Width)-10, int32(r.Y)+12, 5, rl.Green)
+	}
+
+	// Effect line preview.
+	if n.Describe != nil {
+		previewRank := rank
+		if previewRank == 0 {
+			previewRank = 1
+		}
+		desc := n.Describe(previewRank)
+		rl.DrawText(trimLabel(desc, descMaxLen), textX, int32(r.Y)+30, 11, rl.NewColor(180, 180, 195, 255))
+	}
+
+	// Footer: kind tag + small status. Skip footer kind label on mutex
+	// halves — the side-stripe + sky-blue color already implies KEYSTONE.
+	if !isMutexHalf {
+		kindLabel := ""
+		switch n.Kind {
+		case NodeUnlock:
+			kindLabel = "UNLOCK"
+		case NodeKeystone:
+			kindLabel = "KEYSTONE"
+		case NodeSynergy:
+			kindLabel = "SYNERGY"
+		case NodeScaling:
+			kindLabel = "SCALING"
+		}
+		rl.DrawText(kindLabel, textX, int32(r.Y+r.Height)-16, 10, nodeKindColor(n.Kind))
+	}
+
+	// Maxed checkmark (full cards only).
+	if !isMutexHalf && rank >= n.MaxRank && rank > 0 {
+		rl.DrawText("MAX", int32(r.X+r.Width)-30, int32(r.Y+r.Height)-14, 10, rl.Green)
+	}
+}
+
+func drawBackButton(mousePos rl.Vector2) {
+	r := backButtonRect()
+	backLocked := meta.TutorialStep == TutorialSpendTP
+
+	col := rl.Color(rl.Gray)
+	if backLocked {
+		col = rl.NewColor(50, 50, 50, 255)
+	} else if meta.TutorialStep == TutorialBackFromResearch {
+		if int(rl.GetTime()*4)%2 == 0 {
+			col = rl.NewColor(30, 130, 30, 255)
+		} else {
+			col = rl.NewColor(20, 80, 20, 255)
+		}
+	} else if rl.CheckCollisionPointRec(mousePos, r) {
+		col = rl.NewColor(90, 90, 90, 255)
+	}
+
+	rl.DrawRectangleRec(r, col)
+	rl.DrawRectangleLinesEx(r, 1, rl.White)
+	lbl := "BACK"
+	if backLocked {
+		lbl = "BACK (spend a TP first)"
+	}
+	rl.DrawText(lbl, int32(r.X+r.Width/2)-rl.MeasureText(lbl, 16)/2, int32(r.Y)+17, 16, rl.White)
+}
+
+func drawNodeTooltip(nodeID string, mouse rl.Vector2) {
+	n := TalentRegistry[nodeID]
+	if n == nil {
+		return
+	}
+	rank := rankOf(n.ID)
+	lines := []string{fmt.Sprintf("%s  [%s]  (%d/%d)", n.Name, n.Kind, rank, n.MaxRank)}
+	if n.Describe != nil {
+		if rank > 0 {
+			lines = append(lines, "Current: "+n.Describe(rank))
+		}
+		if rank < n.MaxRank {
+			lines = append(lines, "Next: "+n.Describe(rank+1))
+		}
+	}
+
+	// Mutex info.
+	if len(n.Exclusive) > 0 {
+		for _, ex := range n.Exclusive {
+			exNode := TalentRegistry[ex]
+			if exNode == nil {
+				continue
+			}
+			tag := "Mutex with: " + exNode.Name
+			if rankOf(ex) > 0 {
+				tag = "BLOCKED by: " + exNode.Name + " (already taken)"
+			}
+			lines = append(lines, tag)
+		}
+	}
+
+	if !isTierUnlocked(n) {
+		need := TierGates[n.Tier-1] - pointsSpentInTree(n.Tree)
+		lines = append(lines, fmt.Sprintf("Locked: need %d more in %s tree", need, n.Tree))
+	} else if !arePrereqsMet(n) {
+		lines = append(lines, "Locked: prereqs not met")
+	}
+	lines = append(lines, fmt.Sprintf("(%s . Tier %d)", n.Tree, n.Tier))
+	if rank > 0 && !HasSaveFile() {
+		lines = append(lines, "Right-click: refund 1 rank")
+	}
+
+	fontSize := int32(13)
+	maxW := int32(0)
+	for _, l := range lines {
+		w := rl.MeasureText(l, fontSize)
+		if w > maxW {
+			maxW = w
+		}
+	}
+	pad := int32(10)
+	lineH := int32(16)
+	rw := maxW + pad*2
+	rh := lineH*int32(len(lines)) + pad
+	drawX := int32(mouse.X) + 16
+	drawY := int32(mouse.Y) + 16
+	if drawX+rw > ScreenWidth {
+		drawX = ScreenWidth - rw - 4
+	}
+	if drawY+rh > ScreenHeight {
+		drawY = int32(mouse.Y) - rh - 10
+	}
+	rl.DrawRectangle(drawX, drawY, rw, rh, rl.NewColor(10, 10, 20, 240))
+	rl.DrawRectangleLines(drawX, drawY, rw, rh, rl.Gold)
+	for i, l := range lines {
+		col := rl.White
+		if i == 0 {
+			col = rl.Yellow
+		}
+		rl.DrawText(l, drawX+pad, drawY+pad/2+int32(i)*lineH, fontSize, col)
+	}
+}
+
+func trimLabel(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-1] + "~"
+}
+
+// ── Research panel (RP-cost permanent upgrades) ──────────────────────────
+
+// researchPanelLayoutY returns the Y position of the i'th research card.
+func researchPanelLayoutY(i int) float32 {
+	const cardH = 96
+	const cardGap = 14
+	startY := float32(talentLabHeaderH + 30)
+	return startY + float32(i)*(cardH+cardGap) - researchScrollY
+}
+
+// researchCardRect returns the screen rect for the i'th research card.
+func researchCardRect(i int) rl.Rectangle {
+	const cardW = 700
+	const cardH = 96
+	x := float32(ScreenWidth)/2 - cardW/2
+	return rl.Rectangle{X: x, Y: researchPanelLayoutY(i), Width: cardW, Height: cardH}
+}
+
+// researchBuyButtonRect returns the rect of the BUY button on the i'th card.
+func researchBuyButtonRect(i int) rl.Rectangle {
+	card := researchCardRect(i)
+	const btnW = 150
+	const btnH = 36
+	return rl.Rectangle{
+		X:      card.X + card.Width - btnW - 14,
+		Y:      card.Y + card.Height/2 - btnH/2,
+		Width:  btnW,
+		Height: btnH,
+	}
+}
+
+// handleResearchPanelInput processes clicks on BUY buttons and scroll input
+// while the Research tab is active.
+func handleResearchPanelInput(mousePos rl.Vector2) {
+	// Mouse-wheel scroll. Capped so the catalog can't scroll off the top
+	// or far below its content.
+	wheel := rl.GetMouseWheelMove()
+	if wheel != 0 {
+		researchScrollY -= wheel * 30
+		if researchScrollY < 0 {
+			researchScrollY = 0
+		}
+		const cardH = 96
+		const cardGap = 14
+		maxScroll := float32(len(researchCatalog))*float32(cardH+cardGap) -
+			float32(ScreenHeight-talentLabHeaderH-talentLabFooterH)
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+		if researchScrollY > maxScroll {
+			researchScrollY = maxScroll
+		}
+	}
+
+	// BUY button clicks.
 	if !rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
 		return
 	}
-	mousePos := rl.GetMousePosition()
-
-	lay := calcResearchLayout()
-	actives := buildTalentList()
-	passives := buildPassiveTalentList()
-
-	for i, t := range actives {
-		col := i % 2
-		row := i / 2
-		x := lay.originX + float32(col)*(lay.cardW+lay.colGap)
-		y := float32(researchMenuHeaderH) + float32(row)*lay.cardH - researchScrollY
-
-		unlockRect := rl.Rectangle{X: x, Y: y, Width: lay.cardW, Height: 40}
-		if rl.CheckCollisionPointRec(mousePos, unlockRect) {
-			if meta.TutorialStep == TutorialBuyAbility && t.Name != AbilityRapidFire {
-				continue
+	if HasSaveFile() {
+		// Don't allow purchases mid-run.
+		return
+	}
+	for i, e := range researchCatalog {
+		btn := researchBuyButtonRect(i)
+		if !rl.CheckCollisionPointRec(mousePos, btn) {
+			continue
+		}
+		// Resolve cost + ownership for this entry.
+		switch e.kind {
+		case "rank":
+			cur := e.getRank()
+			if e.maxRank > 0 && cur >= e.maxRank {
+				return // already maxed
 			}
-			if meta.TutorialStep == TutorialEquipAbility && t.Name != AbilityRapidFire {
-				continue
+			cost := researchEntryRankCost(e, cur)
+			if meta.ResearchPoints < cost {
+				return // can't afford
 			}
-			if !*t.Unlocked {
-				if meta.ResearchPoints >= t.Cost {
-					playButtonSound()
-					meta.ResearchPoints -= t.Cost
-					*t.Unlocked = true
-					if meta.TutorialStep == TutorialBuyAbility && t.Name == AbilityRapidFire {
-						meta.TutorialStep = TutorialEquipAbility
-						SaveMetaProg()
-					}
-				}
-			} else if !HasSaveFile() {
-				toggleEquip(t.Name)
-				// After equipping, move to the branch-pick step so the player
-				// learns about specialisations before enabling AUTO.
-				if meta.TutorialStep == TutorialEquipAbility && t.Name == AbilityRapidFire {
-					meta.TutorialStep = TutorialPickBranch
-					SaveMetaProg()
-				}
+			meta.ResearchPoints -= cost
+			e.setRank(cur + 1)
+			playButtonSound()
+			SaveMetaProg()
+		case "toggle":
+			if e.isOwned() {
+				return // already owned
+			}
+			if meta.ResearchPoints < e.flatCost {
+				return
+			}
+			meta.ResearchPoints -= e.flatCost
+			e.setOwned(true)
+			playButtonSound()
+			SaveMetaProg()
+		}
+		return
+	}
+}
+
+// drawResearchPanel renders the catalog of RP-cost permanent upgrades.
+func drawResearchPanel(mousePos rl.Vector2) {
+	for i, e := range researchCatalog {
+		card := researchCardRect(i)
+		hovered := rl.CheckCollisionPointRec(mousePos, card)
+
+		// Card background.
+		fill := rl.NewColor(28, 26, 18, 255)
+		border := rl.NewColor(120, 100, 50, 255)
+		if hovered {
+			fill = rl.NewColor(40, 36, 22, 255)
+			border = rl.Gold
+		}
+		rl.DrawRectangleRec(card, fill)
+		rl.DrawRectangleLinesEx(card, 2, border)
+
+		// Side stripe in gold (matches the tab styling).
+		stripeRect := rl.Rectangle{X: card.X, Y: card.Y, Width: stripeW, Height: card.Height}
+		rl.DrawRectangleRec(stripeRect, rl.Gold)
+
+		textX := int32(card.X) + stripeW + 14
+		rl.DrawText(e.name, textX, int32(card.Y)+12, 18, rl.White)
+		rl.DrawText(e.description, textX, int32(card.Y)+38, 13, rl.NewColor(190, 190, 200, 255))
+
+		// State indicator (rank progress or owned flag).
+		var statusText string
+		switch e.kind {
+		case "rank":
+			cur := e.getRank()
+			if e.maxRank > 0 {
+				statusText = fmt.Sprintf("Rank %d / %d", cur, e.maxRank)
+			} else {
+				statusText = fmt.Sprintf("Rank %d", cur)
+			}
+		case "toggle":
+			if e.isOwned() {
+				statusText = "OWNED"
+			} else {
+				statusText = "Not yet owned"
 			}
 		}
+		rl.DrawText(statusText, textX, int32(card.Y)+62, 12, rl.NewColor(220, 200, 120, 255))
 
-		if *t.Unlocked && *t.Branch == "" && !HasSaveFile() {
-			// Block branch selection before we reach the pick-branch tutorial step,
-			// and block non-RapidFire branches even during that step.
-			branchClickLocked :=
-				(meta.TutorialStep == TutorialBuyAbility ||
-					meta.TutorialStep == TutorialEquipAbility) ||
-				(meta.TutorialStep == TutorialPickBranch && t.Name != AbilityRapidFire)
-			if branchClickLocked {
-				continue
-			}
-
-			branchARect := rl.Rectangle{X: x, Y: y + 44, Width: lay.branchW, Height: 36}
-			branchBRect := rl.Rectangle{X: x + lay.branchW + 8, Y: y + 44, Width: lay.branchW, Height: 36}
-			if rl.CheckCollisionPointRec(mousePos, branchARect) && meta.ResearchPoints >= t.BranchCost {
-				playButtonSound()
-				meta.ResearchPoints -= t.BranchCost
-				*t.Branch = t.BranchAValue
-				if meta.TutorialStep == TutorialPickBranch {
-					meta.TutorialStep = TutorialBackFromResearch
-				}
-				SaveMetaProg()
-			}
-			if rl.CheckCollisionPointRec(mousePos, branchBRect) && meta.ResearchPoints >= t.BranchCost {
-				playButtonSound()
-				meta.ResearchPoints -= t.BranchCost
-				*t.Branch = t.BranchBValue
-				if meta.TutorialStep == TutorialPickBranch {
-					meta.TutorialStep = TutorialBackFromResearch
-				}
-				SaveMetaProg()
-			}
-		}
+		// BUY button — state and label depend on entry kind + state.
+		btn := researchBuyButtonRect(i)
+		btnHovered := rl.CheckCollisionPointRec(mousePos, btn)
+		drawResearchBuyButton(e, btn, btnHovered)
 	}
 
-	passiveStartY := float32(researchMenuHeaderH) + 3*lay.cardH + 20 - researchScrollY
-	for i, t := range passives {
-		var x, y float32
-		if len(passives) > 1 && i == len(passives)-1 && len(passives)%2 == 1 {
-			row := i / 2
-			x = float32(ScreenWidth)/2 - lay.cardW/2
-			y = passiveStartY + float32(row)*lay.cardH
+	// "Run in progress" warning if a save file exists.
+	if HasSaveFile() {
+		msg := "Cannot purchase research while a run is active."
+		mw := rl.MeasureText(msg, 14)
+		rl.DrawText(msg, ScreenWidth/2-mw/2, ScreenHeight-talentLabFooterH-30, 14,
+			rl.NewColor(220, 130, 130, 255))
+	}
+}
+
+// drawResearchBuyButton renders the right-side action button on a card,
+// adapting its label/color to the entry's purchasable state.
+func drawResearchBuyButton(e researchEntry, btn rl.Rectangle, hovered bool) {
+	var label string
+	var enabled bool
+	var maxed bool
+	owned := false
+
+	switch e.kind {
+	case "rank":
+		cur := e.getRank()
+		if e.maxRank > 0 && cur >= e.maxRank {
+			maxed = true
+			label = "MAXED"
 		} else {
-			col := i % 2
-			row := i / 2
-			x = lay.originX + float32(col)*(lay.cardW+lay.colGap)
-			y = passiveStartY + float32(row)*lay.cardH
+			cost := researchEntryRankCost(e, cur)
+			label = fmt.Sprintf("BUY (%d RP)", cost)
+			enabled = !HasSaveFile() && meta.ResearchPoints >= cost
 		}
-
-		unlockRect := rl.Rectangle{X: x, Y: y, Width: lay.cardW, Height: 40}
-		if rl.CheckCollisionPointRec(mousePos, unlockRect) {
-			if !*t.Unlocked && meta.ResearchPoints >= t.Cost {
-				playButtonSound()
-				meta.ResearchPoints -= t.Cost
-				*t.Unlocked = true
-			}
-		}
-
-		if *t.Unlocked && *t.Branch == "" && !HasSaveFile() {
-			branchARect := rl.Rectangle{X: x, Y: y + 44, Width: lay.branchW, Height: 36}
-			branchBRect := rl.Rectangle{X: x + lay.branchW + 8, Y: y + 44, Width: lay.branchW, Height: 36}
-			if rl.CheckCollisionPointRec(mousePos, branchARect) && meta.ResearchPoints >= t.BranchCost {
-				playButtonSound()
-				meta.ResearchPoints -= t.BranchCost
-				*t.Branch = t.BranchAValue
-				SaveMetaProg()
-			}
-			if rl.CheckCollisionPointRec(mousePos, branchBRect) && meta.ResearchPoints >= t.BranchCost {
-				playButtonSound()
-				meta.ResearchPoints -= t.BranchCost
-				*t.Branch = t.BranchBValue
-				SaveMetaProg()
-			}
+	case "toggle":
+		if e.isOwned() {
+			owned = true
+			label = "OWNED"
+		} else {
+			label = fmt.Sprintf("BUY (%d RP)", e.flatCost)
+			enabled = !HasSaveFile() && meta.ResearchPoints >= e.flatCost
 		}
 	}
 
-	passiveRows2 := (len(passives) + 1) / 2
-	utilY := passiveStartY + float32(passiveRows2)*lay.cardH
-	speedRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 125, Y: utilY, Width: 250, Height: 40}
-	if rl.CheckCollisionPointRec(mousePos, speedRect) && !meta.Speed3xUnlocked && meta.ResearchPoints >= 200 {
-		meta.ResearchPoints -= 200
-		meta.Speed3xUnlocked = true
-		playButtonSound()
+	bg := rl.NewColor(60, 50, 28, 255)
+	textCol := rl.NewColor(180, 180, 180, 255)
+	switch {
+	case maxed, owned:
+		bg = rl.NewColor(40, 70, 40, 255)
+		textCol = rl.NewColor(180, 230, 180, 255)
+	case enabled && hovered:
+		bg = rl.NewColor(110, 95, 50, 255)
+		textCol = rl.White
+	case enabled:
+		bg = rl.NewColor(80, 65, 35, 255)
+		textCol = rl.White
 	}
-	sprintRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 125, Y: utilY + 50, Width: 250, Height: 40}
-	if rl.CheckCollisionPointRec(mousePos, sprintRect) && !meta.OpeningSprintUnlocked && meta.ResearchPoints >= 500 {
-		meta.ResearchPoints -= 500
-		meta.OpeningSprintUnlocked = true
-		playButtonSound()
+	rl.DrawRectangleRec(btn, bg)
+	bw := rl.MeasureText(label, 14)
+	rl.DrawText(label, int32(btn.X+btn.Width/2)-bw/2, int32(btn.Y)+11, 14, textCol)
+	rl.DrawRectangleLinesEx(btn, 1, rl.Gold)
+}
+
+// ── Tutorial overlay ─────────────────────────────────────────────────────
+
+func drawResearchTutorialOverlay() {
+	switch meta.TutorialStep {
+	case TutorialSpendTP:
+		dmgTab := treeTabRect(0)
+		drawTutorialBubble(
+			dmgTab.X-20, dmgTab.Y+48,
+			"SPEND A TALENT POINT",
+			[]string{
+				"You have 3 Talent Points.",
+				"Click the DAMAGE tab, then spend",
+				"one point on Rapid Fire (gold stripe)",
+				"to unlock your first ability.",
+				"Tip: right-click to refund a rank.",
+			}, rl.Purple)
+		if int(rl.GetTime()*4)%2 == 0 {
+			rl.DrawRectangleLinesEx(dmgTab, 3, rl.Yellow)
+		}
+
+	case TutorialBackFromResearch:
+		back := backButtonRect()
+		drawTutorialBubble(
+			back.X-10, back.Y-150,
+			"GREAT WORK!",
+			[]string{
+				"Rapid Fire is unlocked. It will",
+				"appear in your action bar in-game.",
+				"You can toggle AUTO from there.",
+				"Click BACK to head to the gear shop.",
+			}, rl.Gold)
+		if int(rl.GetTime()*4)%2 == 0 {
+			rl.DrawRectangleLinesEx(back, 3, rl.Gold)
+		}
+
+	case TutorialGoToResearch:
+		if math.Mod(float64(rl.GetTime())*4, 2) < 1 {
+			rl.DrawRectangleLines(0, 0, ScreenWidth, ScreenHeight, rl.Yellow)
+		}
 	}
 }
 
-func toggleEquip(name string) {
-	for i, eqAbil := range meta.EquippedAbilities {
-		if eqAbil == name {
-			meta.EquippedAbilities[i] = ""
-			return
-		}
-	}
-	for i, eq := range meta.EquippedAbilities {
-		if eq == "" {
-			meta.EquippedAbilities[i] = name
-			return
-		}
-	}
-}
+// ── Respec ───────────────────────────────────────────────────────────────
 
 func performRespec() {
-	meta.EquippedAbilities = [4]string{"", "", "", ""}
-	refund := 0
+	RefundAllTalents()
 
-	refundTalent := func(unlocked *bool, branch *string, baseCost, branchCost int) {
-		if *unlocked {
-			refund += baseCost
-			*unlocked = false
-		}
-		if *branch != "" {
-			refund += branchCost
-			*branch = ""
-		}
-	}
-
-	refundTalent(&meta.RapidFireUnlocked, &meta.RapidFireBranch, 25, BranchCostRapidFire)
-	refundTalent(&meta.DeathRayUnlocked, &meta.DeathRayBranch, 50, BranchCostDeathRay)
-	refundTalent(&meta.GravityFieldUnlocked, &meta.GravityBranch, 75, BranchCostGravity)
-	refundTalent(&meta.BombardmentUnlocked, &meta.BombardBranch, 75, BranchCostBombard)
-	refundTalent(&meta.StaticDischargeUnlocked, &meta.StaticBranch, 60, BranchCostStatic)
-	refundTalent(&meta.ChronoFieldUnlocked, &meta.ChronoBranch, 100, BranchCostChrono)
-	refundTalent(&meta.MinesUnlocked, &meta.MinesBranch, 150, BranchCostMines)
-	refundTalent(&meta.SatellitesUnlocked, &meta.SatellitesBranch, 150, BranchCostSatellites)
-	refundTalent(&meta.ShockwaveUnlocked, &meta.ShockwaveBranch, 150, BranchCostShockwave)
-
-	if meta.Speed3xUnlocked {
-		refund += 200
-		meta.Speed3xUnlocked = false
-	}
-	if meta.OpeningSprintUnlocked {
-		refund += 500
-		meta.OpeningSprintUnlocked = false
-	}
-
-	refund += calcRefund(meta.DmgLevel, 5, 5)
+	// Legacy stat-level investment refunds.
+	refund := calcRefund(meta.DmgLevel, 5, 5)
 	meta.DmgLevel = 0
 	refund += calcRefund(meta.ASLevel, 5, 5)
 	meta.ASLevel = 0
@@ -460,7 +1214,17 @@ func performRespec() {
 	refund += calcRefund(meta.ChainCountLevel, 25, 25)
 	meta.ChainCountLevel = 0
 
+	if meta.Speed3xUnlocked {
+		refund += 200
+		meta.Speed3xUnlocked = false
+	}
+	if meta.OpeningSprintUnlocked {
+		refund += 500
+		meta.OpeningSprintUnlocked = false
+	}
+
 	meta.ResearchPoints += refund
+	SaveMetaProg()
 }
 
 func calcRefund(lvl, base, inc int) int {
@@ -469,563 +1233,4 @@ func calcRefund(lvl, base, inc int) int {
 		sum += base + (i * inc)
 	}
 	return sum
-}
-
-// drawTalentEntry renders the unlock button and branch picker for one talent.
-// Returns tooltip text if the mouse is hovering something informative.
-func drawTalentEntry(t talentDef, x, y float32, mousePos rl.Vector2, isTutorialLocked bool, lay researchLayout) string {
-	tooltip := ""
-	isEquipped := false
-	for _, eq := range meta.EquippedAbilities {
-		if eq == t.Name {
-			isEquipped = true
-			break
-		}
-	}
-
-	// -- Unlock / equip button --
-	unlockRect := rl.Rectangle{X: x, Y: y, Width: lay.cardW, Height: 40}
-	btnColor := rl.DarkGray
-	if *t.Unlocked {
-		if isEquipped {
-			btnColor = rl.NewColor(20, 80, 20, 255)
-		} else {
-			btnColor = rl.NewColor(20, 55, 20, 255)
-		}
-		if HasSaveFile() {
-			if isEquipped {
-				btnColor = rl.NewColor(20, 50, 20, 255)
-			} else {
-				btnColor = rl.NewColor(30, 30, 30, 255)
-			}
-		}
-	} else if !isTutorialLocked && rl.CheckCollisionPointRec(mousePos, unlockRect) && meta.ResearchPoints >= t.Cost {
-		btnColor = rl.NewColor(50, 80, 50, 255)
-	}
-
-	rl.DrawRectangleRec(unlockRect, btnColor)
-	rl.DrawRectangleLinesEx(unlockRect, 1, rl.White)
-
-	labelText := fmt.Sprintf("Unlock %s", t.Name)
-	costText := fmt.Sprintf("%d RP", t.Cost)
-	if *t.Unlocked {
-		if isEquipped {
-			labelText = t.Name + " [E]"
-		} else {
-			labelText = t.Name
-		}
-		costText = ""
-	}
-	rl.DrawText(labelText, int32(x)+8, int32(y)+12, 15, rl.White)
-	if costText != "" {
-		rl.DrawText(costText, int32(x+lay.cardW)-rl.MeasureText(costText, 15)-8, int32(y)+12, 15, rl.Green)
-	}
-
-	// Tutorial highlights
-	if t.Name == AbilityRapidFire {
-		if meta.TutorialStep == TutorialBuyAbility {
-			rl.DrawRectangleLinesEx(unlockRect, 3, rl.Yellow)
-			rl.DrawText("UNLOCK ME!", int32(x)+10, int32(y)-20, 16, rl.Yellow)
-		} else if meta.TutorialStep == TutorialEquipAbility {
-			rl.DrawRectangleLinesEx(unlockRect, 3, rl.Green)
-			rl.DrawText("EQUIP ME!", int32(x)+10, int32(y)-20, 16, rl.Green)
-		}
-	}
-
-	if rl.CheckCollisionPointRec(mousePos, unlockRect) {
-		if *t.Unlocked {
-			tooltip = fmt.Sprintf("%s -- choose a talent branch below", t.Name)
-		} else {
-			tooltip = fmt.Sprintf("Cost: %d RP -- %s / %s", t.Cost, t.BranchAName, t.BranchBName)
-		}
-	}
-
-	// -- Branch area --
-	if *t.Unlocked {
-		// Determine if branches should be locked for this entry during tutorial.
-		branchTutLocked := isTutorialLocked ||
-			(meta.TutorialStep == TutorialBuyAbility ||
-				meta.TutorialStep == TutorialEquipAbility) ||
-			(meta.TutorialStep == TutorialPickBranch && t.Name != AbilityRapidFire)
-
-		if *t.Branch == "" {
-			// No branch chosen yet
-			if HasSaveFile() {
-				rl.DrawText("Branch locked during run", int32(x)+4, int32(y)+46, 13, rl.Gray)
-			} else if branchTutLocked {
-				// Tutorial hasn't reached the branch-pick step yet -- show dimmed placeholder.
-				rl.DrawText("Branch locked", int32(x)+4, int32(y)+46, 13, rl.Gray)
-			} else {
-				branchARect := rl.Rectangle{X: x, Y: y + 44, Width: lay.branchW, Height: 36}
-				branchBRect := rl.Rectangle{X: x + lay.branchW + 8, Y: y + 44, Width: lay.branchW, Height: 36}
-				canAfford := meta.ResearchPoints >= t.BranchCost
-
-				colA := rl.NewColor(30, 30, 80, 255)
-				colB := rl.NewColor(80, 30, 30, 255)
-				borderA := rl.SkyBlue
-				borderB := rl.Orange
-				if !canAfford {
-					borderA = rl.DarkGray
-					borderB = rl.DarkGray
-				}
-
-				if rl.CheckCollisionPointRec(mousePos, branchARect) {
-					if canAfford {
-						colA = rl.NewColor(50, 50, 140, 255)
-					}
-					tooltip = fmt.Sprintf("[A] %s: %s  (%d RP)", t.BranchAName, t.BranchADesc, t.BranchCost)
-				}
-				if rl.CheckCollisionPointRec(mousePos, branchBRect) {
-					if canAfford {
-						colB = rl.NewColor(140, 50, 50, 255)
-					}
-					tooltip = fmt.Sprintf("[B] %s: %s  (%d RP)", t.BranchBName, t.BranchBDesc, t.BranchCost)
-				}
-
-				rl.DrawRectangleRec(branchARect, colA)
-				rl.DrawRectangleLinesEx(branchARect, 2, borderA)
-				rl.DrawRectangleRec(branchBRect, colB)
-				rl.DrawRectangleLinesEx(branchBRect, 2, borderB)
-
-				rl.DrawText("[A] "+trimLabel(t.BranchAName, 13), int32(x)+4, int32(y)+51, 13, rl.White)
-				rl.DrawText("[B] "+trimLabel(t.BranchBName, 13), int32(x+lay.branchW+8)+4, int32(y)+51, 13, rl.White)
-
-				costLabel := fmt.Sprintf("%d RP", t.BranchCost)
-				costColor := rl.Gold
-				if !canAfford {
-					costColor = rl.Red
-				}
-				// Draw cost on each button individually rather than a shared "each" label.
-				rl.DrawText(costLabel, int32(x)+4, int32(y)+66, 12, costColor)
-				rl.DrawText(costLabel, int32(x+lay.branchW+8)+4, int32(y)+66, 12, costColor)
-			}
-		} else {
-			// Branch already chosen -- show both options side by side.
-			// Chosen is highlighted; unchosen is visible but dimmed. Neither is clickable.
-			chosenA := *t.Branch == t.BranchAValue
-			branchARect := rl.Rectangle{X: x, Y: y + 44, Width: lay.branchW, Height: 36}
-			branchBRect := rl.Rectangle{X: x + lay.branchW + 8, Y: y + 44, Width: lay.branchW, Height: 36}
-
-			var chosenRect, otherRect rl.Rectangle
-			var colChosen, colOther rl.Color
-			var borderChosen, borderOther rl.Color
-			var labelChosen, labelOther string
-			var descChosen, descOther string
-
-			if chosenA {
-				chosenRect = branchARect
-				otherRect = branchBRect
-				colChosen = rl.NewColor(20, 60, 120, 255)
-				borderChosen = rl.SkyBlue
-				labelChosen = "[A] " + trimLabel(t.BranchAName, 13)
-				descChosen = t.BranchADesc
-				colOther = rl.NewColor(25, 20, 20, 200)
-				borderOther = rl.NewColor(60, 60, 60, 200)
-				labelOther = "[B] " + trimLabel(t.BranchBName, 13)
-				descOther = t.BranchBDesc
-			} else {
-				chosenRect = branchBRect
-				otherRect = branchARect
-				colChosen = rl.NewColor(100, 45, 10, 255)
-				borderChosen = rl.Orange
-				labelChosen = "[B] " + trimLabel(t.BranchBName, 13)
-				descChosen = t.BranchBDesc
-				colOther = rl.NewColor(20, 20, 25, 200)
-				borderOther = rl.NewColor(60, 60, 60, 200)
-				labelOther = "[A] " + trimLabel(t.BranchAName, 13)
-				descOther = t.BranchADesc
-			}
-
-			// Unchosen (dimmed)
-			rl.DrawRectangleRec(otherRect, colOther)
-			rl.DrawRectangleLinesEx(otherRect, 1, borderOther)
-			rl.DrawText(labelOther, int32(otherRect.X)+4, int32(otherRect.Y)+4, 11, rl.NewColor(120, 120, 120, 200))
-			rl.DrawText(trimLabel(descOther, 18), int32(otherRect.X)+4, int32(otherRect.Y)+18, 10, rl.NewColor(90, 90, 90, 180))
-
-			// Chosen (highlighted)
-			rl.DrawRectangleRec(chosenRect, colChosen)
-			rl.DrawRectangleLinesEx(chosenRect, 2, borderChosen)
-			rl.DrawText(labelChosen, int32(chosenRect.X)+4, int32(chosenRect.Y)+4, 11, rl.White)
-			rl.DrawText(trimLabel(descChosen, 18), int32(chosenRect.X)+4, int32(chosenRect.Y)+18, 10, rl.LightGray)
-			rl.DrawText("[x]", int32(chosenRect.X+chosenRect.Width)-26, int32(chosenRect.Y)+4, 11, borderChosen)
-
-			if rl.CheckCollisionPointRec(mousePos, chosenRect) {
-				tooltip = fmt.Sprintf("Chosen: %s -- %s", labelChosen, descChosen)
-			}
-			if rl.CheckCollisionPointRec(mousePos, otherRect) {
-				tooltip = fmt.Sprintf("Not chosen: %s -- %s", labelOther, descOther)
-			}
-		}
-	}
-
-	return tooltip
-}
-
-func trimLabel(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-1] + "~"
-}
-
-func drawResearchMenu() {
-	rl.ClearBackground(rl.NewColor(10, 10, 20, 255))
-
-	mousePos := rl.GetMousePosition()
-
-	title := "TALENT LAB"
-	rl.DrawText(title, ScreenWidth/2-rl.MeasureText(title, 40)/2, 15, 40, rl.Purple)
-	rpText := fmt.Sprintf("Available RP: %d", meta.ResearchPoints)
-	rl.DrawText(rpText, ScreenWidth/2-rl.MeasureText(rpText, 20)/2, 62, 20, rl.Gold)
-
-	// Equipped loadout slots
-	loadoutLabel := "Active Loadout (Max 4):"
-	rl.DrawText(loadoutLabel, ScreenWidth/2-rl.MeasureText(loadoutLabel, 18)/2, 90, 18, rl.White)
-	for i, name := range meta.EquippedAbilities {
-		slotX := int32(ScreenWidth/2 - 115 + i*60)
-		slotY := int32(112)
-		rl.DrawRectangleLines(slotX, slotY, 50, 50, rl.Gray)
-		if name != "" {
-			rl.DrawText(string(name[0]), slotX+15, slotY+12, 28, rl.Green)
-		}
-
-		// AUTO toggle button below each slot
-		const autoH = int32(18)
-		const autoW = int32(50)
-		autoX := slotX
-		autoY := slotY + 54
-		isAuto := meta.AutoAbilities[i]
-		autoBg := rl.NewColor(110, 25, 25, 220)
-		if isAuto {
-			autoBg = rl.NewColor(25, 110, 25, 220)
-		}
-		if name == "" {
-			autoBg = rl.NewColor(40, 40, 40, 180)
-		}
-		if name != "" && rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: float32(autoX), Y: float32(autoY), Width: float32(autoW), Height: float32(autoH)}) {
-			if isAuto {
-				autoBg = rl.NewColor(35, 150, 35, 255)
-			} else {
-				autoBg = rl.NewColor(150, 35, 35, 255)
-			}
-		}
-		rl.DrawRectangle(autoX, autoY, autoW, autoH, autoBg)
-		rl.DrawRectangleLines(autoX, autoY, autoW, autoH, rl.NewColor(180, 180, 180, 160))
-		autoLabel := "AUTO"
-		if name == "" {
-			autoLabel = "--"
-		}
-		lw := rl.MeasureText(autoLabel, 10)
-		rl.DrawText(autoLabel, autoX+autoW/2-lw/2, autoY+4, 10, rl.White)
-	}
-
-	// Respec button
-	respecRect := rl.Rectangle{X: float32(ScreenWidth) - 130, Y: 20, Width: 110, Height: 40}
-	respecColor := rl.DarkGray
-	if HasSaveFile() {
-		respecColor = rl.NewColor(40, 40, 40, 255)
-	}
-	rl.DrawRectangleRec(respecRect, respecColor)
-	rl.DrawRectangleLinesEx(respecRect, 2, rl.RayWhite)
-	rl.DrawText("RESET ALL", int32(respecRect.X+10), int32(respecRect.Y+12), 16, rl.White)
-
-	if HasSaveFile() {
-		warn := "RUN IN PROGRESS -- LOADOUT & BRANCHES LOCKED"
-		rl.DrawText(warn, ScreenWidth/2-rl.MeasureText(warn, 16)/2, 183, 16, rl.Red)
-	}
-
-	mousePos = rl.GetMousePosition()
-	var tooltipText string
-
-	// Clip scrollable content between header and back button
-	rl.BeginScissorMode(0, int32(researchMenuHeaderH), ScreenWidth, int32(ScreenHeight-researchMenuHeaderH-researchMenuFooterH))
-
-	// ── Active Abilities ──────────────────────────────────────────────────────
-	activeLabel := "ACTIVE ABILITIES"
-	rl.DrawText(activeLabel, ScreenWidth/2-rl.MeasureText(activeLabel, 18)/2, int32(float32(researchMenuHeaderH-17)-researchScrollY), 18, rl.SkyBlue)
-
-	lay := calcResearchLayout()
-	actives := buildTalentList()
-	for i, t := range actives {
-		col := i % 2
-		row := i / 2
-		x := lay.originX + float32(col)*(lay.cardW+lay.colGap)
-		y := float32(researchMenuHeaderH) + float32(row)*lay.cardH - researchScrollY
-
-		isTutLocked := false
-		if meta.TutorialStep == TutorialBuyAbility && t.Name != AbilityRapidFire {
-			isTutLocked = true
-		}
-		if (meta.TutorialStep == TutorialEquipAbility || meta.TutorialStep == TutorialPickBranch) && t.Name != AbilityRapidFire {
-			isTutLocked = true
-		}
-
-		if tip := drawTalentEntry(t, x, y, mousePos, isTutLocked, lay); tip != "" {
-			tooltipText = tip
-		}
-	}
-
-	// ── Passive Modules ───────────────────────────────────────────────────────
-	passiveStartY := float32(researchMenuHeaderH) + 3*lay.cardH + 18 - researchScrollY
-	passiveLabel := "PASSIVE MODULES"
-	rl.DrawText(passiveLabel, ScreenWidth/2-rl.MeasureText(passiveLabel, 18)/2, int32(passiveStartY-22), 18, rl.SkyBlue)
-
-	passives := buildPassiveTalentList()
-	for i, t := range passives {
-		var x, y float32
-		if len(passives) > 1 && i == len(passives)-1 && len(passives)%2 == 1 {
-			// Odd last item -- centre it on its own row
-			row := i / 2
-			x = float32(ScreenWidth)/2 - lay.cardW/2
-			y = passiveStartY + float32(row)*lay.cardH
-		} else {
-			col := i % 2
-			row := i / 2
-			x = lay.originX + float32(col)*(lay.cardW+lay.colGap)
-			y = passiveStartY + float32(row)*lay.cardH
-		}
-		if tip := drawTalentEntry(t, x, y, mousePos, false, lay); tip != "" {
-			tooltipText = tip
-		}
-	}
-
-	// ── Utility Unlocks ───────────────────────────────────────────────────────
-	passiveRows := (len(passives) + 1) / 2
-	utilY := passiveStartY + float32(passiveRows)*lay.cardH
-	utilLabel := "UTILITY"
-	rl.DrawText(utilLabel, ScreenWidth/2-rl.MeasureText(utilLabel, 18)/2, int32(utilY-22), 18, rl.SkyBlue)
-
-	drawUtilBtn := func(rect rl.Rectangle, label, costStr string, unlocked bool, desc string, costVal int) {
-		col := rl.DarkGray
-		displayLabel := label
-		displayCost := costStr
-		if unlocked {
-			col = rl.NewColor(20, 60, 20, 255)
-			displayCost = ""
-			displayLabel += " [ACTIVE]"
-		} else if rl.CheckCollisionPointRec(mousePos, rect) && meta.ResearchPoints >= costVal {
-			col = rl.NewColor(50, 80, 50, 255)
-		}
-		if rl.CheckCollisionPointRec(mousePos, rect) {
-			tooltipText = desc
-		}
-		rl.DrawRectangleRec(rect, col)
-		rl.DrawRectangleLinesEx(rect, 1, rl.White)
-		rl.DrawText(displayLabel, int32(rect.X)+8, int32(rect.Y)+12, 15, rl.White)
-		if displayCost != "" {
-			rl.DrawText(displayCost, int32(rect.X+rect.Width)-rl.MeasureText(displayCost, 15)-8, int32(rect.Y)+12, 15, rl.Green)
-		}
-	}
-
-	speedRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 125, Y: utilY, Width: 250, Height: 40}
-	drawUtilBtn(speedRect, "Hyperdrive (3x)", "200 RP", meta.Speed3xUnlocked, "Unlocks the 3x game speed button in HUD.", 200)
-
-	sprintRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 125, Y: utilY + 50, Width: 250, Height: 40}
-	drawUtilBtn(sprintRect, "Opening Sprint", "500 RP", meta.OpeningSprintUnlocked, "10x speed for the first 5 minutes of a run.", 500)
-
-	// ── Tutorial flash ────────────────────────────────────────────────────────
-	if meta.TutorialStep == TutorialGoToResearch {
-		if math.Mod(float64(rl.GetTime())*4, 2) < 1 {
-			rl.DrawRectangleLines(0, 0, ScreenWidth, ScreenHeight, rl.Yellow)
-		}
-	}
-
-	rl.EndScissorMode()
-
-	// ── Scroll bar ────────────────────────────────────────────────────────────
-	contentH := float32(researchMenuContentBottom())
-	viewH := float32(ScreenHeight - researchMenuHeaderH - researchMenuFooterH)
-	if contentH > viewH {
-		barTrackH := viewH
-		barH := barTrackH * (viewH / contentH)
-		if barH < 20 {
-			barH = 20
-		}
-		maxScroll := contentH - viewH
-		barY := float32(researchMenuHeaderH) + (researchScrollY/maxScroll)*(barTrackH-barH)
-		barX := float32(ScreenWidth) - 8
-		rl.DrawRectangle(int32(barX), int32(researchMenuHeaderH), 6, int32(barTrackH), rl.NewColor(40, 40, 60, 200))
-		rl.DrawRectangle(int32(barX), int32(barY), 6, int32(barH), rl.NewColor(140, 100, 220, 220))
-	}
-
-	// ── Back button ───────────────────────────────────────────────────────────
-	backRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight) - 60, Width: 200, Height: 50}
-	backLocked := meta.TutorialStep == TutorialBuyAbility ||
-		meta.TutorialStep == TutorialEquipAbility ||
-		meta.TutorialStep == TutorialPickBranch
-	// Also locked during BackFromResearch until AUTO is enabled.
-	autoReadyForBack := false
-	if meta.TutorialStep == TutorialBackFromResearch {
-		for i, name := range meta.EquippedAbilities {
-			if name == AbilityRapidFire && meta.AutoAbilities[i] {
-				autoReadyForBack = true
-				break
-			}
-		}
-		if !autoReadyForBack {
-			backLocked = true
-		}
-	}
-	backCol := rl.Color(rl.Gray)
-	if backLocked {
-		backCol = rl.NewColor(50, 50, 50, 255)
-	} else if meta.TutorialStep == TutorialBackFromResearch && autoReadyForBack {
-		// Flash green -- AUTO is on, ready to proceed.
-		if int(rl.GetTime()*4)%2 == 0 {
-			backCol = rl.NewColor(30, 130, 30, 255)
-		} else {
-			backCol = rl.NewColor(20, 80, 20, 255)
-		}
-	}
-	rl.DrawRectangleRec(backRect, backCol)
-	rl.DrawRectangleLinesEx(backRect, 1, rl.White)
-	backLabel := "BACK"
-	if backLocked {
-		backLabel = "BACK (finish tutorial first)"
-	}
-	rl.DrawText(backLabel, int32(backRect.X+backRect.Width/2)-rl.MeasureText(backLabel, 16)/2, int32(backRect.Y)+17, 16, rl.White)
-
-	// ── Tutorial overlay bubbles ──────────────────────────────────────────────
-	// Drawn after EndScissorMode so they always appear on top.
-	drawResearchTutorialOverlay()
-
-	// ── Tooltip ───────────────────────────────────────────────────────────────
-	if tooltipText != "" {
-		drawTooltip(mousePos, tooltipText)
-	}
-}
-
-func drawTooltip(mouse rl.Vector2, text string) {
-	fontSize := int32(16)
-	padding := int32(10)
-	textW := rl.MeasureText(text, fontSize)
-	rw := textW + padding*2
-	rh := int32(36)
-	drawX := int32(mouse.X) - rw/2
-	drawY := int32(mouse.Y) - rh - 14
-	if drawX < 0 {
-		drawX = 0
-	}
-	if drawX+rw > ScreenWidth {
-		drawX = ScreenWidth - rw
-	}
-	if drawY < 0 {
-		drawY = int32(mouse.Y) + 20
-	}
-	rl.DrawRectangle(drawX, drawY, rw, rh, rl.NewColor(10, 10, 20, 240))
-	rl.DrawRectangleLines(drawX, drawY, rw, rh, rl.Gold)
-	rl.DrawText(text, drawX+padding, drawY+10, fontSize, rl.Yellow)
-}
-
-// drawResearchTutorialOverlay renders contextual tip bubbles for each
-// tutorial step that happens inside the Research Lab.
-func drawResearchTutorialOverlay() {
-	lay := calcResearchLayout()
-	// Rapid Fire is the first card, top-left column.
-	rfCardX := lay.originX
-	rfCardY := float32(researchMenuHeaderH) - researchScrollY
-	// unlockRect matches what drawTalentEntry draws -- just the top 40px strip.
-	rfUnlockRect := rl.Rectangle{X: rfCardX, Y: rfCardY, Width: lay.cardW, Height: 40}
-
-	// AUTO button position for the first loadout slot.
-	autoSlot0X := float32(ScreenWidth/2 - 115)
-	autoY := float32(112 + 54 + 20)
-
-	// Back button position -- used for the BackFromResearch bubble.
-	backRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight) - 60, Width: 200, Height: 50}
-
-	switch meta.TutorialStep {
-
-	case TutorialBuyAbility:
-		drawTutorialBubble(
-			rfCardX, rfCardY-140,
-			"UNLOCK AN ABILITY",
-			[]string{
-				"Click the Rapid Fire card to unlock",
-				"your first active ability for 25 RP.",
-				"Abilities are powerful cooldown skills",
-				"you can trigger during a run.",
-			}, rl.Purple)
-		// Flash wraps only the unlock button strip, not the branch area.
-		if int(rl.GetTime()*4)%2 == 0 {
-			rl.DrawRectangleLinesEx(rfUnlockRect, 3, rl.Yellow)
-		}
-
-	case TutorialEquipAbility:
-		// Rapid Fire is unlocked -- prompt the player to click again to equip it.
-		drawTutorialBubble(
-			rfCardX, rfCardY-140,
-			"EQUIP IT!",
-			[]string{
-				"Rapid Fire is unlocked! Click the card",
-				"again to slot it into your active loadout.",
-				"You can equip up to 4 abilities at once.",
-			}, rl.Green)
-		if int(rl.GetTime()*4)%2 == 0 {
-			rl.DrawRectangleLinesEx(rfUnlockRect, 3, rl.Lime)
-		}
-
-	case TutorialPickBranch:
-		// Ability is equipped -- now explain branches and ask them to pick one.
-		drawTutorialBubble(
-			rfCardX, rfCardY+lay.cardH-10,
-			"PICK A SPECIALISATION",
-			[]string{
-				"Each ability has two branches that",
-				"change how it behaves permanently.",
-				"Read both options and pick the one",
-				"that sounds most fun to you!",
-				"You can only choose one, so choose wisely.",
-			}, rl.SkyBlue)
-		// Flash the branch area (below the unlock strip).
-		branchRect := rl.Rectangle{X: rfCardX, Y: rfCardY + 44, Width: lay.cardW, Height: 36}
-		if int(rl.GetTime()*4)%2 == 0 {
-			rl.DrawRectangleLinesEx(branchRect, 3, rl.SkyBlue)
-		}
-
-	case TutorialBackFromResearch:
-		// Check if AUTO is on for Rapid Fire.
-		autoOn := false
-		autoSlotIdx := 0
-		for i, name := range meta.EquippedAbilities {
-			if name == AbilityRapidFire {
-				autoSlotIdx = i
-				if meta.AutoAbilities[i] {
-					autoOn = true
-				}
-				break
-			}
-		}
-		if !autoOn {
-			// AUTO not yet enabled -- keep pointing at that button.
-			ax := float32(ScreenWidth/2 - 115 + autoSlotIdx*60)
-			ay := float32(112 + 54)
-			drawTutorialBubble(autoSlot0X-10, autoY,
-				"ENABLE AUTO-FIRE FIRST",
-				[]string{
-					"Click the AUTO button below your",
-					"ability slot before heading out.",
-					"It fires automatically at 70% power.",
-				}, rl.SkyBlue)
-			if int(rl.GetTime()*4)%2 == 0 {
-				rl.DrawRectangleLines(int32(ax), int32(ay), 50, 18, rl.SkyBlue)
-			}
-		} else {
-			// AUTO is on -- now guide them to Back.
-			drawTutorialBubble(
-				backRect.X-10, backRect.Y-175,
-				"GREAT WORK!",
-				[]string{
-					"You have an ability! AUTO mode will",
-					"make the ability fire automatically",
-					"for you. There is a small penalty to",
-					"effectiveness though. Now, click BACK",
-					"to head to the gear shop and kit",
-					"yourself out!",
-				}, rl.Gold)
-			if int(rl.GetTime()*4)%2 == 0 {
-				rl.DrawRectangleLinesEx(backRect, 3, rl.Gold)
-			}
-		}
-	}
 }
