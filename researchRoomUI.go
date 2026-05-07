@@ -69,7 +69,6 @@ type researchEntry struct {
 	kind string
 
 	// rank-only fields
-<<<<<<< HEAD
 	baseCost int                    // RP cost of the first rank
 	step     int                    // additional cost added each subsequent rank
 	maxRank  int                    // hard cap (0 = uncapped)
@@ -81,19 +80,6 @@ type researchEntry struct {
 	flatCost int
 	isOwned  func() bool
 	setOwned func(on bool)
-=======
-	baseCost int                   // RP cost of the first rank
-	step     int                   // additional cost added each subsequent rank
-	maxRank  int                   // hard cap (0 = uncapped)
-	getRank  func() int            // reads current rank from meta
-	setRank  func(r int)           // writes new rank to meta
-	applyAt  func(p *Player, r int) // applied at run start (analogous to TalentNode.Apply)
-
-	// toggle-only fields
-	flatCost  int
-	isOwned   func() bool
-	setOwned  func(on bool)
->>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
 }
 
 // researchCatalog defines the order and content of the RP-cost panel.
@@ -145,7 +131,6 @@ const (
 	treeTabH         = 38
 	talentLabFooterH = 70
 
-<<<<<<< HEAD
 	// Card dimensions — 6 cols across the 1500px screen need narrower cards
 	// than the old 3-col layout. Math: 6×195 + 5×22 = 1280px, centered with
 	// 110px margins each side.
@@ -162,16 +147,6 @@ const (
 	// in the same vertical space as the old 7-tier layout.
 	tierLabelH = 24 // height reserved for "Tier N" divider above each row
 	tierVGap   = 8  // gap between divider and the cards in that tier
-=======
-	// Card dimensions — wider than the previous pass so descriptions fit.
-	nodeW    = 200
-	nodeH    = 78
-	nodeHGap = 28
-
-	// Tier row vertical layout.
-	tierLabelH = 24 // height reserved for "Tier N" divider above each row
-	tierVGap   = 14 // gap between divider and the cards in that tier
->>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
 	tierRowH   = nodeH + tierLabelH + tierVGap
 
 	// Side-stripe tag width.
@@ -279,7 +254,6 @@ func handleResearchInput() {
 
 // canRefundRank returns true if removing 1 rank would not orphan any other
 // allocated node by breaking its prereq chain or tier gate.
-<<<<<<< HEAD
 // canRefundRank tentatively refunds 1 point of the named node and checks
 // that no other allocated node would become invalid (orphaned by losing
 // its tier gate, spend gate, or only remaining fully-maxed prereq path).
@@ -287,8 +261,6 @@ func handleResearchInput() {
 // The "fully-maxed prereq" check mirrors arePrereqsMet — refunding a rank
 // that drops a parent below MaxRank invalidates downstream children that
 // depended on that parent (unless they have another fully-maxed parent).
-=======
->>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
 func canRefundRank(id string) bool {
 	saved := meta.TalentRanks[id]
 	meta.TalentRanks[id]--
@@ -307,7 +279,6 @@ func canRefundRank(id string) bool {
 		if n == nil {
 			continue
 		}
-<<<<<<< HEAD
 		// OR semantics on prereqs — at least one parent must still be
 		// fully maxed. Mirrors arePrereqsMet so the refund check matches
 		// allocation rules.
@@ -321,22 +292,15 @@ func canRefundRank(id string) bool {
 				}
 			}
 			if !anyMet {
-=======
-		for _, reqID := range n.Prereqs {
-			if rankOf(reqID) == 0 {
->>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
 				return false
 			}
 		}
 		if !isTierUnlocked(n) {
 			return false
 		}
-<<<<<<< HEAD
 		if n.SpendGate > 0 && pointsSpentInTree(n.Tree) < n.SpendGate {
 			return false
 		}
-=======
->>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
 	}
 	return true
 }
@@ -367,12 +331,7 @@ func treeTabRect(i int) rl.Rectangle {
 // members share a Tier+Col slot and render as side-by-side half-cards
 // with a small gap and an "OR" badge between them.
 func nodeRect(n *TalentNode) rl.Rectangle {
-<<<<<<< HEAD
 	totalW := float32(gridCols)*nodeW + float32(gridCols-1)*nodeHGap
-=======
-	const fixedCols = 3
-	totalW := float32(fixedCols)*nodeW + float32(fixedCols-1)*nodeHGap
->>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
 	startX := float32(ScreenWidth)/2 - totalW/2
 
 	gridY := talentLabHeaderH + tierLabelH
@@ -381,11 +340,7 @@ func nodeRect(n *TalentNode) rl.Rectangle {
 
 	// Mutex pair: split slot into left/right halves with a gap for the badge.
 	if n.MutexGroupID != "" {
-<<<<<<< HEAD
 		const orBadgeW float32 = 22
-=======
-		const orBadgeW float32 = 28
->>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
 		halfW := (float32(nodeW) - orBadgeW) / 2
 		group := mutexGroupMembers(n.Tree, n.MutexGroupID)
 		// Determine if `n` is the left or right half (sorted by node ID
@@ -405,12 +360,7 @@ func nodeRect(n *TalentNode) rl.Rectangle {
 // including for mutex pairs (returns the visual center of the whole pair).
 // Used for drawing prereq lines from a child to a single point above.
 func slotCenterX(tree string, tier, col int) float32 {
-<<<<<<< HEAD
 	totalW := float32(gridCols)*nodeW + float32(gridCols-1)*nodeHGap
-=======
-	const fixedCols = 3
-	totalW := float32(fixedCols)*nodeW + float32(fixedCols-1)*nodeHGap
->>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
 	startX := float32(ScreenWidth)/2 - totalW/2
 	return startX + float32(col)*(nodeW+nodeHGap) + nodeW/2
 }
@@ -607,11 +557,7 @@ func drawActiveTreeGrid(mousePos rl.Vector2) {
 // each tier's point requirement and current open/locked state.
 func drawTierDividers(tree string) {
 	spent := pointsSpentInTree(tree)
-<<<<<<< HEAD
 	for tier := 1; tier <= 8; tier++ {
-=======
-	for tier := 1; tier <= 7; tier++ {
->>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
 		// Skip tiers with no nodes in this tree.
 		hasNode := false
 		for _, n := range TalentsByTree[tree] {
@@ -659,20 +605,15 @@ func drawTierDividers(tree string) {
 // cross-tier spans. For OR-prereqs (mutex parents), one line is drawn
 // from the mutex slot center down to the child.
 func drawPrereqLines(tree string, prereqChain map[string]bool) {
-<<<<<<< HEAD
 	// In a lattice tree each child can list multiple parents, possibly in
 	// different columns and possibly multiple tiers up. Draw one line per
 	// (parent, child) pair so all the connections are visible.
 	gridY := float32(talentLabHeaderH + tierLabelH)
 
-=======
-	drawnPrereq := map[string]bool{} // dedupe: one line per (parent slot → child)
->>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
 	for _, n := range TalentsByTree[tree] {
 		if len(n.Prereqs) == 0 {
 			continue
 		}
-<<<<<<< HEAD
 		childTaken := rankOf(n.ID) > 0
 		// "anyParentMaxed" = any prereq is fully maxed, i.e. actually
 		// unlocks this child. Used for the hover-highlight chain logic.
@@ -774,77 +715,6 @@ func drawConnectionLine(ax, yTop, bx, yBot, thickness float32, col rl.Color) {
 	rl.DrawLineEx(rl.Vector2{X: ax, Y: yTop}, rl.Vector2{X: ax, Y: midY}, thickness, col)
 	rl.DrawLineEx(rl.Vector2{X: ax, Y: midY}, rl.Vector2{X: bx, Y: midY}, thickness, col)
 	rl.DrawLineEx(rl.Vector2{X: bx, Y: midY}, rl.Vector2{X: bx, Y: yBot}, thickness, col)
-=======
-		// Resolve the prereq's slot. If multiple prereqs (mutex OR-pair),
-		// they share Tier+Col so any of them gives the right slot center.
-		req := TalentRegistry[n.Prereqs[0]]
-		if req == nil {
-			continue
-		}
-		// Dedup: identify the line by (parent slot, child id).
-		key := fmt.Sprintf("%d_%d_%s", req.Tier, req.Col, n.ID)
-		if drawnPrereq[key] {
-			continue
-		}
-		drawnPrereq[key] = true
-
-		// Compute endpoints. Use slot centers (col-aligned) so mutex pair
-		// half-cards still produce a clean centered vertical line.
-		ax := slotCenterX(tree, req.Tier, req.Col)
-		bx := slotCenterX(tree, n.Tier, n.Col)
-		// y of the bottom-edge of the prereq tier row.
-		gridY := float32(talentLabHeaderH + tierLabelH)
-		yTop := gridY + float32(req.Tier-1)*tierRowH + tierVGap + nodeH
-		yBot := gridY + float32(n.Tier-1)*tierRowH + tierVGap
-
-		// Determine line state for color.
-		// "Active path" = at least one prereq is allocated AND child is allocated.
-		anyParentTaken := false
-		for _, reqID := range n.Prereqs {
-			if rankOf(reqID) > 0 {
-				anyParentTaken = true
-				break
-			}
-		}
-		childTaken := rankOf(n.ID) > 0
-
-		lineCol := rl.NewColor(70, 70, 90, 180)
-		thickness := float32(3)
-		if anyParentTaken && childTaken {
-			lineCol = rl.NewColor(180, 160, 80, 230)
-		} else if anyParentTaken {
-			lineCol = rl.NewColor(110, 110, 150, 220)
-		}
-		// Highlight if hovered chain.
-		anyOnChain := prereqChain[n.ID]
-		for _, reqID := range n.Prereqs {
-			if prereqChain[reqID] {
-				anyOnChain = true
-				break
-			}
-		}
-		if anyOnChain && prereqChain[n.ID] {
-			lineCol = rl.NewColor(255, 220, 100, 255)
-			thickness = 4
-		}
-
-		// If parent and child are in different columns (rare — only if a
-		// future node violates the layout rule), draw an L-bend rather
-		// than a diagonal: down from parent to mid-y, across to child col,
-		// then down to child top.
-		if ax == bx {
-			rl.DrawLineEx(rl.Vector2{X: ax, Y: yTop}, rl.Vector2{X: bx, Y: yBot}, thickness, lineCol)
-		} else {
-			midY := (yTop + yBot) / 2
-			rl.DrawLineEx(rl.Vector2{X: ax, Y: yTop}, rl.Vector2{X: ax, Y: midY}, thickness, lineCol)
-			rl.DrawLineEx(rl.Vector2{X: ax, Y: midY}, rl.Vector2{X: bx, Y: midY}, thickness, lineCol)
-			rl.DrawLineEx(rl.Vector2{X: bx, Y: midY}, rl.Vector2{X: bx, Y: yBot}, thickness, lineCol)
-		}
-
-		// Draw a small arrowhead at the child end pointing down.
-		drawArrowhead(bx, yBot, thickness, lineCol)
-	}
->>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
 }
 
 // drawArrowhead draws a small downward-pointing triangle at (x, y).
@@ -971,19 +841,11 @@ func drawTalentNode(n *TalentNode, mousePos rl.Vector2, prereqChain map[string]b
 	if !canAlloc && rank == 0 {
 		nameCol = rl.NewColor(140, 140, 150, 255)
 	}
-<<<<<<< HEAD
 	// Mutex half-cards are ~85px wide vs full ~195px, so we trim more
 	// aggressively on halves and drop the rank pill (replaced with a small dot).
 	isMutexHalf := n.MutexGroupID != ""
 	nameMaxLen := 16
 	descMaxLen := 28
-=======
-	// Mutex half-cards have ~85px width vs full 200px, so we trim more
-	// aggressively and drop the rank pill (replaced with a small dot).
-	isMutexHalf := n.MutexGroupID != ""
-	nameMaxLen := 22
-	descMaxLen := 32
->>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
 	if isMutexHalf {
 		nameMaxLen = 11
 		descMaxLen = 16
@@ -1038,7 +900,6 @@ func drawTalentNode(n *TalentNode, mousePos rl.Vector2, prereqChain map[string]b
 	if !isMutexHalf && rank >= n.MaxRank && rank > 0 {
 		rl.DrawText("MAX", int32(r.X+r.Width)-30, int32(r.Y+r.Height)-14, 10, rl.Green)
 	}
-<<<<<<< HEAD
 
 	// Spend-gate badge: shown bottom-right when a per-node spend gate is
 	// the reason the node is locked (and it's the binding constraint).
@@ -1056,8 +917,6 @@ func drawTalentNode(n *TalentNode, mousePos rl.Vector2, prereqChain map[string]b
 			rl.DrawRectangleLines(bx-1, by-1, 4, 4, rl.Gold)
 		}
 	}
-=======
->>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
 }
 
 func drawBackButton(mousePos rl.Vector2) {
@@ -1120,7 +979,6 @@ func drawNodeTooltip(nodeID string, mouse rl.Vector2) {
 	if !isTierUnlocked(n) {
 		need := TierGates[n.Tier-1] - pointsSpentInTree(n.Tree)
 		lines = append(lines, fmt.Sprintf("Locked: need %d more in %s tree", need, n.Tree))
-<<<<<<< HEAD
 	} else if n.SpendGate > 0 && pointsSpentInTree(n.Tree) < n.SpendGate {
 		need := n.SpendGate - pointsSpentInTree(n.Tree)
 		lines = append(lines, fmt.Sprintf("Locked: need %d more in %s tree", need, n.Tree))
@@ -1150,10 +1008,6 @@ func drawNodeTooltip(nodeID string, mouse rl.Vector2) {
 	}
 	if n.SpendGate > 0 && pointsSpentInTree(n.Tree) >= n.SpendGate {
 		lines = append(lines, fmt.Sprintf("(Tree-spend gate: %d points)", n.SpendGate))
-=======
-	} else if !arePrereqsMet(n) {
-		lines = append(lines, "Locked: prereqs not met")
->>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
 	}
 	lines = append(lines, fmt.Sprintf("(%s . Tier %d)", n.Tree, n.Tier))
 	if rank > 0 && !HasSaveFile() {
