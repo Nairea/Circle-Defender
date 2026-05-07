@@ -10,24 +10,21 @@ import (
 
 // reduces effectiveness of abilities if you have auto on.
 // lets players play in a more idle game style if they want.
-// applies the penalty if any ability slot is set to auto-fire.
+// applies the penalty if any ability has auto-fire enabled.
 func getAutoMult() float32 {
-	for _, a := range state.Player.AutoAbilities {
-		if a {
+	for _, on := range state.Player.AutoAbilities {
+		if on {
 			return 0.7
 		}
 	}
 	return 1.0
 }
 
-// isAbilityEquipped returns true if the named ability is in one of the four equipped slots.
+// isAbilityEquipped is kept for backward compat with any older code that
+// might still call it. With the loadout system removed, "equipped" now
+// just means "unlocked" — abilities auto-display on the HUD when unlocked.
 func isAbilityEquipped(name string) bool {
-	for _, eq := range meta.EquippedAbilities {
-		if eq == name {
-			return true
-		}
-	}
-	return false
+	return isAbilityUnlocked(name)
 }
 
 // hasViableTargetInRange returns true if at least one non-protected, non-phased
@@ -75,12 +72,19 @@ func viableEnemyCount(radius float32) int {
 }
 
 func handleAbilityInput() {
-	keys := []int32{rl.KeyOne, rl.KeyTwo, rl.KeyThree, rl.KeyFour}
+	// Keys 1..6 cover all 6 actives in AbilityDisplayOrder (Rapid Fire,
+	// Death Ray, Gravity, Static, Chrono, Bombard).
+	keys := []int32{
+		rl.KeyOne, rl.KeyTwo, rl.KeyThree,
+		rl.KeyFour, rl.KeyFive, rl.KeySix,
+	}
+	active := getActiveAbilities()
 
 	for i, key := range keys {
 		if rl.IsKeyPressed(key) {
-			abilityName := meta.EquippedAbilities[i]
-			triggerAbility(abilityName)
+			if i < len(active) {
+				triggerAbility(active[i])
+			}
 		}
 	}
 }

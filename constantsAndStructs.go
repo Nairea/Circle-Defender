@@ -27,9 +27,9 @@ const (
 	// they never advance silently on room entry alone.
 	TutorialNone             = 0  // tutorial complete or not yet started
 	TutorialGoToResearch     = 1  // start screen: flash Research Lab, show bubble
-	TutorialBuyAbility       = 2  // research room: buy Rapid Fire
-	TutorialEquipAbility     = 3  // research room: equip it, then toggle AUTO on
-	TutorialPickBranch       = 4  // research room: explain branches, pick one
+	TutorialBuyAbility       = 2  // (legacy) research room: buy Rapid Fire
+	TutorialEquipAbility     = 3  // (legacy) research room: equip it, then toggle AUTO on
+	TutorialPickBranch       = 4  // (legacy) research room: explain branches, pick one
 	TutorialBackFromResearch = 5  // research room: prompt player to click Back
 	TutorialGoToGear         = 6  // start screen: flash Gear button, show bubble
 	TutorialCraftFirst       = 7  // gear room: craft the free "bad" item first
@@ -38,6 +38,12 @@ const (
 	TutorialEquipItem        = 10 // gear room: equip the good weapon
 	TutorialBackFromGear     = 11 // gear room: prompt player to click Back
 	TutorialReady            = 12 // all pre-run steps done; start button unlocked
+
+	// New talent-system tutorial step. Alias to TutorialBuyAbility so
+	// existing save files with that step pointer still resolve correctly
+	// under the new UI (the old "buy ability" step is now "spend TP on
+	// the Rapid Fire node", which is conceptually the same beat).
+	TutorialSpendTP = TutorialBuyAbility
 
 	//Item type flags.
 	ItemWeapon  = 0
@@ -249,6 +255,9 @@ const (
 
 	// Delay between player death and game over screen appearing.
 	PlayerDeathDelay = 2.5
+
+	// Duration of the per-enemy death animation. Bosses get 2x for drama.
+	EnemyDeathAnimDuration = 0.9
 )
 
 // enemy color globals
@@ -318,15 +327,29 @@ type MetaProgression struct {
 	Speed3xUnlocked       bool
 	OpeningSprintUnlocked bool
 
-	//Currently equipped abilities.
-	EquippedAbilities    [4]string
+	// Active loadout — DEPRECATED. Kept on the struct so old saves still
+	// unmarshal cleanly, but the runtime no longer consults these. Active
+	// abilities are now derived from talent unlocks via getActiveAbilities().
+	EquippedAbilities    [4]string `json:"EquippedAbilities,omitempty"`
 	EquippedItemsByIndex [4]int
+	AutoAbilities        [4]bool `json:"AutoAbilities,omitempty"`
 
-	// Per-slot auto-fire preference — persists between runs.
-	AutoAbilities [4]bool
+	// Per-ability AUTO-fire toggle, keyed by ability name (AbilityRapidFire etc).
+	// Replaces the old indexed AutoAbilities[4]bool now that abilities are
+	// auto-displayed in fixed order rather than slot-equipped.
+	AutoAbilitiesByName map[string]bool
 
 	//Current items. read from save file
 	Inventory []Item
+
+	// ── Talent tree system (Mini Healer-style) ───────────────────────────
+	// MetaLevel is the persistent meta-progression level, distinct from the
+	// in-run player Level. Earned from kills + waves survived at end of run.
+	MetaLevel          int
+	MetaXP             int
+	TalentPointsEarned int            // total TP ever granted (TPPerMetaLevel per ML)
+	TalentRanks        map[string]int // node ID → current rank
+	TalentsMigrated    bool           // legacy branch/unlock fields converted?
 }
 
 // Item stats struct, helps keep a clean way to build items.
@@ -403,7 +426,7 @@ type Player struct {
 	XP            float32
 	NextLvlXP     float32
 	Points        int
-	AutoAbilities [4]bool // per ability slot; true = fires automatically when off cooldown
+	AutoAbilities map[string]bool // per ability NAME; true = fires automatically when off cooldown
 	//houses number of times upgrades taken.
 	UpgradeCounts       map[string]int
 	Damage              float32
@@ -582,6 +605,25 @@ type Enemy struct {
 	DamageShowTimer    float32
 }
 
+// DyingEnemy is a lightweight visual-only copy of an enemy at the moment
+// it died. Captures position, color, shape, and rotation, plus an
+// elapsed-time counter that drives the death animation.
+//
+// Elapsed advances by real wall-clock dt each frame (NOT effectiveDt), so
+// the animation persists for its full real-time duration regardless of
+// GameSpeedMultiplier. At 3x game speed the world races past while the
+// death burst still plays for its full ~0.5s. Pausing the game halts the
+// animation since updateDyingEnemies isn't called while paused.
+type DyingEnemy struct {
+	X, Y     float32
+	Size     float32
+	Type     int
+	IsBoss   bool
+	Rotation float32 // angle in degrees at moment of death
+	Elapsed  float32 // wall-clock seconds since spawn
+	Duration float32 // total animation length in seconds (wall-clock)
+}
+
 type Projectile struct {
 	X, Y        float32
 	VelX, VelY  float32
@@ -700,6 +742,7 @@ type GameState struct {
 	CurrentScreen int
 	Player        Player
 	Enemies       []*Enemy
+	DyingEnemies  []*DyingEnemy // visual-only death anim; ticks down + renders, no logic
 	Projectiles   []*Projectile
 	Mines         []*Mine
 	Explosions    []*Explosion
@@ -717,6 +760,14 @@ type GameState struct {
 
 	// Total RP earned this run (passive trickle + enemy drops combined).
 	RunRP int
+
+	// Per-run counters used to award MetaXP at end of run.
+	// Bumped from Dispatch() on EventOnKill in events.go.
+	RunKills     int
+	RunBossKills int
+	// Set true the first time we award MetaXP for this run so we don't
+	// double-grant if the game-over screen hangs around for a second loop.
+	MetaXPAwarded bool
 
 	SpawnQueue []SpawnQueueEntry
 
@@ -784,4 +835,6 @@ var meta = MetaProgression{
 	EquippedAbilities:       [4]string{"", "", "", ""},
 	EquippedItemsByIndex:    [4]int{-1, -1, -1, -1},
 	Inventory:               make([]Item, 0),
+	TalentRanks:             make(map[string]int),
+	AutoAbilitiesByName:     make(map[string]bool),
 }

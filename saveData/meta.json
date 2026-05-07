@@ -1,5 +1,5 @@
 {
-  "ResearchPoints": 99061,
+  "ResearchPoints": 95639,
   "DmgLevel": 0,
   "ASLevel": 0,
   "RegenLevel": 0,
@@ -14,37 +14,37 @@
   "TutorialStep": 12,
   "TutorialComplete": true,
   "TutorialDeathShown": true,
-  "RapidFireUnlocked": true,
-  "DeathRayUnlocked": true,
-  "GravityFieldUnlocked": true,
-  "BombardmentUnlocked": true,
+  "RapidFireUnlocked": false,
+  "DeathRayUnlocked": false,
+  "GravityFieldUnlocked": false,
+  "BombardmentUnlocked": false,
   "StaticDischargeUnlocked": true,
-  "ChronoFieldUnlocked": true,
-  "MinesUnlocked": true,
+  "ChronoFieldUnlocked": false,
+  "MinesUnlocked": false,
   "SatellitesUnlocked": true,
-  "ShockwaveUnlocked": true,
-  "RapidFireBranch": "BulletStorm",
-  "DeathRayBranch": "Prism",
+  "ShockwaveUnlocked": false,
+  "RapidFireBranch": "",
+  "DeathRayBranch": "",
   "GravityBranch": "",
-  "BombardBranch": "CarpetBomb",
-  "StaticBranch": "ChainLightning",
+  "BombardBranch": "",
+  "StaticBranch": "",
   "ChronoBranch": "",
-  "MinesBranch": "HellfireMines",
-  "SatellitesBranch": "SentryMode",
-  "ShockwaveBranch": "Repulsor",
+  "MinesBranch": "",
+  "SatellitesBranch": "Overdrive",
+  "ShockwaveBranch": "",
   "Speed3xUnlocked": true,
   "OpeningSprintUnlocked": false,
   "EquippedAbilities": [
-    "Bombardment",
     "Rapid Fire",
     "Death Ray",
-    "Static Discharge"
+    "Shockwave",
+    ""
   ],
   "EquippedItemsByIndex": [
-    0,
+    4,
     -1,
     -1,
-    -1
+    3
   ],
   "AutoAbilities": [
     true,
@@ -52,6 +52,11 @@
     true,
     true
   ],
+  "AutoAbilitiesByName": {
+    "Death Ray": true,
+    "Rapid Fire": true,
+    "Static Discharge": true
+  },
   "Inventory": [
     {
       "Name": "Plasma Cutter",
@@ -60,13 +65,13 @@
       "Stats": [
         {
           "StatType": "Damage",
-          "Value": 44,
+          "Value": 2,
           "BaseValue": 2,
           "Growth": 2
         },
         {
           "StatType": "Haste",
-          "Value": 0.22000003,
+          "Value": 0.01,
           "BaseValue": 0.01,
           "Growth": 0.01
         }
@@ -75,6 +80,121 @@
       "SalvageValue": 40,
       "UniqueModifier": "",
       "SetID": ""
+    },
+    {
+      "Name": "Force Field",
+      "Type": 1,
+      "Rarity": 0,
+      "Stats": [
+        {
+          "StatType": "MaxHP",
+          "Value": 123.44077,
+          "BaseValue": 123.44077,
+          "Growth": 123.44077
+        }
+      ],
+      "Description": "Energy Shield",
+      "SalvageValue": 200,
+      "UniqueModifier": "",
+      "SetID": ""
+    },
+    {
+      "Name": "Steel Sword",
+      "Type": 0,
+      "Rarity": 0,
+      "Stats": [
+        {
+          "StatType": "Damage",
+          "Value": 5.699014,
+          "BaseValue": 5.699014,
+          "Growth": 5.699014
+        }
+      ],
+      "Description": "Standard Issue",
+      "SalvageValue": 200,
+      "UniqueModifier": "",
+      "SetID": ""
+    },
+    {
+      "Name": "Sniper Scope",
+      "Type": 3,
+      "Rarity": 1,
+      "Stats": [
+        {
+          "StatType": "DmgDist",
+          "Value": 0.32923248,
+          "BaseValue": 0.036581386,
+          "Growth": 0.036581386
+        },
+        {
+          "StatType": "FreeUp",
+          "Value": 0.03361393,
+          "BaseValue": 0.03361393,
+          "Growth": 0
+        }
+      ],
+      "Description": "Long Shot",
+      "SalvageValue": 200,
+      "UniqueModifier": "",
+      "SetID": ""
+    },
+    {
+      "Name": "Laser Cutter",
+      "Type": 0,
+      "Rarity": 1,
+      "Stats": [
+        {
+          "StatType": "Damage",
+          "Value": 125.6306,
+          "BaseValue": 13.958958,
+          "Growth": 13.958958
+        },
+        {
+          "StatType": "CritMult",
+          "Value": 2.5951185,
+          "BaseValue": 0.28834647,
+          "Growth": 0.28834647
+        }
+      ],
+      "Description": "High Power",
+      "SalvageValue": 200,
+      "UniqueModifier": "",
+      "SetID": ""
+    },
+    {
+      "Name": "Sapphire Band",
+      "Type": 2,
+      "Rarity": 0,
+      "Stats": [
+        {
+          "StatType": "CritChance",
+          "Value": 0.16895549,
+          "BaseValue": 0.16895549,
+          "Growth": 0.16895549
+        }
+      ],
+      "Description": "Critical Focus",
+      "SalvageValue": 200,
+      "UniqueModifier": "",
+      "SetID": ""
     }
-  ]
+  ],
+  "MetaLevel": 18,
+  "MetaXP": 4700,
+  "TalentPointsEarned": 73,
+  "TalentRanks": {
+    "ctrl_conduction": 3,
+    "ctrl_static_charge": 3,
+    "ctrl_static_unlock": 1,
+    "pas_beacon": 3,
+    "pas_drone_control": 4,
+    "pas_drone_swarm": 3,
+    "pas_efficiency": 1,
+    "pas_fire_support": 3,
+    "pas_overdrive_key": 1,
+    "pas_satellites_unlock": 1,
+    "pas_scavenger": 3,
+    "pas_sentinel": 3
+  },
+  "TalentsMigrated": true
 }

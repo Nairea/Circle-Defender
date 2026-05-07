@@ -13,6 +13,319 @@ func playButtonSound() {
 	rl.PlaySound(state.MenuClickSound)
 }
 
+// ─── Synthwave neon glow + bullet trail helpers ──────────────────────────
+//
+// Per-object fake glow: each unit gets a soft halo built from densely
+// stacked translucent shapes at increasing radii with decreasing alpha.
+// Capped at +8 units of reach for a tighter, more contained neon look
+// (no shaders, no render textures).
+//
+// Cost: roughly 8 extra draw calls per unit. With a few hundred enemies
+// that's still well under a frame budget.
+
+// brightenColor lifts a color toward white by `amount` (0..1). The hot
+// inner glow rings push 90% toward white so the halo reads as emitted
+// light rather than a duller tinted shape.
+func brightenColor(c rl.Color, amount float32) rl.Color {
+	if amount < 0 {
+		amount = 0
+	}
+	if amount > 1 {
+		amount = 1
+	}
+	return rl.NewColor(
+		uint8(float32(c.R)+(255-float32(c.R))*amount),
+		uint8(float32(c.G)+(255-float32(c.G))*amount),
+		uint8(float32(c.B)+(255-float32(c.B))*amount),
+		c.A,
+	)
+}
+
+// scaleAlpha clamps a base alpha (0..255) by a 0..1 multiplier and returns
+// it as uint8.
+func scaleAlpha(base uint8, mul float32) uint8 {
+	v := float32(base) * mul
+	if v < 0 {
+		v = 0
+	}
+	if v > 255 {
+		v = 255
+	}
+	return uint8(v)
+}
+
+// glowSteps controls how many concentric layers form the falloff. More =
+// smoother gradient, but more draw calls.
+const glowSteps = 8
+
+// glowReach is the maximum radius the outermost glow layer extends BEYOND
+// the body. Tightened from the original 12 to 8 for a more contained
+// neon-tube look — halo is small, sharp, and right against the body.
+const glowReach = 8.0
+
+// drawNeonGlow draws a circular bloom around (x, y). Stacks `glowSteps`
+// filled circles from radius+3 to radius+glowReach with quadratic alpha
+// falloff, then a few densely packed bright "neon tube" circles right at
+// the body edge.
+func drawNeonGlow(x, y, radius float32, col rl.Color, alpha float32) {
+	if alpha <= 0 {
+		return
+	}
+	bright := brightenColor(col, 0.55)
+	hot := brightenColor(col, 0.9)
+
+	// Outer falloff: dense steps from radius+3 outward, alpha curving
+	// quadratically so closer-in layers compound for the bright edge.
+	for i := glowSteps; i >= 1; i-- {
+		t := float32(i) / float32(glowSteps) // 1.0 at outermost, 0 toward body
+		r := radius + 3 + (glowReach-3)*t
+		layerAlpha := uint8(40 * (1 - t) * (1 - t))
+		rl.DrawCircle(int32(x), int32(y), r,
+			rl.NewColor(bright.R, bright.G, bright.B, scaleAlpha(layerAlpha, alpha)))
+	}
+
+	// Bright neon-tube right at the body edge: a few densely stacked
+	// near-white filled circles. Higher alpha than the falloff so the
+	// edge reads as a clear hot rim.
+	rl.DrawCircle(int32(x), int32(y), radius+3,
+		rl.NewColor(hot.R, hot.G, hot.B, scaleAlpha(80, alpha)))
+	rl.DrawCircle(int32(x), int32(y), radius+2,
+		rl.NewColor(hot.R, hot.G, hot.B, scaleAlpha(160, alpha)))
+	rl.DrawCircle(int32(x), int32(y), radius+1,
+		rl.NewColor(hot.R, hot.G, hot.B, scaleAlpha(220, alpha)))
+}
+
+// drawNeonGlowPoly is the polygon equivalent. Used for triangles, hexagons,
+// pentagons, squares — anything drawn via DrawPoly. Same dense-stack
+// approach as drawNeonGlow but using DrawPoly so the halo matches the
+// body's silhouette.
+func drawNeonGlowPoly(x, y, radius float32, sides int32, rotation float32, col rl.Color, alpha float32) {
+	if alpha <= 0 {
+		return
+	}
+	bright := brightenColor(col, 0.55)
+	hot := brightenColor(col, 0.9)
+	pos := rl.NewVector2(x, y)
+
+	for i := glowSteps; i >= 1; i-- {
+		t := float32(i) / float32(glowSteps)
+		r := radius + 3 + (glowReach-3)*t
+		layerAlpha := uint8(40 * (1 - t) * (1 - t))
+		rl.DrawPoly(pos, sides, r, rotation,
+			rl.NewColor(bright.R, bright.G, bright.B, scaleAlpha(layerAlpha, alpha)))
+	}
+
+	rl.DrawPoly(pos, sides, radius+3, rotation,
+		rl.NewColor(hot.R, hot.G, hot.B, scaleAlpha(80, alpha)))
+	rl.DrawPoly(pos, sides, radius+2, rotation,
+		rl.NewColor(hot.R, hot.G, hot.B, scaleAlpha(160, alpha)))
+	rl.DrawPoly(pos, sides, radius+1, rotation,
+		rl.NewColor(hot.R, hot.G, hot.B, scaleAlpha(220, alpha)))
+}
+
+// drawNeonGlowRect: rectangular bloom for the Reflector enemy. Same
+// dense-stack approach but rendered with sides=4 so it matches the body's
+// rotated square via DrawRectanglePro.
+func drawNeonGlowRect(x, y, size, rotation float32, col rl.Color, alpha float32) {
+	if alpha <= 0 {
+		return
+	}
+	bright := brightenColor(col, 0.55)
+	hot := brightenColor(col, 0.9)
+	pos := rl.NewVector2(x, y)
+	const sides = int32(4)
+	// Square via DrawPoly is a diamond by default; +45 makes it square.
+	r := size * 0.5 * 1.41421356
+	rot := rotation + 45
+
+	for i := glowSteps; i >= 1; i-- {
+		t := float32(i) / float32(glowSteps)
+		ringR := r + 3 + (glowReach-3)*t
+		layerAlpha := uint8(40 * (1 - t) * (1 - t))
+		rl.DrawPoly(pos, sides, ringR, rot,
+			rl.NewColor(bright.R, bright.G, bright.B, scaleAlpha(layerAlpha, alpha)))
+	}
+	rl.DrawPoly(pos, sides, r+3, rot, rl.NewColor(hot.R, hot.G, hot.B, scaleAlpha(80, alpha)))
+	rl.DrawPoly(pos, sides, r+2, rot, rl.NewColor(hot.R, hot.G, hot.B, scaleAlpha(160, alpha)))
+	rl.DrawPoly(pos, sides, r+1, rot, rl.NewColor(hot.R, hot.G, hot.B, scaleAlpha(220, alpha)))
+}
+
+// drawBulletTrail renders a fading streak behind a projectile based on its
+// velocity. 8 segments going back ~0.12s of travel, with alpha fading
+// quadratically from ~85% to 0%. No per-bullet state needed — the trail
+// length naturally scales with bullet speed.
+func drawBulletTrail(p *Projectile, col rl.Color) {
+	const segments = 8
+	const trailTime = 0.12 // seconds of velocity-time to span
+
+	// Skip trails for nearly-stationary bullets to avoid weird specks.
+	speedSq := p.VelX*p.VelX + p.VelY*p.VelY
+	if speedSq < 1 {
+		return
+	}
+
+	// Step backward from the current position by velocity * trailTime,
+	// drawing line segments in reverse and tapering thickness + alpha.
+	dx := p.VelX * trailTime / float32(segments)
+	dy := p.VelY * trailTime / float32(segments)
+
+	prevX, prevY := p.X, p.Y
+	for i := 1; i <= segments; i++ {
+		curX := p.X - dx*float32(i)
+		curY := p.Y - dy*float32(i)
+		// Fade quadratically — feels more like a streak than a uniform line.
+		t := 1.0 - float32(i)/float32(segments)
+		alpha := uint8(220 * t * t)
+		thickness := p.Radius * (0.4 + 0.6*t)
+		segCol := rl.NewColor(col.R, col.G, col.B, alpha)
+		rl.DrawLineEx(
+			rl.Vector2{X: prevX, Y: prevY},
+			rl.Vector2{X: curX, Y: curY},
+			thickness, segCol)
+		prevX, prevY = curX, curY
+	}
+}
+
+// ─── Enemy death animation ───────────────────────────────────────────────
+//
+// Each dying enemy renders as a brief two-part burst:
+//   1. A shock ring expanding outward, fading to transparent.
+//   2. The enemy's original shape, scaling up + rotating + fading out.
+// Plus a few small radial debris fragments for extra crunch.
+//
+// Driven entirely by DyingEnemy.Elapsed / Duration. progress 0 → 1 over
+// the animation lifetime. No per-fragment state — fragments are derived
+// deterministically from the dying-enemy struct each frame.
+
+func drawDyingEnemies() {
+	for _, d := range state.DyingEnemies {
+		drawDyingEnemy(d)
+	}
+}
+
+func drawDyingEnemy(d *DyingEnemy) {
+	if d.Duration <= 0 {
+		return
+	}
+	progress := d.Elapsed / d.Duration
+	if progress < 0 {
+		progress = 0
+	}
+	if progress > 1 {
+		progress = 1
+	}
+
+	// Resolve the same color the live enemy was drawn with.
+	color := EnemyColor
+	if d.IsBoss {
+		color = rl.Purple
+	} else if d.Type == EnemyDodger {
+		color = EnemyDodgerColor
+	} else if d.Type == EnemyRanger {
+		color = EnemyRangerColor
+	} else if d.Type == EnemyShielder {
+		color = EnemyShielderColor
+	} else if d.Type == EnemyPhaser {
+		color = EnemyPhaserColor
+	} else if d.Type == EnemyReflector {
+		color = EnemyReflectorColor
+	} else if d.Type == EnemyDivider {
+		color = EnemyDividerColor
+	} else if d.Type == EnemyBerserker {
+		color = EnemyBerserkerColor
+	}
+
+	// 1) Shock ring — subtle backdrop only. Reads as a faint pulse behind
+	// the fragments rather than competing with them. Tinted to the
+	// enemy's color (not warm white) so it blends instead of flashing.
+	ringR := d.Size * (0.5 + progress*1.4)
+	ringAlpha := uint8(80 * (1 - progress) * (1 - progress))
+	ringCol := rl.NewColor(color.R, color.G, color.B, ringAlpha)
+	rl.DrawCircleLines(int32(d.X), int32(d.Y), ringR, ringCol)
+	if d.IsBoss {
+		// Bosses get a slightly stronger ring for extra weight.
+		rl.DrawCircleLines(int32(d.X), int32(d.Y), ringR*0.7,
+			rl.NewColor(color.R, color.G, color.B, ringAlpha))
+	}
+
+	// 2) Burst-apart fragments — the main visual flourish. The enemy's
+	// silhouette ruptures into a shower of small shards that fly radially
+	// outward, tumble as they go, and fade out.
+	//
+	// Fragment shape mirrors the enemy: triangle enemies shed triangles,
+	// hex enemies shed hexes, squares shed squares. This gives each enemy
+	// type a distinct death silhouette in the brief moment before they
+	// fade. Bosses get nearly twice the fragment count for extra drama.
+	fragSides := fragmentSidesForType(d.Type)
+	fragCount := 14
+	if d.IsBoss {
+		fragCount = 22
+	}
+	// Deterministic per-enemy seed so directions/sizes are stable across
+	// frames (no flicker).
+	seed := int(d.X*7.13) ^ int(d.Y*3.71)
+	for i := 0; i < fragCount; i++ {
+		// Angle: evenly spaced around the circle + small jittered offset
+		// so the burst doesn't look like a perfect snowflake.
+		baseAngle := float32(i) * (2 * float32(math.Pi) / float32(fragCount))
+		jitter := float32((seed+i*13)%9-4) * 0.05 // small per-frag offset
+		angle := baseAngle + jitter
+
+		// Speed multiplier varies per fragment so they don't all fly out in
+		// a uniform circle. Range ~0.65x to 1.35x of the base.
+		speedMult := 0.65 + float32((seed+i*7)%8)*0.1
+
+		// Linear distance vs progress — feels like "constant velocity"
+		// rather than the previous quadratic which front-loaded the burst.
+		baseDist := d.Size * 2.6
+		dist := baseDist * speedMult * progress
+
+		fx := d.X + float32(math.Cos(float64(angle)))*dist
+		fy := d.Y + float32(math.Sin(float64(angle)))*dist
+
+		// Fragments are bumped up a bit in size (~0.28 vs 0.22) so they
+		// dominate the visual instead of sitting beside the ring.
+		fragSize := d.Size * 0.28 * (1 - progress*0.5)
+		if fragSize < 1 {
+			continue
+		}
+
+		// Tumble: each fragment spins on its own axis at a per-frag rate,
+		// modulated by progress.
+		spinRate := float32((seed+i*11)%7-3) * 60 // -180..180 deg/sec roughly
+		fragRot := angle*180/float32(math.Pi) + spinRate*progress
+
+		// Alpha holds strong through most of the animation, only falling
+		// off at the very end. Keeps the burst readable.
+		fadeT := progress * progress // hold full alpha early, drop late
+		fragAlpha := uint8(255 * (1 - fadeT))
+		fragCol := rl.NewColor(color.R, color.G, color.B, fragAlpha)
+		rl.DrawPoly(rl.NewVector2(fx, fy), fragSides, fragSize, fragRot, fragCol)
+	}
+}
+
+// fragmentSidesForType returns how many sides the burst fragments should
+// have for a given enemy type. Mirrors the live enemy's silhouette so the
+// burst reads as the enemy "breaking apart" rather than a generic puff.
+func fragmentSidesForType(typeID int) int32 {
+	switch typeID {
+	case EnemyDodger:
+		return 3 // triangle enemy → triangle shards
+	case EnemyRanger, EnemyDivider:
+		return 6 // hexagon enemy → hex shards
+	case EnemyShielder:
+		return 5 // pentagon enemy → pentagon shards
+	case EnemyReflector:
+		return 4 // square enemy → square shards
+	case EnemyBerserker:
+		return 4 // diamond enemy → diamond shards
+	case EnemyPhaser:
+		return 8 // round enemy → roughly-circular octagon shards
+	default:
+		return 3 // unknown / default → small triangles
+	}
+}
+
 // ── Shared tutorial UI helpers ────────────────────────────────────────────────
 
 // drawTutorialBubble renders a styled tip box anchored at (x, y).
@@ -121,7 +434,7 @@ func enemyIntroText(t int) string {
 	case EnemyRanger:
 		return "HEXAGON -- Ranger. Keeps its distance and shoots back!"
 	case EnemyShielder:
-		return "PENTAGON -- Shielder. Nearby enemies inside its zone are invulnerable."
+		return "PENTAGON -- Shielder. Its zone phases enemies inside. Step in to hit them; everything outside becomes untouchable while you're in."
 	case EnemyPhaser:
 		return "CIRCLE -- Phaser. Blinks intangible to dodge your shots."
 	case EnemyReflector:
@@ -630,11 +943,8 @@ func drawPauseMenu() {
 
 	var cards []card
 
-	// Active abilities from equipped slots.
-	for _, name := range meta.EquippedAbilities {
-		if name == "" {
-			continue
-		}
+	// Active abilities (unlocked via talents, in fixed display order).
+	for _, name := range getActiveAbilities() {
 		var col rl.Color
 		switch name {
 		case AbilityRapidFire:
@@ -1203,13 +1513,18 @@ func drawLoadScreen() {
 		rangeColor := rl.Fade(rl.Green, float32(worldAlpha)/255*0.1)
 		rl.DrawCircleLines(int32(state.Player.X), int32(state.Player.Y), state.Player.Range, rangeColor)
 
+		// Neon glow behind the body, scaled by the spawn-fade alpha so it
+		// fades in alongside the fill.
+		drawNeonGlow(state.Player.X, state.Player.Y, state.Player.Radius,
+			DefenderColor, float32(worldAlpha)/255)
+
 		// Player body fills in.
 		bodyColor := rl.NewColor(DefenderColor.R, DefenderColor.G, DefenderColor.B, worldAlpha)
 		rl.DrawCircle(int32(state.Player.X), int32(state.Player.Y), state.Player.Radius, bodyColor)
 	}
 
-	// The circle outline transitions from DefenderColor (blue) to white as the
-	// player fills in — no separate white circle, just one outline shifting colour.
+	// Outline transitions from DefenderColor (blue) to white as the player
+	// fills in.
 	outlineR := DefenderColor.R + uint8(float32(255-DefenderColor.R)*worldFadeT)
 	outlineG := DefenderColor.G + uint8(float32(255-DefenderColor.G)*worldFadeT)
 	outlineB := DefenderColor.B + uint8(float32(255-DefenderColor.B)*worldFadeT)
@@ -1359,7 +1674,11 @@ func drawUI(hudAlpha uint8) {
 	if state.Player.FrenzyChance > 0 {
 		passiveCount++
 	}
-	activeBarWidth := float32(4*(AbilityIconSize+AbilityIconMargin) + AbilityIconMargin)
+	// HUD width sized to fit all possible actives (currently 6 in
+	// AbilityDisplayOrder), so unlocking Chrono or Bombard later doesn't
+	// require the bar to grow mid-run.
+	activeSlotCount := len(AbilityDisplayOrder)
+	activeBarWidth := float32(activeSlotCount*(AbilityIconSize+AbilityIconMargin) + AbilityIconMargin)
 	passiveBarWidth := float32(passiveCount) * float32(AbilityIconSize+AbilityIconMargin)
 	totalBarWidth := activeBarWidth
 	if passiveCount > 0 {
@@ -1368,13 +1687,17 @@ func drawUI(hudAlpha uint8) {
 	rl.DrawRectangle(int32(AbilityIconMargin), int32(ActionBarY-28), int32(totalBarWidth), AbilityIconSize+50, fa(rl.NewColor(20, 20, 30, 180)))
 
 	// ── Active ability icons ───────────────────────────────────────────────────
-	for i, name := range meta.EquippedAbilities {
-		if name == "" {
+	// Iterate over getActiveAbilities() (talent-derived, fixed display order).
+	// Slots beyond the number of unlocked abilities render as locked.
+	active := getActiveAbilities()
+	for i := 0; i < activeSlotCount; i++ {
+		if i >= len(active) {
 			drawLockedIcon(i, hudAlpha)
 			continue
 		}
+		name := active[i]
 
-		cd, base, active := float32(0), float32(1), false
+		cd, base, abilActive := float32(0), float32(1), false
 		char := string(name[0])
 		color := rl.White
 
@@ -1391,36 +1714,36 @@ func drawUI(hudAlpha uint8) {
 			} else {
 				base = RapidFireBaseCD / (1.0 + p.CooldownRate)
 			}
-			active = p.IsRapidFiring
+			abilActive = p.IsRapidFiring
 			color = rl.Red
 		case AbilityDeathRay:
 			cd = p.DeathRayCooldown
 			base = DeathRayBaseCD / (1.0 + p.CooldownRate)
-			active = p.IsDeathRayActive
+			abilActive = p.IsDeathRayActive
 			color = rl.Purple
 		case AbilityGravity:
 			cd = p.GravityCooldown
 			base = GravityBaseCD / (1.0 + p.CooldownRate)
-			active = p.IsGravityActive
+			abilActive = p.IsGravityActive
 			color = rl.Violet
 		case AbilityBombard:
 			cd = p.BombardmentCooldown
 			base = BombardBaseCD / (1.0 + p.CooldownRate)
-			active = p.IsBombardmentActive
+			abilActive = p.IsBombardmentActive
 			color = rl.Orange
 		case AbilityStatic:
 			cd = p.StaticCooldown
 			base = StaticBaseCD / (1.0 + p.CooldownRate)
-			active = false
+			abilActive = false
 			color = rl.SkyBlue
 		case AbilityChrono:
 			cd = p.ChronoCooldown
 			base = ChronoBaseCD / (1.0 + p.CooldownRate)
-			active = p.IsChronoActive
+			abilActive = p.IsChronoActive
 			color = rl.Gold
 		}
 
-		// Per-slot AUTO toggle
+		// Per-ability AUTO toggle (name-keyed map).
 		iconX := float32(AbilityIconMargin + AbilityIconMargin + i*(AbilityIconSize+AbilityIconMargin))
 		const autoH = 16
 		autoRect := rl.Rectangle{
@@ -1429,7 +1752,10 @@ func drawUI(hudAlpha uint8) {
 			Width:  float32(AbilityIconSize),
 			Height: autoH,
 		}
-		isAuto := state.Player.AutoAbilities[i]
+		if state.Player.AutoAbilities == nil {
+			state.Player.AutoAbilities = map[string]bool{}
+		}
+		isAuto := state.Player.AutoAbilities[name]
 		autoBg := rl.NewColor(110, 25, 25, 220)
 		if isAuto {
 			autoBg = rl.NewColor(25, 110, 25, 220)
@@ -1441,7 +1767,7 @@ func drawUI(hudAlpha uint8) {
 				autoBg = rl.NewColor(150, 35, 35, 255)
 			}
 			if rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
-				state.Player.AutoAbilities[i] = !isAuto
+				setAbilityAuto(name, !isAuto)
 			}
 		}
 		rl.DrawRectangleRec(autoRect, fa(autoBg))
@@ -1450,7 +1776,7 @@ func drawUI(hudAlpha uint8) {
 		labelW := rl.MeasureText(autoLabel, 10)
 		rl.DrawText(autoLabel, int32(autoRect.X)+int32(autoRect.Width/2)-labelW/2, int32(autoRect.Y+3), 10, fa(rl.White))
 
-		drawAbilityIcon(i, int32(rl.KeyOne)+int32(i), cd, base, active, char, fa(color), hudAlpha)
+		drawAbilityIcon(i, int32(rl.KeyOne)+int32(i), cd, base, abilActive, char, fa(color), hudAlpha)
 	}
 
 	// ── Passive ability icons ──────────────────────────────────────────────────
@@ -1581,11 +1907,13 @@ func drawGame() {
 	if state.Player.IsChronoActive {
 		bgColor = rl.NewColor(10, 10, 30, 255)
 	}
-	rl.ClearBackground(bgColor)
 
 	if state.GameOver {
+		rl.ClearBackground(bgColor)
 		drawGameOverScreen()
 	} else {
+		rl.ClearBackground(bgColor)
+
 		rl.BeginMode2D(state.Camera)
 
 		//the fade effect is cool, and is getting heavy use to make my various bombs
@@ -1777,6 +2105,9 @@ func drawGame() {
 			} else if p.Hits > 0 {
 				color = rl.Green
 			}
+			// Trail behind the bullet — drawn first so the bullet body
+			// sits cleanly on top of its own streak.
+			drawBulletTrail(p, color)
 			rl.DrawCircle(int32(p.X), int32(p.Y), p.Radius, color)
 		}
 
@@ -1830,37 +2161,48 @@ func drawGame() {
 				angleRad := math.Atan2(float64(state.Player.Y-enm.Y), float64(state.Player.X-enm.X))
 				angleDeg := float32(angleRad * 180 / math.Pi)
 
-				// Draw Shapes based on type
+				// Draw shape based on type. Each unit gets a synthwave-style
+				// neon glow ring behind it (drawNeonGlow* helpers stack
+				// translucent shapes at increasing radii), then the body
+				// fills in at its original color with a thin white outline.
 				if enm.Type == EnemyDodger {
+					drawNeonGlowPoly(enm.X, enm.Y, enm.Size/2.0*1.5, 3, angleDeg, color, 1.0)
 					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 3, enm.Size/2.0*1.5, angleDeg, color)
 					rl.DrawPolyLinesEx(rl.NewVector2(enm.X, enm.Y), 3, enm.Size/2.0*1.5, angleDeg, 2.0, rl.White)
 				} else if enm.Type == EnemyRanger {
+					drawNeonGlowPoly(enm.X, enm.Y, enm.Size/2.0, 6, angleDeg, color, 1.0)
 					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 6, enm.Size/2.0, angleDeg, color)
 					rl.DrawPolyLinesEx(rl.NewVector2(enm.X, enm.Y), 6, enm.Size/2.0, angleDeg, 2.0, rl.White)
 				} else if enm.Type == EnemyShielder {
+					drawNeonGlowPoly(enm.X, enm.Y, enm.Size/2.0+5, 5, angleDeg, color, 1.0)
 					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 5, enm.Size/2.0+5, angleDeg, color)
 					rl.DrawPolyLinesEx(rl.NewVector2(enm.X, enm.Y), 5, enm.Size/2.0+5, angleDeg, 2.0, rl.White)
 				} else if enm.Type == EnemyPhaser {
-					// Draw a "Ghost" circle
+					// Skip glow when phased so the ghost effect reads as
+					// translucent instead of fully lit.
+					if !enm.IsPhased {
+						drawNeonGlow(enm.X, enm.Y, enm.Size/2, color, 1.0)
+					}
 					rl.DrawCircle(int32(enm.X), int32(enm.Y), enm.Size/2, color)
 					if !enm.IsPhased {
 						rl.DrawCircleLines(int32(enm.X), int32(enm.Y), enm.Size/2, rl.White)
 					}
 				} else if enm.Type == EnemyReflector {
-					// Draw a shiny square
+					drawNeonGlowRect(enm.X, enm.Y, enm.Size, angleDeg, color, 1.0)
 					rl.DrawRectanglePro(rl.Rectangle{X: enm.X, Y: enm.Y, Width: enm.Size, Height: enm.Size}, rl.NewVector2(enm.Size/2, enm.Size/2), angleDeg, color)
 					rl.DrawRectangleLinesEx(rl.Rectangle{X: enm.X - enm.Size/2, Y: enm.Y - enm.Size/2, Width: enm.Size, Height: enm.Size}, 2, rl.White)
 				} else if enm.Type == EnemyDivider {
-					// Hexagon
+					drawNeonGlowPoly(enm.X, enm.Y, enm.Size/2.0, 6, angleDeg, color, 1.0)
 					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 6, enm.Size/2.0, angleDeg, color)
 					rl.DrawPolyLinesEx(rl.NewVector2(enm.X, enm.Y), 6, enm.Size/2.0, angleDeg, 2.0, rl.White)
 				} else if enm.Type == EnemyBerserker {
-					// Spiky star shape
-					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 4, enm.Size/2.0*1.5, angleDeg, color)    // Diamond
-					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 4, enm.Size/2.0*1.5, angleDeg+45, color) // 2nd Diamond
+					// Two stacked diamonds — glow only the larger silhouette.
+					drawNeonGlowPoly(enm.X, enm.Y, enm.Size/2.0*1.5, 4, angleDeg, color, 1.0)
+					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 4, enm.Size/2.0*1.5, angleDeg, color)
+					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 4, enm.Size/2.0*1.5, angleDeg+45, color)
 				} else {
-					// Standard
 					polyRadius := (enm.Size / 2.0) * float32(math.Sqrt(2))
+					drawNeonGlowPoly(enm.X, enm.Y, polyRadius, 4, angleDeg-45, color, 1.0)
 					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 4, polyRadius, angleDeg-45, color)
 					rl.DrawPolyLinesEx(rl.NewVector2(enm.X, enm.Y), 4, polyRadius, angleDeg-45, 2.0, rl.White)
 				}
@@ -1974,6 +2316,7 @@ func drawGame() {
 				}
 			}
 		} else {
+			drawNeonGlow(state.Player.X, state.Player.Y, state.Player.Radius, DefenderColor, 1.0)
 			rl.DrawCircle(int32(state.Player.X), int32(state.Player.Y), state.Player.Radius, DefenderColor)
 			rl.DrawCircleLines(int32(state.Player.X), int32(state.Player.Y), state.Player.Radius, rl.White)
 			if state.Player.Overshield > 0 {
@@ -1986,6 +2329,7 @@ func drawGame() {
 				angle := state.Player.SatelliteAngle + (float32(k) * (2 * math.Pi / float32(state.Player.SatelliteCount)))
 				satX := state.Player.X + float32(math.Cos(float64(angle)))*SatelliteDistance
 				satY := state.Player.Y + float32(math.Sin(float64(angle)))*SatelliteDistance
+				drawNeonGlow(satX, satY, SatelliteRadius, SatelliteColor, 1.0)
 				rl.DrawCircle(int32(satX), int32(satY), SatelliteRadius, SatelliteColor)
 			}
 		}
@@ -2138,6 +2482,11 @@ func drawGame() {
 				}
 			}
 		}
+
+		// Death animations for enemies that just died this frame or recently.
+		// Drawn last so they sit on top of remaining live enemies — gives the
+		// kill-feedback proper visual emphasis.
+		drawDyingEnemies()
 
 		rl.EndMode2D()
 

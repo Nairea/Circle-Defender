@@ -20,7 +20,7 @@ var LootTemplates = []Item{
 	{Name: "Data Chip", Type: ItemTrinket, Description: "Data Mining", Stats: []ItemStat{{StatType: "RPGain", BaseValue: 0.1, Growth: 0.02}}},
 	{Name: "Nitro Cell", Type: ItemTrinket, Description: "Overclocking", Stats: []ItemStat{{StatType: "CDR", BaseValue: 0.05, Growth: 0.01}}},
 	{Name: "Blast Module", Type: ItemTrinket, Description: "Explosive Hits", Stats: []ItemStat{{StatType: "Explosive", BaseValue: 0.10, Growth: 0.02}}},
-	{Name: "Sniper Scope", Type: ItemTrinket, Description: "Long Shot", Stats: []ItemStat{{StatType: "DmgDist", BaseValue: 0.01, Growth: 0.005}}},
+	{Name: "Sniper Scope", Type: ItemTrinket, Description: "Long Shot", Stats: []ItemStat{{StatType: "DmgDist", BaseValue: 0.005, Growth: 0.001}}},
 }
 
 // Define the items target stat for any given line, its base value, and how much it grows per level.
@@ -39,7 +39,7 @@ var WeaponStatPool = []ItemStats{
 	{"Haste", 0.01, 0.005},
 	{"CritChance", 0.02, 0.01},
 	{"CritMult", 0.1, 0.05},
-	{"DmgDist", 0.01, 0.005},
+	{"DmgDist", 0.005, 0.001},
 	{"Range", 10.0, 2.0},
 }
 
@@ -68,6 +68,59 @@ var TrinketStatPool = []ItemStats{
 	{"WaveSkip", 0.02, 0.01},
 	{"CDR", 0.02, 0.01},
 	{"FreeUp", 0.01, 0.005},
+}
+
+// spawnDyingEnemy captures an enemy's visual state at moment of death and
+// queues it for the death animation. Call this BEFORE removing the enemy
+// from state.Enemies. Bosses get a longer animation.
+func spawnDyingEnemy(e *Enemy) {
+	if e == nil {
+		return
+	}
+	dur := float32(EnemyDeathAnimDuration)
+	if e.IsBoss {
+		dur *= 2.0
+	}
+	// Use the enemy's current move-direction for rotation, mirroring the
+	// live render. Fallback to player-facing if not moving.
+	rot := float32(0)
+	if e.SlideTimer > 0 || e.SlideVX != 0 || e.SlideVY != 0 {
+		rot = float32(math.Atan2(float64(e.SlideVY), float64(e.SlideVX))*180/math.Pi) - 90
+	} else {
+		dx := state.Player.X - e.X
+		dy := state.Player.Y - e.Y
+		rot = float32(math.Atan2(float64(dy), float64(dx))*180/math.Pi) - 90
+	}
+	state.DyingEnemies = append(state.DyingEnemies, &DyingEnemy{
+		X:        e.X,
+		Y:        e.Y,
+		Size:     e.Size,
+		Type:     e.Type,
+		IsBoss:   e.IsBoss,
+		Rotation: rot,
+		Elapsed:  0,
+		Duration: dur,
+	})
+}
+
+// updateDyingEnemies advances each death animation by real wall-clock dt
+// (NOT effectiveDt) and removes expired entries. This is what keeps the
+// animation duration consistent across game speed multipliers.
+//
+// Callers must pass real wall-clock dt (rl.GetFrameTime()) here even if
+// they're using a scaled effectiveDt elsewhere.
+func updateDyingEnemies(realDt float32) {
+	if len(state.DyingEnemies) == 0 {
+		return
+	}
+	out := state.DyingEnemies[:0]
+	for _, d := range state.DyingEnemies {
+		d.Elapsed += realDt
+		if d.Elapsed < d.Duration {
+			out = append(out, d)
+		}
+	}
+	state.DyingEnemies = out
 }
 
 func isStatStatic(statType string) bool {
@@ -231,6 +284,9 @@ func buyItem(amount int, targetType int) {
 		return
 	}
 	meta.ResearchPoints -= amount
+	// Spending RP in the fab gives a tiny MetaXP bonus so the RP
+	// economy doesn't feel disconnected from meta progression.
+	awardRPSpentBonus(amount)
 
 	// Filter templates by requested type.
 	validItems := make([]Item, 0)
@@ -1083,6 +1139,7 @@ func moveProjectiles(dt float32) {
 							if enemy.Type == EnemyDivider {
 								spawnFragments(enemy.X, enemy.Y, state.Wave)
 							}
+							spawnDyingEnemy(enemy)
 							state.Enemies = append(state.Enemies[:i], state.Enemies[i+1:]...)
 							state.EnemiesAlive--
 						}
@@ -1293,6 +1350,7 @@ func moveMines(dt float32) {
 					if enemy.Type == EnemyDivider {
 						spawnFragments(enemy.X, enemy.Y, state.Wave)
 					}
+					spawnDyingEnemy(enemy)
 					state.Enemies = append(state.Enemies[:j], state.Enemies[j+1:]...)
 					state.EnemiesAlive--
 				}
@@ -1676,6 +1734,7 @@ func moveEnemies(dt float32) {
 			if enemy.Type == EnemyDivider {
 				spawnFragments(enemy.X, enemy.Y, state.Wave)
 			}
+			spawnDyingEnemy(enemy)
 			state.Enemies = append(state.Enemies[:i], state.Enemies[i+1:]...)
 			state.EnemiesAlive--
 			i--
@@ -1699,29 +1758,64 @@ func isPositionBlocked(x, y float32, self *Enemy) bool {
 	return false
 }
 
-// Returns true if the target is immune to damage from the player's current position
+// isEnemyProtected returns true if the target cannot be hit by the player
+// from the player's current position.
+//
+// Phase-layer model: each Shielder defines a circular zone. Entities (the
+// player and every enemy) are inside or outside each zone independently.
+// Two entities can interact (deal damage, get hit) only if they share the
+// same zone-membership set — i.e. for every active Shielder, both are
+// either inside its zone or both are outside.
+//
+// Practical effects:
+//   - Outside any Shielder zone, the player can hit enemies that are also
+//     outside every Shielder zone. Anything tucked into a Shielder is
+//     untouchable until the player phases in.
+//   - Stepping into a Shielder's zone phases the player into that layer:
+//     they can hit enemies inside that same zone, but enemies outside the
+//     zone (including their own bullets and abilities — see callers) become
+//     untouchable until they leave.
+//   - Overlapping Shielders create tiered zones — to hit an enemy inside
+//     both Shielder A and B, the player must also be inside both.
+//   - The Shielder itself is "inside its own zone" so it can only be
+//     killed by going in.
+//
+// A target is "protected" when its membership set differs from the player's.
 func isEnemyProtected(target *Enemy) bool {
-	for _, source := range state.Enemies {
-		// Look for active Shielders
-		if source.Type == EnemyShielder && source.HP > 0 {
+	if target == nil {
+		return false
+	}
+	// Fast path: no live Shielders means everyone is in the empty set,
+	// so nothing is protected.
+	hasAnyShielder := false
+	for _, s := range state.Enemies {
+		if s.Type == EnemyShielder && s.HP > 0 {
+			hasAnyShielder = true
+			break
+		}
+	}
+	if !hasAnyShielder {
+		return false
+	}
 
-			// 1. Is the target inside this Shielder's zone?
-			// (If target == source, distance is 0, so this is always true for the Shielder itself)
-			dx := target.X - source.X
-			dy := target.Y - source.Y
-			distSq := dx*dx + dy*dy
+	radSq := float32(ShielderRadius * ShielderRadius)
+	for _, s := range state.Enemies {
+		if s.Type != EnemyShielder || s.HP <= 0 {
+			continue
+		}
+		// Is the target inside this Shielder's zone?
+		dx := target.X - s.X
+		dy := target.Y - s.Y
+		targetIn := (dx*dx + dy*dy) < radSq
 
-			if distSq < ShielderRadius*ShielderRadius {
-				// Checks if player is outside zone
-				pDx := state.Player.X - source.X
-				pDy := state.Player.Y - source.Y
-				pDistSq := pDx*pDx + pDy*pDy
+		// Is the player inside this Shielder's zone?
+		pdx := state.Player.X - s.X
+		pdy := state.Player.Y - s.Y
+		playerIn := (pdx*pdx + pdy*pdy) < radSq
 
-				// If player is outside, the safey safe holds true
-				if pDistSq > ShielderRadius*ShielderRadius {
-					return true
-				}
-			}
+		// Different sides of this zone → protected (different phase layer).
+		if targetIn != playerIn {
+			return true
 		}
 	}
 	return false
@@ -1816,14 +1910,10 @@ func setupLevelUpOptions() {
 		})
 	}
 
-	// In-run upgrades for equipped abilities. Options offered depend on the
+	// In-run upgrades for unlocked abilities. Options offered depend on the
 	// talent branch chosen in the Talent Lab. If no branch has been chosen
 	// yet the player gets a generic set so they're never upgrade-starved.
-	for _, abil := range meta.EquippedAbilities {
-		if abil == "" {
-			continue
-		}
-
+	for _, abil := range getActiveAbilities() {
 		switch abil {
 		// ── Rapid Fire ───────────────────────────────────────────────────────
 		case AbilityRapidFire:
@@ -2135,6 +2225,21 @@ func updateGame(dt float32) {
 		state.DeathTimer -= dt
 		if state.DeathTimer <= 0 {
 			state.GameOver = true
+			// Award MetaXP for the run. Wave is 1-indexed so subtract 1 so
+			// dying on wave 1 doesn't grant survival XP. SaveMetaProg flushes
+			// the grant to disk so it survives a crash-at-game-over.
+			if !state.MetaXPAwarded {
+				wavesCleared := state.Wave - 1
+				if wavesCleared < 0 {
+					wavesCleared = 0
+				}
+				gained := state.RunKills*MetaXPPerKill +
+					state.RunBossKills*MetaXPPerBossKill +
+					wavesCleared*MetaXPPerWave
+				awardMetaXP(gained)
+				state.MetaXPAwarded = true
+				SaveMetaProg()
+			}
 			return
 		}
 		// Keep the world running at half speed so the death animation plays.
@@ -2148,6 +2253,7 @@ func updateGame(dt float32) {
 		updateVisuals(effectiveDt)
 		updateFloatingTexts(dt)
 		moveEnemies(effectiveDt)
+		updateDyingEnemies(dt)
 		return
 	}
 
@@ -2174,11 +2280,8 @@ func updateGame(dt float32) {
 	updateLingerZones(effectiveDt)
 	handleAbilityInput()
 
-	for i, name := range meta.EquippedAbilities {
-		if name == "" {
-			continue
-		}
-		if !state.Player.AutoAbilities[i] {
+	for _, name := range getActiveAbilities() {
+		if !state.Player.AutoAbilities[name] {
 			continue
 		}
 
@@ -2382,6 +2485,7 @@ func updateGame(dt float32) {
 	updateVisuals(effectiveDt)
 	updateFloatingTexts(dt)
 	moveEnemies(effectiveDt)
+	updateDyingEnemies(dt)
 	checkXP()
 
 	// Update in-run tutorial last so new tips set this frame are visible immediately.

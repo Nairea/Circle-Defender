@@ -53,7 +53,20 @@ func Subscribe(t GameEventType, h EventHandler) {
 
 // Dispatch fires all handlers registered for the event's type.
 // Safe to call even when no handlers are registered.
+//
+// Side effect: OnKill events also tick the run-scoped kill counters on
+// GameState so end-of-run MetaXP awarding has a true count. Boss kills
+// are detected by enemy size (bosses are visibly larger) since there's
+// no IsBoss flag on Enemy — this matches the spawn tracking in gameLogic.
 func Dispatch(e GameEvent) {
+	if e.Type == EventOnKill && e.Enemy != nil {
+		state.RunKills++
+		// Bosses are ~3x+ larger than base enemies and come from SpawnQueue.
+		// A size-based proxy is reliable enough for XP scoring.
+		if e.Enemy.Size >= 40 {
+			state.RunBossKills++
+		}
+	}
 	for _, h := range eventBus[e.Type] {
 		h(e)
 	}

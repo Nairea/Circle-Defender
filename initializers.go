@@ -12,6 +12,16 @@ import (
 const SaveFileName = "saveData/savegame.json"
 const MetaSaveFile = "saveData/meta.json"
 
+// copyAutoMap returns a fresh map mirroring src so the player's in-run
+// AUTO state can mutate without aliasing the persisted meta map.
+func copyAutoMap(src map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
+}
+
 func initGame() {
 	//load up last save state for meta prog or init a default otherwise.
 	LoadMetaProgression()
@@ -76,7 +86,16 @@ func SaveMetaProg() {
 	}
 	meta.MusicVolume = state.MusicVolume
 	meta.SFXVolume = state.SFXVolume
-	meta.AutoAbilities = state.Player.AutoAbilities
+	// Sync AUTO toggles: state.Player.AutoAbilities (name-keyed map) is the
+	// in-run source of truth. Persist into meta so it survives a relaunch.
+	if state.Player.AutoAbilities != nil {
+		if meta.AutoAbilitiesByName == nil {
+			meta.AutoAbilitiesByName = map[string]bool{}
+		}
+		for k, v := range state.Player.AutoAbilities {
+			meta.AutoAbilitiesByName[k] = v
+		}
+	}
 
 	//ah marshall. a delight
 	data, err := json.MarshalIndent(meta, "", "  ")
@@ -103,6 +122,12 @@ func LoadMetaProgression() {
 		//off the tutorial flow.
 		meta.ResearchPoints = 200
 		meta.TutorialStep = TutorialGoToResearch
+		// New talent system: seed ML 1 + enough TP for the tutorial unlock.
+		meta.MetaLevel = 1
+		meta.TalentPointsEarned = TPPerMetaLevel
+		meta.TalentRanks = make(map[string]int)
+		meta.AutoAbilitiesByName = make(map[string]bool)
+		meta.TalentsMigrated = true // nothing to migrate on a fresh save
 		SaveMetaProg()
 		return
 	}
@@ -112,6 +137,19 @@ func LoadMetaProgression() {
 	if err != nil {
 		fmt.Println("Error unmarshaling meta:", err)
 	}
+
+	// Ensure the talent-ranks map exists (JSON unmarshalling of a map field
+	// that wasn't in the old save leaves it nil).
+	if meta.TalentRanks == nil {
+		meta.TalentRanks = make(map[string]int)
+	}
+	// Same for AutoAbilitiesByName — old saves don't have it.
+	if meta.AutoAbilitiesByName == nil {
+		meta.AutoAbilitiesByName = make(map[string]bool)
+	}
+	// One-shot migration from legacy unlock/branch fields to talent ranks.
+	// Safe no-op after the first successful run.
+	migrateLegacyTalents()
 }
 
 func SaveGame() {
@@ -216,7 +254,9 @@ func initBasePlayer() Player {
 		Damage:    5.0,
 		Range:     BaseRange,
 
-		AutoAbilities: meta.AutoAbilities,
+		// AutoAbilities is now a name-keyed map (per-ability AUTO toggle).
+		// Copy from the persisted meta map so toggles survive between runs.
+		AutoAbilities: copyAutoMap(meta.AutoAbilitiesByName),
 		UpgradeCounts: make(map[string]int),
 
 		BaseASDelay:    0.5,
@@ -307,124 +347,21 @@ func initBasePlayer() Player {
 	p.Range += float32(meta.RangeLevel) * 15.0
 	p.ThornsDamage += float32(meta.ThornsLevel) * 2.0
 
-	for _, ability := range meta.EquippedAbilities {
-		switch ability {
-		case AbilityRapidFire:
-			p.RapidFireUnlocked = true
-		case AbilityDeathRay:
-			p.DeathRayUnlocked = true
-		case AbilityGravity:
-			p.GravityFieldUnlocked = true
-		case AbilityBombard:
-			p.BombardmentUnlocked = true
-		case AbilityStatic:
-			p.StaticDischargeUnlocked = true
-		case AbilityChrono:
-			p.ChronoFieldUnlocked = true
-		}
-	}
+	// Note: ability unlock flags (RapidFireUnlocked etc.) are populated
+	// by applyAllTalents below, which reads from meta.TalentRanks. The
+	// old "EquippedAbilities" array is no longer consulted.
 
 	recalculateAttackSpeed(&p)
-	applyTalentBranches(&p)
+	applyAllTalents(&p)
 
 	return p
 }
 
-// applyTalentBranches applies the one-time stat and flag changes granted by
-// each chosen talent branch. Called once when building the player from meta.
-func applyTalentBranches(p *Player) {
-	// --- Rapid Fire ---
-	switch meta.RapidFireBranch {
-	case BranchRapidFireBulletStorm:
-		p.RapidFireMultiplier += 1.5
-		p.RapidFireDuration -= 1.0
-		if p.RapidFireDuration < 2.0 {
-			p.RapidFireDuration = 2.0
-		}
-	case BranchRapidFireOvercharge:
-		p.RapidFireMultiplier += 0.5
-	}
-
-	// --- Death Ray ---
-	switch meta.DeathRayBranch {
-	case BranchDeathRayAnnihilator:
-		p.DeathRayDamageMult += 3.0
-		p.DeathRayScaling = 0.5
-		p.DeathRayPath = 1
-	case BranchDeathRayPrism:
-		p.DeathRayCount = 0
-		p.DeathRaySpinCount = 2
-		p.DeathRaySpinSpeed = 1.5
-		p.DeathRayPath = 2
-	}
-
-	// --- Gravity Field ---
-	switch meta.GravityBranch {
-	case BranchGravitySingularity:
-		p.GravityRadius -= 40.0
-		if p.GravityRadius < 80.0 {
-			p.GravityRadius = 80.0
-		}
-		p.GravityExplode = true
-	case BranchGravityAnomaly:
-		p.GravityRadius += 50.0
-		p.GravityAnomalyUnlocked = true
-		p.GravityPassiveTimer = 5.0
-	}
-
-	// --- Bombardment ---
-	switch meta.BombardBranch {
-	case BranchBombardCarpet:
-		p.BombardRadius -= 15.0
-		if p.BombardRadius < 20.0 {
-			p.BombardRadius = 20.0
-		}
-		p.BombardDuration += 2.0
-	case BranchBombardSiege:
-		p.BombardRadius += 40.0
-		p.BombardDmgMult += 2.0
-	}
-
-	// --- Static Discharge ---
-	switch meta.StaticBranch {
-	case BranchStaticChain:
-		// Chain Lightning arcs are controlled via meta.StaticBranch check in triggerStaticDischarge
-	case BranchStaticOverload:
-		p.StaticDmgMult += 3.0
-	}
-
-	// --- Chrono Field ---
-	switch meta.ChronoBranch {
-	case BranchChronoTimeStop:
-		// default Chrono already freezes non-bosses; no extra flags needed
-	case BranchChronoEntropy:
-		p.ChronoBossSlow = 0.6
-		p.ChronoDoT += 8.0
-	}
-
-	// --- Mines ---
-	switch meta.MinesBranch {
-	case BranchMinesCluster:
-		p.MineCount += 2
-		p.MineMaxCooldown *= 0.75
-	case BranchMinesHellfire:
-		p.MineCount = 1
-		p.MineHellfireRadius = 100.0
-		p.MineLingerDamage = p.Damage * 0.5
-	}
-
-	// --- Satellites ---
-	switch meta.SatellitesBranch {
-	case BranchSatSentry:
-		p.SatelliteShooting = true
-		p.SatelliteOverdrive = false
-	case BranchSatOverdrive:
-		p.SatelliteOverdrive = true
-		p.SatelliteShooting = false
-	}
-
-	// Shockwave handled entirely in triggerShockwave() via meta.ShockwaveBranch.
-}
+// applyTalentBranches has been removed. Its job (applying one-time stat and
+// flag changes based on the chosen talent branches) is now handled by
+// applyAllTalents in talents.go, which is called from initBasePlayer above.
+// The new system reads talent ranks (meta.TalentRanks) as the source of
+// truth and writes the legacy unlock/branch fields downstream code expects.
 
 // Passing wave atm, but (i need to double check)
 // i reworked it to a steady timer of scaling so
