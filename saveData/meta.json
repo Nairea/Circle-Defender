@@ -1,5 +1,13 @@
 {
+<<<<<<< HEAD
   "ResearchPoints": 95639,
+=======
+<<<<<<< HEAD
+  "ResearchPoints": 267,
+=======
+  "ResearchPoints": 99061,
+>>>>>>> 0895961d4e28198fb86e688fa6df06596b5d4663
+>>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
   "DmgLevel": 0,
   "ASLevel": 0,
   "RegenLevel": 0,
@@ -8,37 +16,92 @@
   "ThornsLevel": 0,
   "MultishotCountLevel": 0,
   "ChainCountLevel": 0,
+<<<<<<< HEAD
+  "MusicVolume": 0.5,
+  "SFXVolume": 0.5,
+  "ShowFPS": false,
+=======
   "MusicVolume": 0.015,
   "SFXVolume": 0,
   "ShowFPS": true,
+>>>>>>> 0895961d4e28198fb86e688fa6df06596b5d4663
   "TutorialStep": 12,
   "TutorialComplete": true,
   "TutorialDeathShown": true,
+<<<<<<< HEAD
   "RapidFireUnlocked": false,
   "DeathRayUnlocked": false,
   "GravityFieldUnlocked": false,
   "BombardmentUnlocked": false,
+=======
+  "RapidFireUnlocked": true,
+<<<<<<< HEAD
+  "DeathRayUnlocked": false,
+  "GravityFieldUnlocked": false,
+  "BombardmentUnlocked": false,
+  "StaticDischargeUnlocked": false,
+  "ChronoFieldUnlocked": false,
+  "MinesUnlocked": false,
+  "SatellitesUnlocked": false,
+  "ShockwaveUnlocked": false,
+  "RapidFireBranch": "",
+  "DeathRayBranch": "",
+=======
+  "DeathRayUnlocked": true,
+  "GravityFieldUnlocked": true,
+  "BombardmentUnlocked": true,
+>>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
   "StaticDischargeUnlocked": true,
   "ChronoFieldUnlocked": false,
   "MinesUnlocked": false,
   "SatellitesUnlocked": true,
+<<<<<<< HEAD
   "ShockwaveUnlocked": false,
   "RapidFireBranch": "",
   "DeathRayBranch": "",
+=======
+  "ShockwaveUnlocked": true,
+  "RapidFireBranch": "BulletStorm",
+  "DeathRayBranch": "Prism",
+>>>>>>> 0895961d4e28198fb86e688fa6df06596b5d4663
+>>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
   "GravityBranch": "",
   "BombardBranch": "",
   "StaticBranch": "",
   "ChronoBranch": "",
+<<<<<<< HEAD
   "MinesBranch": "",
   "SatellitesBranch": "Overdrive",
   "ShockwaveBranch": "",
+=======
+<<<<<<< HEAD
+  "MinesBranch": "",
+  "SatellitesBranch": "",
+  "ShockwaveBranch": "",
+  "Speed3xUnlocked": false,
+  "OpeningSprintUnlocked": false,
+  "EquippedAbilities": [
+    "",
+    "",
+    "",
+    ""
+=======
+  "MinesBranch": "HellfireMines",
+  "SatellitesBranch": "SentryMode",
+  "ShockwaveBranch": "Repulsor",
+>>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
   "Speed3xUnlocked": true,
   "OpeningSprintUnlocked": false,
   "EquippedAbilities": [
     "Rapid Fire",
     "Death Ray",
+<<<<<<< HEAD
     "Shockwave",
     ""
+=======
+    "Static Discharge"
+>>>>>>> 0895961d4e28198fb86e688fa6df06596b5d4663
+>>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
   ],
   "EquippedItemsByIndex": [
     4,
@@ -47,15 +110,26 @@
     3
   ],
   "AutoAbilities": [
+<<<<<<< HEAD
+    false,
+    false,
+    false,
+    false
+=======
     true,
     true,
     true,
     true
+>>>>>>> 0895961d4e28198fb86e688fa6df06596b5d4663
   ],
   "AutoAbilitiesByName": {
+<<<<<<< HEAD
     "Death Ray": true,
     "Rapid Fire": true,
     "Static Discharge": true
+=======
+    "Rapid Fire": true
+>>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
   },
   "Inventory": [
     {
@@ -65,13 +139,29 @@
       "Stats": [
         {
           "StatType": "Damage",
+<<<<<<< HEAD
           "Value": 2,
+=======
+<<<<<<< HEAD
+          "Value": 14,
+=======
+          "Value": 44,
+>>>>>>> 0895961d4e28198fb86e688fa6df06596b5d4663
+>>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
           "BaseValue": 2,
           "Growth": 2
         },
         {
           "StatType": "Haste",
+<<<<<<< HEAD
           "Value": 0.01,
+=======
+<<<<<<< HEAD
+          "Value": 0.06999999,
+=======
+          "Value": 0.22000003,
+>>>>>>> 0895961d4e28198fb86e688fa6df06596b5d4663
+>>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
           "BaseValue": 0.01,
           "Growth": 0.01
         }
@@ -179,6 +269,7 @@
       "SetID": ""
     }
   ],
+<<<<<<< HEAD
   "MetaLevel": 18,
   "MetaXP": 4700,
   "TalentPointsEarned": 73,
@@ -195,6 +286,14 @@
     "pas_satellites_unlock": 1,
     "pas_scavenger": 3,
     "pas_sentinel": 3
+=======
+  "MetaLevel": 3,
+  "MetaXP": 381,
+  "TalentPointsEarned": 9,
+  "TalentRanks": {
+    "dmg_pyro": 2,
+    "dmg_rapidfire_unlock": 1
+>>>>>>> f0fb01b822b770c8c17cf0c1a51b927bc3cd81d7
   },
   "TalentsMigrated": true
 }

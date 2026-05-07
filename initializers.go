@@ -52,6 +52,7 @@ func initGame() {
 		MusicVolume:             meta.MusicVolume,
 		SFXVolume:               meta.SFXVolume,
 		Enemies:                 make([]*Enemy, 0),
+		DyingEnemies:            make([]*DyingEnemy, 0),
 		Projectiles:             make([]*Projectile, 0),
 		Mines:                   make([]*Mine, 0),
 		Explosions:              make([]*Explosion, 0),
@@ -416,34 +417,37 @@ func initEnemy(wave int) *Enemy {
 	// isBoss may be deprecated var, or at least may need renaming.
 	isBoss := false
 
-	// Probability table
-	// Standard: 50%
-	// Dodger: 10%
-	// Ranger: 5%
-	// Shielder: 5% (Wave 4+)
-	// Phaser: 5% (Wave 6+)
-	// Reflector: 5% (Wave 8+)
-	// Divider: 5% (Wave 10+)
-	// Berserker: 5% (Wave 12+)
-	// Remainder: Standard or Boss (if rare roll)
+	// Probability table — types unlock evenly across the first 2:30 of a run
+	// (waves are 15s each).
+	//   Wave 1 (0:00):  Standard  (Boss roll always live)
+	//   Wave 2 (0:15):  +Dodger
+	//   Wave 3 (0:30):  +Ranger
+	//   Wave 4 (0:45):  +Shielder
+	//   Wave 5 (1:00):  +Phaser
+	//   Wave 6 (1:15):  +Reflector
+	//   Wave 7 (1:30):  +Divider
+	//   Wave 8 (1:45):  +Berserker
+	//   Wave 11 (2:30): Boss roll becomes possible
+	// Each type rolls 5% (Phaser fixed from previous 2%). Standard fills the
+	// remaining probability, including any locked-tier rolls early on.
 
 	if r < 0.60 {
 		enemyType = EnemyStandard
-	} else if r < 0.70 {
+	} else if r < 0.70 && wave >= 2 {
 		enemyType = EnemyDodger
-	} else if r < 0.75 {
+	} else if r < 0.75 && wave >= 3 {
 		enemyType = EnemyRanger
 	} else if r < 0.80 && wave >= 4 {
 		enemyType = EnemyShielder
-	} else if r < 0.82 && wave >= 6 {
+	} else if r < 0.85 && wave >= 5 {
 		enemyType = EnemyPhaser
-	} else if r < 0.87 && wave >= 8 {
+	} else if r < 0.87 && wave >= 6 {
 		enemyType = EnemyReflector
-	} else if r < 0.92 && wave >= 10 {
+	} else if r < 0.92 && wave >= 7 {
 		enemyType = EnemyDivider
-	} else if r < 0.97 && wave >= 12 {
+	} else if r < 0.97 && wave >= 8 {
 		enemyType = EnemyBerserker
-	} else if r > 0.97 {
+	} else if r > 0.97 && wave >= 11 {
 		enemyType = EnemyStandard
 		isBoss = true
 	} else {
