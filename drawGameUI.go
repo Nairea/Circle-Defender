@@ -150,6 +150,21 @@ func drawNeonGlowRect(x, y, size, rotation float32, col rl.Color, alpha float32)
 	rl.DrawPoly(pos, sides, r+1, rot, rl.NewColor(hot.R, hot.G, hot.B, scaleAlpha(220, alpha)))
 }
 
+// drawPhaseInversionOverlay flips every rendered RGB channel on screen,
+// producing a photo-negative of the gameplay layer. Called after the
+// world's EndMode2D and before HUD draws, so the inversion only touches
+// the gameplay layer.
+//
+// raylib's BlendSubtractColors uses glBlendFunc(GL_ONE, GL_ONE) with
+// glBlendEquation(GL_FUNC_SUBTRACT), giving `output = src - dst`.
+// Drawing a fully white source pixel yields (1,1,1) - dst = (1-dst),
+// which is a clean per-channel color invert.
+func drawPhaseInversionOverlay() {
+	rl.BeginBlendMode(rl.BlendSubtractColors)
+	rl.DrawRectangle(0, 0, ScreenWidth, ScreenHeight, rl.White)
+	rl.EndBlendMode()
+}
+
 // drawBulletTrail renders a fading streak behind a projectile based on its
 // velocity. 8 segments going back ~0.12s of travel, with alpha fading
 // quadratically from ~85% to 0%. No per-bullet state needed — the trail
@@ -434,7 +449,7 @@ func enemyIntroText(t int) string {
 	case EnemyRanger:
 		return "HEXAGON -- Ranger. Keeps its distance and shoots back!"
 	case EnemyShielder:
-		return "PENTAGON -- Shielder. Its zone phases enemies inside. Step in to hit them; everything outside becomes untouchable while you're in."
+		return "PENTAGON -- Shielder. Its zone phases anything inside into a secondary layer. Step into ANY zone to phase in too -- you'll hit every in-zone enemy, but everything outside becomes untouchable."
 	case EnemyPhaser:
 		return "CIRCLE -- Phaser. Blinks intangible to dodge your shots."
 	case EnemyReflector:
@@ -2489,6 +2504,14 @@ func drawGame() {
 		drawDyingEnemies()
 
 		rl.EndMode2D()
+
+		// While phased (inside any Shielder zone), invert the rendered
+		// world so the secondary layer reads as a distinct photo-negative
+		// state. Done after EndMode2D so the inversion is screen-space,
+		// and before drawUI so HUD elements stay in their normal palette.
+		if isPlayerPhased() {
+			drawPhaseInversionOverlay()
+		}
 
 		drawUI(255)
 

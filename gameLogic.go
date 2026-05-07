@@ -1758,35 +1758,57 @@ func isPositionBlocked(x, y float32, self *Enemy) bool {
 	return false
 }
 
+// isPointInAnyShielderZone reports whether the given world point sits
+// inside the radius of at least one live Shielder. Used to compute the
+// binary "phased / unphased" state for both the player and any enemy.
+func isPointInAnyShielderZone(x, y float32) bool {
+	radSq := float32(ShielderRadius * ShielderRadius)
+	for _, s := range state.Enemies {
+		if s.Type != EnemyShielder || s.HP <= 0 {
+			continue
+		}
+		dx := x - s.X
+		dy := y - s.Y
+		if dx*dx+dy*dy < radSq {
+			return true
+		}
+	}
+	return false
+}
+
+// isPlayerPhased reports whether the player is currently inside any live
+// Shielder's zone (and therefore in the "phased" secondary layer).
+func isPlayerPhased() bool {
+	return isPointInAnyShielderZone(state.Player.X, state.Player.Y)
+}
+
 // isEnemyProtected returns true if the target cannot be hit by the player
 // from the player's current position.
 //
-// Phase-layer model: each Shielder defines a circular zone. Entities (the
-// player and every enemy) are inside or outside each zone independently.
-// Two entities can interact (deal damage, get hit) only if they share the
-// same zone-membership set — i.e. for every active Shielder, both are
-// either inside its zone or both are outside.
+// Binary phase model: while ANY Shielder is alive, the world splits into
+// two layers — "phased" (inside any Shielder zone) and "unphased" (outside
+// every zone). The player and each enemy independently belong to one of
+// these two layers based on position. Damage only crosses between entities
+// in the same layer.
 //
 // Practical effects:
-//   - Outside any Shielder zone, the player can hit enemies that are also
-//     outside every Shielder zone. Anything tucked into a Shielder is
-//     untouchable until the player phases in.
-//   - Stepping into a Shielder's zone phases the player into that layer:
-//     they can hit enemies inside that same zone, but enemies outside the
-//     zone (including their own bullets and abilities — see callers) become
-//     untouchable until they leave.
-//   - Overlapping Shielders create tiered zones — to hit an enemy inside
-//     both Shielder A and B, the player must also be inside both.
-//   - The Shielder itself is "inside its own zone" so it can only be
-//     killed by going in.
+//   - When the player is unphased (outside all zones), they can hit any
+//     enemy also outside every Shielder zone. Anything tucked into a zone
+//     is untouchable.
+//   - Stepping into ANY Shielder zone phases the player in. While phased,
+//     the player can hit ALL enemies that are also inside any zone — even
+//     across non-overlapping Shielders. Unphased enemies become protected
+//     until the player steps back out.
+//   - A Shielder is always inside its own zone, so killing one always
+//     requires being phased.
 //
-// A target is "protected" when its membership set differs from the player's.
+// A target is "protected" when its phase state differs from the player's.
 func isEnemyProtected(target *Enemy) bool {
 	if target == nil {
 		return false
 	}
-	// Fast path: no live Shielders means everyone is in the empty set,
-	// so nothing is protected.
+	// Fast path: no live Shielders means there's only one layer, so
+	// nothing is protected.
 	hasAnyShielder := false
 	for _, s := range state.Enemies {
 		if s.Type == EnemyShielder && s.HP > 0 {
@@ -1798,27 +1820,9 @@ func isEnemyProtected(target *Enemy) bool {
 		return false
 	}
 
-	radSq := float32(ShielderRadius * ShielderRadius)
-	for _, s := range state.Enemies {
-		if s.Type != EnemyShielder || s.HP <= 0 {
-			continue
-		}
-		// Is the target inside this Shielder's zone?
-		dx := target.X - s.X
-		dy := target.Y - s.Y
-		targetIn := (dx*dx + dy*dy) < radSq
-
-		// Is the player inside this Shielder's zone?
-		pdx := state.Player.X - s.X
-		pdy := state.Player.Y - s.Y
-		playerIn := (pdx*pdx + pdy*pdy) < radSq
-
-		// Different sides of this zone → protected (different phase layer).
-		if targetIn != playerIn {
-			return true
-		}
-	}
-	return false
+	playerPhased := isPointInAnyShielderZone(state.Player.X, state.Player.Y)
+	targetPhased := isPointInAnyShielderZone(target.X, target.Y)
+	return playerPhased != targetPhased
 }
 
 func accumulateDamage(e *Enemy, source string, amount float32) {
