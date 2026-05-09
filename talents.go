@@ -833,11 +833,11 @@ func registerDamageTree() {
 		Name: "Sniper", MaxRank: 3, Kind: NodeScaling,
 		Prereqs: []string{"dmg_ricochet"},
 		Apply: func(p *Player, r int) {
-			p.Range += float32(r) * 40.0
+			p.Range += float32(r) * (50.0 / 3.0)
 			p.Damage *= 1.0 + float32(r)*0.03
 		},
 		Describe: func(r int) string {
-			return fmtT("+%.0f range, +%.0f%% damage", float32(r)*40, float32(r)*3)
+			return fmtT("+%.0f range, +%.0f%% damage", float32(r)*50/3, float32(r)*3)
 		},
 	})
 
@@ -2055,10 +2055,9 @@ func registerPassiveTree() {
 		Prereqs: []string{"pas_salvage", "pas_fire_support"},
 		Apply: func(p *Player, r int) {
 			p.RPRate += float32(r) * 0.08
-			p.WaveSkipChance += float32(r) * 0.02
 		},
 		Describe: func(r int) string {
-			return fmtT("+%.0f%% RP, +%.0f%% wave skip", float32(r)*8, float32(r)*2)
+			return fmtT("+%.0f%% RP gain", float32(r)*8)
 		},
 	})
 	registerNode(&TalentNode{

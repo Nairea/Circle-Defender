@@ -35,9 +35,11 @@ func initGame() {
 		}
 	}
 
-	for i, idx := range meta.EquippedItemsByIndex {
+	// Use equipItem so stat bonuses are applied immediately — the gear menu
+	// stats panel reads state.Player directly and needs accurate values on load.
+	for _, idx := range meta.EquippedItemsByIndex {
 		if idx != -1 && idx < len(startingPlayer.Inventory) {
-			startingPlayer.EquippedItems[i] = startingPlayer.Inventory[idx]
+			equipItem(&startingPlayer, startingPlayer.Inventory[idx])
 		}
 	}
 
@@ -45,7 +47,6 @@ func initGame() {
 		CurrentScreen:           ScreenStart,
 		GameSpeedMultiplier:     1.0,
 		PreviousSpeedMultiplier: 1.0,
-		SpawnQueue:              make([]SpawnQueueEntry, 0),
 		Player:                  startingPlayer,
 		ShopBidAmount:           100,
 		RunTime:                 0.0,
@@ -124,7 +125,7 @@ func LoadMetaProgression() {
 		meta.TutorialStep = TutorialGoToResearch
 		// New talent system: seed ML 1 + enough TP for the tutorial unlock.
 		meta.MetaLevel = 1
-		meta.TalentPointsEarned = TPPerMetaLevel
+		meta.TalentPointsEarned = 4 // Pyromaniac (3 TP) + Rapid Fire (1 TP)
 		meta.TalentRanks = make(map[string]int)
 		meta.AutoAbilitiesByName = make(map[string]bool)
 		meta.TalentsMigrated = true // nothing to migrate on a fresh save
@@ -363,11 +364,8 @@ func initBasePlayer() Player {
 // The new system reads talent ranks (meta.TalentRanks) as the source of
 // truth and writes the legacy unlock/branch fields downstream code expects.
 
-// Passing wave atm, but (i need to double check)
-// i reworked it to a steady timer of scaling so
-// likely should update this variable name
-// #todo just in case.
-func initEnemy(wave int) *Enemy {
+func initEnemy(runTime float32) *Enemy {
+	wave := int(runTime/15) + 1
 	nextEnemyID++
 
 	visibleWidth := float32(ScreenWidth) / state.Camera.Zoom
@@ -427,23 +425,24 @@ func initEnemy(wave int) *Enemy {
 	// Berserker: 5% (Wave 12+)
 	// Remainder: Standard or Boss (if rare roll)
 
+	t := runTime
 	if r < 0.60 {
 		enemyType = EnemyStandard
-	} else if r < 0.70 {
+	} else if r < 0.70 && t >= 20 {
 		enemyType = EnemyDodger
-	} else if r < 0.75 {
+	} else if r < 0.75 && t >= 40 {
 		enemyType = EnemyRanger
-	} else if r < 0.80 && wave >= 4 {
+	} else if r < 0.80 && t >= 60 {
 		enemyType = EnemyShielder
-	} else if r < 0.82 && wave >= 6 {
+	} else if r < 0.82 && t >= 80 {
 		enemyType = EnemyPhaser
-	} else if r < 0.87 && wave >= 8 {
+	} else if r < 0.87 && t >= 100 {
 		enemyType = EnemyReflector
-	} else if r < 0.92 && wave >= 10 {
+	} else if r < 0.92 && t >= 120 {
 		enemyType = EnemyDivider
-	} else if r < 0.97 && wave >= 12 {
+	} else if r < 0.97 && t >= 140 {
 		enemyType = EnemyBerserker
-	} else if r > 0.97 {
+	} else if r >= 0.97 && t >= 160 {
 		enemyType = EnemyStandard
 		isBoss = true
 	} else {
@@ -465,7 +464,7 @@ func initEnemy(wave int) *Enemy {
 		baseSpeed = RangerBaseSpeed
 	case EnemyShielder:
 		baseSpeed = ShielderBaseSpeed
-		baseHP *= 2.0
+		baseHP *= 6.0
 	case EnemyPhaser:
 		baseSpeed = PhaserBaseSpeed
 		baseHP *= 0.8

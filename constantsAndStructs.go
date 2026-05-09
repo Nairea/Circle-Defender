@@ -62,7 +62,8 @@ const (
 	// RP cost thresholds — kept for minimum-investment enforcement in buyItem.
 	// Rarity distribution is now a continuous bell curve; these are no longer
 	// used to gate individual tiers.
-	FabCostMinimum = 100
+	FabCostMinimum         = 100
+	MaxFabricatorInvestment = 50000 // hard cap on RP that can be put into a single item
 
 	//Inventory tab flags.
 	TabAll     = 0
@@ -93,10 +94,6 @@ const (
 	BaseBulletRadius = 5
 	EnemyBulletSpeed = 350
 
-	//Originally ran off waves. now this tracks difficulty scaling...may go back to waves
-	//#todo. delete this or rename it depending on that decision.
-	WaveTimeLimit = 15
-
 	//Some enemy stats.
 	//dodging type
 	DodgerBaseSpeed     = 48
@@ -109,8 +106,8 @@ const (
 	RangerStopDist  = 250
 	RangerShootCD   = 2.5
 	//Shielder
-	ShielderBaseSpeed = 21
-	ShielderRadius    = 180.0
+	ShielderBaseSpeed = 15
+	ShielderRadius    = 260.0
 	//Boss enemy things.
 	BossScaling = 10
 	BossSize    = 30
@@ -258,6 +255,13 @@ const (
 
 	// Duration of the per-enemy death animation. Bosses get 2x for drama.
 	EnemyDeathAnimDuration = 0.9
+
+	// Hard cap on DamagePerMeter (the "DmgDist" stat from Sniper Scope and
+	// related rolls). Prevents long-range damage from compounding past a
+	// sane multiplier even if old saves persist higher-than-current values
+	// or the player stacks multiple sources. With DPM=0.10 and max range
+	// (4.5m), the per-shot bonus tops out at +45%.
+	MaxDmgPerMeter = 0.10
 )
 
 // enemy color globals
@@ -370,8 +374,11 @@ type Item struct {
 	Stats          []ItemStat
 	Description    string
 	SalvageValue   int
-	UniqueModifier string // non-empty on epic/legendary rolls; e.g. "LifeOnHit", "ExplosiveShots"
-	SetID          string // non-empty for set items; matches a key in SetRegistry
+	UniqueModifier       string  // non-empty on epic/legendary rolls
+	UniqueModifierValue  float32 // rolled power value for the modifier; 0 if no modifier
+	UniqueModifier2      string  // legendary-only: very rare second modifier slot
+	UniqueModifierValue2 float32
+	SetID                string // non-empty for set items; matches a key in SetRegistry
 }
 
 // SetDefinition describes a named gear set and its bonus thresholds.
@@ -452,7 +459,6 @@ type Player struct {
 	RPBonus             float32
 	RPRate              float32
 	XPRate              float32
-	WaveSkipChance      float32
 	CooldownRate        float32
 	FreeUpgradeChance   float32
 
@@ -485,14 +491,28 @@ type Player struct {
 	FrenzyCooldown        float32
 
 	// Unique modifier effect fields (set by RebuildEventSubscriptions)
-	LifeOnHitAmount     float32 // flat HP restored per hit (LifeOnHit modifier)
-	ExplosiveModChance  float32 // chance on basic shot hit to explode (ExplosiveShots modifier)
-	VampireLeechPct     float32 // fraction of damage dealt returned as HP (VampireRounds)
-	StaticBurstChance   float32 // chance on hit to arc a mini lightning bolt (StaticBurst)
-	SwiftReloadKillCDR  float32 // CDR applied per kill (SwiftReload)
-	OverclockHasteBonus float32 // temporary haste bonus while active (Overclock)
-	OverclockHasteTimer float32 // countdown for overclock burst
-	LuckyDropBonus      float32 // additive bonus to RP drop chance (LuckyDrop)
+	LifeOnHitAmount    float32 // flat HP restored per hit (LifeOnHit)
+	ExplosiveModChance float32 // chance on basic shot hit to explode (ExplosiveShots)
+	VampireLeechPct    float32 // fraction of damage dealt returned as HP (VampireRounds)
+	StaticBurstChance  float32 // chance on hit to arc mini lightning (StaticBurst)
+	LuckyDropBonus     float32 // additive bonus to RP drop rate (LuckyDrop)
+	// New modifier fields
+	SparkChainChance           float32 // SparkChain: chance on hit for player-origin spark
+	LifeDrainPct               float32 // LifeDrain: leech fraction on hit+crit
+	ShieldPiercing             bool    // PhaseBreaker: bypass isEnemyProtected
+	CrisisAuraEnabled          bool    // CrisisAura: modifier is equipped
+	CrisisAuraActive           bool    // CrisisAura: haste buff currently active
+	CrisisAuraBonus            float32 // CrisisAura: rolled haste bonus (sum across items)
+	KillChargeStacks           int     // KillCharge: current stack count
+	KillChargeMax              int     // KillCharge: cap
+	KillChargeBonus            float32 // KillCharge: total flat damage added
+	GlassCannonDmgMult         float32 // GlassCannon: outgoing damage multiplier bonus
+	GlassCannonDamageTakenMult float32 // GlassCannon: incoming damage multiplier penalty
+	AbilityEchoChance          float32 // AbilityEcho: proc chance on kill
+	ClockworkCDR               float32 // Clockwork: seconds shaved off all CDs per kill
+	ResonanceHitCount          int     // Resonance: hits since last charge
+	ResonanceCharged           bool    // Resonance: next shot fires at bonus multiplier
+	ResonanceMultiplier        float32 // Resonance: damage multiplier when charged
 
 	Inventory     []*Item
 	EquippedItems [4]*Item
@@ -632,6 +652,7 @@ type Projectile struct {
 	IsCrit      bool
 	CritMult    float32
 	IsEnemy     bool
+	IsPiercing  bool // if true, passes through enemies without expiring on hit
 	Hits        int
 	TargetID    int
 	BouncesLeft int
@@ -670,10 +691,6 @@ type LevelOption struct {
 	Effect      func(*Player) `json:"-"`
 }
 
-type SpawnQueueEntry struct {
-	Wave   int
-	IsBoss bool
-}
 
 // DamageType categorizes where damage came from. It drives floating number
 // color and is the hook that future skills/items will branch on (e.g. "leech
@@ -750,8 +767,6 @@ type GameState struct {
 	GravityZones  []*GravityZone
 	LingerZones   []*LingerZone
 	FloatingTexts []*FloatingText
-	Wave          int
-	WaveTimer     float32
 	SpawnTimer    float32
 	SpawnInterval float32
 
@@ -768,8 +783,6 @@ type GameState struct {
 	// Set true the first time we award MetaXP for this run so we don't
 	// double-grant if the game-over screen hangs around for a second loop.
 	MetaXPAwarded bool
-
-	SpawnQueue []SpawnQueueEntry
 
 	EnemiesAlive            int
 	Camera                  rl.Camera2D
@@ -813,6 +826,8 @@ type GameState struct {
 	TutRPDropShown  bool         `json:"-"` // "you earned RP!" tip
 	TutLevelUpShown bool         `json:"-"` // "level up: pick an upgrade" tip
 	TutScalingShown bool         `json:"-"` // "enemies are getting stronger" warning
+	TutAimShown     bool         `json:"-"` // click-to-aim tutorial has been triggered
+	TutAimActive    bool         `json:"-"` // currently pseudo-pausing for aim tutorial
 }
 
 // global vars.

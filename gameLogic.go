@@ -8,19 +8,204 @@ import (
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
-// Some item templates. Reworking this later to be based on a dynamic naming system.
-// Ie: Powerful Laser Cutter of Precision - powerful = raw dmg, of precision = crit based.
-var LootTemplates = []Item{
-	{Name: "Steel Sword", Type: ItemWeapon, Description: "Standard Issue", Stats: []ItemStat{{StatType: "Damage", BaseValue: 2.0, Growth: 0.8}}},
-	{Name: "Laser Cutter", Type: ItemWeapon, Description: "High Power", Stats: []ItemStat{{StatType: "Damage", BaseValue: 4.0, Growth: 1.5}}},
-	{Name: "Iron Plating", Type: ItemShield, Description: "Solid Defense", Stats: []ItemStat{{StatType: "Armor", BaseValue: 0.02, Growth: 0.005}}},
-	{Name: "Force Field", Type: ItemShield, Description: "Energy Shield", Stats: []ItemStat{{StatType: "MaxHP", BaseValue: 40.0, Growth: 8.0}}},
-	{Name: "Emerald Ring", Type: ItemRing, Description: "Slow Heal", Stats: []ItemStat{{StatType: "Regen", BaseValue: 0.5, Growth: 0.1}}},
-	{Name: "Sapphire Band", Type: ItemRing, Description: "Critical Focus", Stats: []ItemStat{{StatType: "CritChance", BaseValue: 0.05, Growth: 0.01}}},
-	{Name: "Data Chip", Type: ItemTrinket, Description: "Data Mining", Stats: []ItemStat{{StatType: "RPGain", BaseValue: 0.1, Growth: 0.02}}},
-	{Name: "Nitro Cell", Type: ItemTrinket, Description: "Overclocking", Stats: []ItemStat{{StatType: "CDR", BaseValue: 0.05, Growth: 0.01}}},
-	{Name: "Blast Module", Type: ItemTrinket, Description: "Explosive Hits", Stats: []ItemStat{{StatType: "Explosive", BaseValue: 0.10, Growth: 0.02}}},
-	{Name: "Sniper Scope", Type: ItemTrinket, Description: "Long Shot", Stats: []ItemStat{{StatType: "DmgDist", BaseValue: 0.005, Growth: 0.001}}},
+// ── Prefix / base / suffix naming system ─────────────────────────────────────
+//
+// Each item name is built from three optional components:
+//   [Prefix] BaseName [Suffix]
+//
+// Every active component contributes exactly one stat type to the item's stat
+// pool. Duplicates are intentional — a Damage prefix + Damage base stacks two
+// independent Damage rolls, producing a pure-focused item.
+//
+// Rarity controls which components are active:
+//   Normal    → base only          (1 stat)
+//   Uncommon  → base + prefix OR suffix   (2 stats, 50/50)
+//   Rare+     → prefix + base + suffix    (3 stats)
+//   Epic      → same as Rare, plus ~30% chance at a modifier
+//   Legendary → same as Rare, guaranteed modifier, ~5% at a second modifier
+
+// NameComponent pairs a cosmetic word (or phrase) with the stat type it contributes.
+type NameComponent struct {
+	StatType string
+	Names    []string // one is chosen at random per craft
+}
+
+// BaseTemplate is an item archetype: a name, item type, flavour description,
+// and the primary stat type it contributes to the stat pool.
+type BaseTemplate struct {
+	Name     string
+	Type     int // ItemWeapon / ItemShield / ItemRing / ItemTrinket
+	Desc     string
+	StatType string
+}
+
+// ── Base templates ────────────────────────────────────────────────────────────
+
+var WeaponBaseTemplates = []BaseTemplate{
+	{"Plasma Cutter",   ItemWeapon, "Military-grade cutting tool",        "Damage"},
+	{"Rail Gun",        ItemWeapon, "Electromagnetic slug thrower",        "Damage"},
+	{"Scatter Blaster", ItemWeapon, "Wide-spread burst weapon",            "Damage"},
+	{"Pulse Emitter",   ItemWeapon, "Rapid-cycle energy emitter",          "Haste"},
+	{"Auto Pistol",     ItemWeapon, "High fire-rate sidearm",              "Haste"},
+	{"Precision Lens",  ItemWeapon, "Narrow-focus targeting optic",        "CritChance"},
+	{"Targeting Array", ItemWeapon, "Multi-sensor aim system",             "CritChance"},
+	{"Amp Core",        ItemWeapon, "Amplified discharge weapon",           "CritMult"},
+	{"Devastator",      ItemWeapon, "Heavy impact weapon",                 "CritMult"},
+	{"Beam Projector",  ItemWeapon, "Long-range focused energy beam",      "DmgDist"},
+	{"Sniper Module",   ItemWeapon, "Extended-range precision weapon",     "DmgDist"},
+	{"Wave Array",      ItemWeapon, "Broadcast-range engagement weapon",   "Range"},
+	{"Signal Cannon",   ItemWeapon, "Long-reach targeting weapon",         "Range"},
+}
+
+var ShieldBaseTemplates = []BaseTemplate{
+	{"Alloy Plate",    ItemShield, "Dense layered armor plating",        "Armor"},
+	{"Nano Shell",     ItemShield, "Microscale adaptive armor mesh",      "Armor"},
+	{"Bio Matrix",     ItemShield, "Biological regeneration unit",        "Regen"},
+	{"Vital Cell",     ItemShield, "Emergency life support module",       "Regen"},
+	{"Deflector Plate",ItemShield, "Kinetic energy deflector",            "PureDef"},
+	{"Temper Core",    ItemShield, "Hardened impact absorber",            "PureDef"},
+	{"Pulse Barrier",  ItemShield, "Reactive energy barrier",             "ShieldRate"},
+	{"Reactive Mesh",  ItemShield, "Self-regenerating barrier grid",      "ShieldRate"},
+	{"Spike Grid",     ItemShield, "Retaliatory contact spike system",    "Thorns"},
+	{"Barb Matrix",    ItemShield, "Contact damage emitter array",        "Thorns"},
+	{"Capacity Core",  ItemShield, "High-volume life support module",     "MaxHP"},
+	{"Life Buffer",    ItemShield, "Emergency HP reserve unit",           "MaxHP"},
+}
+
+var RingBaseTemplates = []BaseTemplate{
+	{"Power Band",    ItemRing, "Offensive amplification ring",    "Damage"},
+	{"Force Loop",    ItemRing, "Kinetic force booster ring",      "Damage"},
+	{"Vital Ring",    ItemRing, "Regeneration enhancer ring",      "Regen"},
+	{"Life Circuit",  ItemRing, "HP recovery loop",                "Regen"},
+	{"Bulwark Band",  ItemRing, "Defense enhancement ring",        "PureDef"},
+	{"Guard Loop",    ItemRing, "Impact absorption ring",          "PureDef"},
+	{"Endurance Ring",ItemRing, "HP capacity ring",                "MaxHP"},
+	{"Health Circuit",ItemRing, "Life force amplifier ring",       "MaxHP"},
+	{"Focus Band",    ItemRing, "Targeting accuracy ring",         "CritChance"},
+	{"Precision Loop",ItemRing, "Critical focus ring",             "CritChance"},
+	{"Timer Ring",    ItemRing, "Cooldown optimization ring",      "CDR"},
+	{"Signal Band",   ItemRing, "Ability timing ring",             "CDR"},
+	{"Thorn Band",    ItemRing, "Retaliatory damage ring",         "Thorns"},
+	{"Spike Loop",    ItemRing, "Contact damage ring",             "Thorns"},
+}
+
+var TrinketBaseTemplates = []BaseTemplate{
+	{"Data Chip",       ItemTrinket, "RP extraction module",                 "RPGain"},
+	{"Research Module", ItemTrinket, "RP amplification chip",                "RPGain"},
+	{"Learning Core",   ItemTrinket, "XP amplification module",              "XPGain"},
+	{"XP Catalyst",     ItemTrinket, "Experience acceleration chip",         "XPGain"},
+	{"Blast Module",    ItemTrinket, "Explosive projectile injector",         "Explosive"},
+	{"Charge Cell",     ItemTrinket, "Detonation primer module",             "Explosive"},
+	{"Nitro Cell",      ItemTrinket, "Cooldown reduction module",            "CDR"},
+	{"Cooldown Core",   ItemTrinket, "Ability reset accelerator",            "CDR"},
+	{"Lucky Charm",     ItemTrinket, "Fortune enhancement module",           "FreeUp"},
+	{"Fortune Chip",    ItemTrinket, "Random upgrade chance chip",           "FreeUp"},
+	{"Speed Core",      ItemTrinket, "Attack speed amplifier",               "Haste"},
+	{"Velocity Chip",   ItemTrinket, "Fire rate enhancement module",         "Haste"},
+}
+
+// ── Prefix and suffix component tables ───────────────────────────────────────
+// Both tables cover every stat type that can appear on any item type.
+// Rolling filters to those whose StatType is valid for the item being crafted.
+
+var PrefixComponents = []NameComponent{
+	{"Damage",     []string{"Serrated", "Overcharged", "Heavy-Gauge", "Volatile"}},
+	{"Haste",      []string{"Swift", "Rapid", "Fleet", "Quickdraw"}},
+	{"CritChance", []string{"Keen", "Precise", "Focused", "Calibrated"}},
+	{"CritMult",   []string{"Brutal", "Savage", "Punishing"}},
+	{"DmgDist",    []string{"Long-Range", "Sniper", "Reaching"}},
+	{"Range",      []string{"Extended", "Broadcast", "Far-Reaching"}},
+	{"Armor",      []string{"Reinforced", "Hardened", "Plated"}},
+	{"Regen",      []string{"Vital", "Regenerative", "Restorative"}},
+	{"PureDef",    []string{"Fortified", "Stalwart", "Bulwark"}},
+	{"ShieldRate", []string{"Reactive", "Pulsing", "Dynamic"}},
+	{"Thorns",     []string{"Barbed", "Spiked", "Thorned"}},
+	{"MaxHP",      []string{"Bolstered", "Expanded", "Massive"}},
+	{"CDR",        []string{"Efficient", "Optimized", "Responsive"}},
+	{"RPGain",     []string{"Lucrative", "Enriched", "Prosperous"}},
+	{"XPGain",     []string{"Accelerated", "Awakened", "Enlightened"}},
+	{"Explosive",  []string{"Primed", "Detonating", "Volatile"}},
+	{"FreeUp",     []string{"Lucky", "Fortunate", "Serendipitous"}},
+}
+
+var SuffixComponents = []NameComponent{
+	{"Damage",     []string{"of Power", "of Force", "of Destruction"}},
+	{"Haste",      []string{"of Speed", "of Swiftness", "of Agility"}},
+	{"CritChance", []string{"of Precision", "of Accuracy", "of Focus"}},
+	{"CritMult",   []string{"of Brutality", "of Devastation", "of Ruin"}},
+	{"DmgDist",    []string{"of Distance", "of the Sniper", "of Reach"}},
+	{"Range",      []string{"of Reach", "of the Horizon", "of Extension"}},
+	{"Armor",      []string{"of Protection", "of Resilience", "of Defense"}},
+	{"Regen",      []string{"of Vitality", "of Recovery", "of Regeneration"}},
+	{"PureDef",    []string{"of Fortitude", "of Endurance", "of the Bulwark"}},
+	{"ShieldRate", []string{"of Reactivity", "of the Pulse", "of Deflection"}},
+	{"Thorns",     []string{"of Thorns", "of the Bramble", "of Retaliation"}},
+	{"MaxHP",      []string{"of Health", "of Constitution", "of Endurance"}},
+	{"CDR",        []string{"of Efficiency", "of Readiness", "of the Clock"}},
+	{"RPGain",     []string{"of Wealth", "of Research", "of Discovery"}},
+	{"XPGain",     []string{"of Growth", "of Learning", "of the Scholar"}},
+	{"Explosive",  []string{"of Detonation", "of Explosion", "of the Blast"}},
+	{"FreeUp",     []string{"of Luck", "of Fortune", "of Serendipity"}},
+}
+
+// ── Naming system helpers ─────────────────────────────────────────────────────
+
+// baseTemplatesForType returns the base template slice for an item type.
+func baseTemplatesForType(itemType int) []BaseTemplate {
+	switch itemType {
+	case ItemWeapon:
+		return WeaponBaseTemplates
+	case ItemShield:
+		return ShieldBaseTemplates
+	case ItemRing:
+		return RingBaseTemplates
+	case ItemTrinket:
+		return TrinketBaseTemplates
+	default:
+		return WeaponBaseTemplates
+	}
+}
+
+// statPoolForType returns the stat pool slice for an item type.
+func statPoolForType(itemType int) []ItemStats {
+	switch itemType {
+	case ItemWeapon:
+		return WeaponStatPool
+	case ItemShield:
+		return ShieldStatPool
+	case ItemRing:
+		return RingStatPool
+	case ItemTrinket:
+		return TrinketStatPool
+	default:
+		return WeaponStatPool
+	}
+}
+
+// baseValForStatType looks up the pool base value for a given stat type.
+func baseValForStatType(statType string, itemType int) float32 {
+	for _, s := range statPoolForType(itemType) {
+		if s.Type == statType {
+			return s.Base
+		}
+	}
+	return 1.0
+}
+
+// validComponents filters a NameComponent slice to those whose StatType
+// is present in the given item type's stat pool.
+func validComponents(components []NameComponent, itemType int) []NameComponent {
+	pool := statPoolForType(itemType)
+	var out []NameComponent
+	for _, c := range components {
+		for _, s := range pool {
+			if s.Type == c.StatType {
+				out = append(out, c)
+				break
+			}
+		}
+	}
+	return out
 }
 
 // Define the items target stat for any given line, its base value, and how much it grows per level.
@@ -35,39 +220,40 @@ type ItemStats struct {
 // offense and defense stats to help push builds, and trinkets are
 // utility stats and possible special stats to augment gameplay.
 var WeaponStatPool = []ItemStats{
-	{"Damage", 1.0, 0.5},
-	{"Haste", 0.01, 0.005},
-	{"CritChance", 0.02, 0.01},
-	{"CritMult", 0.1, 0.05},
-	{"DmgDist", 0.005, 0.001},
-	{"Range", 10.0, 2.0},
+	{"Damage",     3.4,   0.5},
+	{"Haste",      0.025, 0.005},
+	{"CritChance", 0.05,  0.01},  // investment-floor formula; base = statMin for display
+	{"CritMult",   0.20,  0.05},  // investment-floor formula
+	{"DmgDist",    0.01,  0.001}, // investment-floor formula
+	{"Range",      20.0,  2.0},   // investment-floor formula
 }
 
 var ShieldStatPool = []ItemStats{
-	{"Armor", 0.01, 0.002},
-	{"Regen", 0.2, 0.1},
-	{"PureDef", 1.0, 0.5},
-	{"ShieldRate", 0.5, 0.1},
-	{"Thorns", 1.0, 0.5},
+	{"Armor",      0.04,  0.002}, // investment-floor formula
+	{"Regen",      0.56,  0.1},
+	{"PureDef",    1.25,  0.5},
+	{"ShieldRate", 0.69,  0.1},
+	{"Thorns",     5.6,   0.5},
+	{"MaxHP",      15.0,  5.0},   // investment-floor formula
 }
 
 var RingStatPool = []ItemStats{
-	{"Damage", 1.0, 0.5},
-	{"Regen", 0.2, 0.1},
-	{"PureDef", 1.0, 0.5},
-	{"MaxHP", 10.0, 5.0},
-	{"CritChance", 0.02, 0.01},
-	{"Range", 10.0, 2.0},
-	{"Thorns", 1.0, 0.5},
+	{"Damage",     3.4,   0.5},
+	{"Regen",      0.56,  0.1},
+	{"PureDef",    1.25,  0.5},
+	{"MaxHP",      15.0,  5.0},   // investment-floor formula
+	{"CritChance", 0.05,  0.01},  // investment-floor formula
+	{"CDR",        0.05,  0.01},  // investment-floor formula
+	{"Thorns",     5.6,   0.5},
 }
 
 var TrinketStatPool = []ItemStats{
-	{"RPGain", 0.1, 0.02},
-	{"XPGain", 0.1, 0.02},
-	{"Explosive", 0.05, 0.01},
-	{"WaveSkip", 0.02, 0.01},
-	{"CDR", 0.02, 0.01},
-	{"FreeUp", 0.01, 0.005},
+	{"RPGain",    0.125, 0.02},
+	{"XPGain",    0.14,  0.02},
+	{"Explosive", 0.05,  0.01},   // investment-floor formula
+	{"CDR",       0.05,  0.01},   // investment-floor formula
+	{"FreeUp",    0.02,  0.005},  // investment-floor formula
+	{"Haste",     0.025, 0.005},
 }
 
 // spawnDyingEnemy captures an enemy's visual state at moment of death and
@@ -123,9 +309,10 @@ func updateDyingEnemies(realDt float32) {
 	state.DyingEnemies = out
 }
 
+// Deprecated: items are now flat bonuses; Growth is always 0. Kept for safe deserialization of old saves.
 func isStatStatic(statType string) bool {
 	switch statType {
-	case "RPGain", "CDR", "Explosive", "FreeUp", "WaveSkip", "XPGain":
+	case "RPGain", "CDR", "Explosive", "FreeUp", "XPGain":
 		return true
 	default:
 		return false
@@ -210,20 +397,34 @@ func rarityStatCount(rarity int) int {
 }
 
 // UniqueModifierPool lists all possible unique modifier IDs.
-// Each entry is a short key used to drive the actual effect in applyStat
-// and displayed in the UI with a human-readable label.
+// Weak/bad rolls are intentionally included — rolling one on an expensive item
+// feels bad, which makes the strong rolls feel great by contrast.
 var UniqueModifierPool = []string{
-	"LifeOnHit",      // Regain a small amount of HP on each hit
-	"ExplosiveShots", // Shots explode on impact for bonus AoE
-	"VampireRounds",  // Small % of damage dealt returned as HP
-	"StaticBurst",    // Chance on hit to release a mini static arc
-	"ShieldSpike",    // Reflects a flat amount of damage back to attackers
-	"SwiftReload",    // Reduces cooldowns slightly on kill
-	"Overclock",      // Brief haste burst after using an ability
-	"LuckyDrop",      // Slightly increased RP drop chance on hit
+	// Retained / reworked
+	"VampireRounds",  // % lifesteal on every hit
+	"StaticBurst",    // chance on hit to arc lightning to nearby enemy
+	"ShieldSpike",    // on player hit: fire a piercing spike (20% ThornsDmg each)
+	"ExplosiveShots", // 10% chance on hit to explode for AoE
+	// Intentionally weak — "bad" rolls
+	"LuckyDrop", // tiny passive RP rate bonus
+	"LifeOnHit", // flat HP per hit; outclassed by VampireRounds at any damage level
+	// Mid-tier — useful but not exciting
+	"Opportunist", // bonus damage vs enemies below 30% HP
+	"Overkill",    // excess kill damage splashes to nearby enemies
+	"Resonance",   // every 10 hits, next shot is amplified
+	// Build-defining rolls
+	"SparkChain",   // on hit: player-origin spark to nearest enemy
+	"LifeDrain",    // leech on hit and crit
+	"ThornsEcho",   // all damage gains 50% of Thorns stat as bonus
+	"PhaseBreaker", // ignore shielder zone boundaries
+	"CrisisAura",   // haste when below 40% HP
+	"KillCharge",   // stacking damage per kill, resets on player hit
+	"GlassCannon",  // +damage dealt, +damage taken
+	"AbilityEcho",  // small chance to reset longest CD on kill
+	"Clockwork",    // every kill shaves time off all ability CDs
 }
 
-// uniqueModifierLabel returns a display string for a modifier key.
+// uniqueModifierLabel returns a short display name for a modifier key.
 func uniqueModifierLabel(key string) string {
 	switch key {
 	case "LifeOnHit":
@@ -236,31 +437,95 @@ func uniqueModifierLabel(key string) string {
 		return "Static Burst"
 	case "ShieldSpike":
 		return "Shield Spike"
+	case "LuckyDrop":
+		return "Lucky Drop"
+	case "Opportunist":
+		return "Opportunist"
+	case "Overkill":
+		return "Overkill"
+	case "Resonance":
+		return "Resonance"
+	case "SparkChain":
+		return "Spark Chain"
+	case "LifeDrain":
+		return "Life Drain"
+	case "ThornsEcho":
+		return "Thorns Echo"
+	case "PhaseBreaker":
+		return "Phase Breaker"
+	case "CrisisAura":
+		return "Crisis Aura"
+	case "KillCharge":
+		return "Kill Charge"
+	case "GlassCannon":
+		return "Glass Cannon"
+	case "AbilityEcho":
+		return "Ability Echo"
+	case "Clockwork":
+		return "Clockwork"
+	// Deprecated keys — kept so old saves don't crash
 	case "SwiftReload":
 		return "Swift Reload"
 	case "Overclock":
 		return "Overclock"
-	case "LuckyDrop":
-		return "Lucky Drop"
 	default:
 		return key
 	}
 }
 
-func rollUniqueModifier(rarity int) string {
-	var chance float32
-	switch rarity {
-	case RarityEpic:
-		chance = 0.30
-	case RarityLegendary:
-		chance = 0.75
-	default:
-		return ""
+// modifierRange holds the min/max rolled values for a unique modifier.
+type modifierRange struct{ Min, Max float32 }
+
+// modifierRanges defines the power range for every modifier.
+// rollModifierValue() interpolates within this range based on RP investment.
+var modifierRanges = map[string]modifierRange{
+	"VampireRounds":  {0.02, 0.08},  // leech fraction
+	"StaticBurst":    {0.10, 0.35},  // proc chance
+	"ShieldSpike":    {0.10, 0.30},  // ThornsDamage multiplier per enemy
+	"ExplosiveShots": {0.05, 0.20},  // proc chance
+	"LuckyDrop":      {0.05, 0.15},  // RPRate bonus
+	"LifeOnHit":      {1.0, 4.0},    // HP per hit
+	"Opportunist":    {0.05, 0.20},  // bonus damage fraction vs low HP
+	"Overkill":       {0.05, 0.20},  // overkill splash fraction
+	"Resonance":      {1.5, 3.0},    // charged-shot damage multiplier
+	"SparkChain":     {0.10, 0.35},  // proc chance
+	"LifeDrain":      {0.03, 0.10},  // leech fraction
+	"ThornsEcho":     {0.25, 0.65},  // ThornsDamage bonus multiplier
+	"PhaseBreaker":   {1.0, 1.0},    // binary — always 1.0
+	"CrisisAura":     {0.15, 0.40},  // haste bonus fraction
+	"KillCharge":     {1.0, 3.0},    // flat damage per stack
+	"GlassCannon":    {0.15, 0.30},  // outgoing dmg bonus (incoming = value×0.75)
+	"AbilityEcho":    {0.005, 0.02}, // proc chance
+	"Clockwork":      {0.03, 0.10},  // seconds CDR per kill
+}
+
+// rollModifierValue picks a value within the modifier's range.
+// Investment raises the floor (up to 80%) so better items trend higher
+// but a perfect roll still requires luck.
+func rollModifierValue(mod string, amount int) float32 {
+	r, ok := modifierRanges[mod]
+	if !ok {
+		return 1.0
 	}
-	if rand.Float32() < chance {
-		return UniqueModifierPool[rand.Intn(len(UniqueModifierPool))]
+	floorFrac := float32(amount) / float32(MaxFabricatorInvestment)
+	if floorFrac > 0.80 {
+		floorFrac = 0.80
 	}
-	return ""
+	rolled := floorFrac + rand.Float32()*(1.0-floorFrac)
+	return r.Min + (r.Max-r.Min)*rolled
+}
+
+// pickModifier returns a random modifier from the pool, optionally excluding
+// one already-chosen modifier so the two slots never duplicate.
+func pickModifier(exclude string) string {
+	mod := UniqueModifierPool[rand.Intn(len(UniqueModifierPool))]
+	for attempts := 0; mod == exclude && attempts < 8; attempts++ {
+		mod = UniqueModifierPool[rand.Intn(len(UniqueModifierPool))]
+	}
+	if mod == exclude {
+		return "" // couldn't avoid duplicate — leave slot empty
+	}
+	return mod
 }
 
 // RarityOdds returns display-friendly percentage odds for each tier.
@@ -280,6 +545,9 @@ func RarityOdds(amount int) (norm, unc, rare, epic, leg, set float32) {
 // ── Fabrication ───────────────────────────────────────────────────────────────
 
 func buyItem(amount int, targetType int) {
+	if amount > MaxFabricatorInvestment {
+		amount = MaxFabricatorInvestment
+	}
 	if meta.ResearchPoints < amount || amount < 100 {
 		return
 	}
@@ -288,96 +556,178 @@ func buyItem(amount int, targetType int) {
 	// economy doesn't feel disconnected from meta progression.
 	awardRPSpentBonus(amount)
 
-	// Filter templates by requested type.
-	validItems := make([]Item, 0)
-	if targetType == -1 {
-		validItems = LootTemplates
-	} else {
-		for _, item := range LootTemplates {
-			if item.Type == targetType {
-				validItems = append(validItems, item)
-			}
-		}
-	}
-	if len(validItems) == 0 {
-		validItems = LootTemplates
+	// ── Determine item type ───────────────────────────────────────────────────
+	// targetType == -1 means any type; otherwise locked to the requested type.
+	itemType := targetType
+	if itemType == -1 {
+		itemType = rand.Intn(4) // ItemWeapon(0)…ItemTrinket(3)
 	}
 
-	template := validItems[rand.Intn(len(validItems))]
+	// ── Roll rarity ───────────────────────────────────────────────────────────
+	rarity := rollRarity(amount)
 
-	// Salvage value scales with investment but is always positive.
+	// ── Salvage value ─────────────────────────────────────────────────────────
 	salvageVal := amount / 5
 	if salvageVal < 0 {
 		salvageVal = 0
 	}
 
-	// Roll rarity first -- this drives how many stats and whether there's a modifier.
-	rarity := rollRarity(amount)
-
-	// Stat power still scales with RP investment (diminishing returns).
-	// Higher rarity items get a small bonus multiplier on top as a feel-good reward.
+	// ── Stat scaling multipliers ──────────────────────────────────────────────
+	// scaleMult grows with RP (diminishing returns); rarityMult gives a small
+	// feel-good bonus on top so higher rarity consistently reads better.
 	scaleMult := float32(math.Pow(float64(amount)/100.0, 0.5))
-	rarityMult := float32(1.0) + float32(rarity)*0.08 // +8% per rarity tier
+	rarityMult := float32(1.0) + float32(rarity)*0.08
+
+	// ── Pick base template ────────────────────────────────────────────────────
+	baseTpls := baseTemplatesForType(itemType)
+	base := baseTpls[rand.Intn(len(baseTpls))]
+
+	// ── Roll name components and build stat slot list ─────────────────────────
+	// statSlot pairs a stat type with a flag for whether it is the primary slot
+	// (tighter variance) or a secondary slot (wider variance).
+	type statSlot struct {
+		statType  string
+		isPrimary bool
+	}
+	var slots []statSlot
+
+	prefixName := ""
+	suffixName := ""
+	var prefixSlot *statSlot
+	var suffixSlot *statSlot
+
+	if rarity >= RarityUncommon {
+		validPfx := validComponents(PrefixComponents, itemType)
+		validSfx := validComponents(SuffixComponents, itemType)
+
+		addPrefix := rarity >= RarityRare
+		addSuffix := rarity >= RarityRare
+		if rarity == RarityUncommon {
+			// Uncommon gets one or the other, 50/50.
+			if rand.Float32() < 0.5 {
+				addPrefix = true
+			} else {
+				addSuffix = true
+			}
+		}
+
+		if addPrefix && len(validPfx) > 0 {
+			pfx := validPfx[rand.Intn(len(validPfx))]
+			prefixName = pfx.Names[rand.Intn(len(pfx.Names))]
+			s := statSlot{pfx.StatType, false}
+			prefixSlot = &s
+		}
+		if addSuffix && len(validSfx) > 0 {
+			sfx := validSfx[rand.Intn(len(validSfx))]
+			suffixName = sfx.Names[rand.Intn(len(sfx.Names))]
+			s := statSlot{sfx.StatType, false}
+			suffixSlot = &s
+		}
+	}
+
+	// Assemble slots in display order: prefix → base → suffix.
+	// Duplicates are intentional; each slot rolls independently.
+	if prefixSlot != nil {
+		slots = append(slots, *prefixSlot)
+	}
+	slots = append(slots, statSlot{base.StatType, true})
+	if suffixSlot != nil {
+		slots = append(slots, *suffixSlot)
+	}
+
+	// ── Compose item name ─────────────────────────────────────────────────────
+	itemName := base.Name
+	if prefixName != "" {
+		itemName = prefixName + " " + itemName
+	}
+	if suffixName != "" {
+		itemName = itemName + " " + suffixName
+	}
 
 	newItem := &Item{
-		Name:         template.Name,
-		Type:         template.Type,
+		Name:         itemName,
+		Type:         itemType,
 		Rarity:       rarity,
-		Description:  template.Description,
+		Description:  base.Desc,
 		Stats:        make([]ItemStat, 0),
 		SalvageValue: salvageVal,
 	}
 
-	// Build the stat pool for this item type.
-	var pool []ItemStats
-	switch newItem.Type {
-	case ItemWeapon:
-		pool = WeaponStatPool
-	case ItemShield:
-		pool = ShieldStatPool
-	case ItemRing:
-		pool = RingStatPool
-	case ItemTrinket:
-		pool = TrinketStatPool
-	default:
-		pool = WeaponStatPool
+	// ── rollStatVal closure ───────────────────────────────────────────────────
+	// Bounded stats (tight gameplay ceiling) use the investment-floor pattern;
+	// all others use the standard scaleMult formula.
+	rollStatVal := func(statType string, baseVal float32) float32 {
+		investFloor := func(statMin, statMax float32) float32 {
+			floorFrac := float32(amount) / float32(MaxFabricatorInvestment)
+			if floorFrac > 0.80 {
+				floorFrac = 0.80
+			}
+			rolled := floorFrac + rand.Float32()*(1.0-floorFrac)
+			return statMin + (statMax-statMin)*rolled
+		}
+		switch statType {
+		case "Explosive":
+			return investFloor(0.05, 0.20)
+		case "CritChance":
+			return investFloor(0.05, 0.75)
+		case "CritMult":
+			return investFloor(0.20, 1.0)
+		case "DmgDist":
+			return investFloor(0.01, 0.30)
+		case "Range":
+			return investFloor(20, 200)
+		case "Armor":
+			return investFloor(0.04, 0.90)
+		case "MaxHP":
+			return investFloor(15, 400)
+		case "CDR":
+			return investFloor(0.05, 0.75)
+		case "FreeUp":
+			return investFloor(0.02, 0.25)
+		default:
+			return baseVal
+		}
 	}
 
-	numStats := rarityStatCount(rarity)
-	usedTypes := make(map[string]bool)
-
-	// First stat always comes from the template so the item feels coherent.
-	primary := template.Stats[0]
-	usedTypes[primary.StatType] = true
-	variance := (0.9 + rand.Float32()*0.2) * scaleMult * rarityMult
-	val := primary.BaseValue * variance
-	newItem.Stats = append(newItem.Stats, ItemStat{
-		StatType:  primary.StatType,
-		BaseValue: val,
-		Value:     val,
-		Growth:    val,
-	})
-
-	// Additional stats are drawn randomly from the pool (no duplicates).
-	for i := 1; i < numStats; i++ {
-		randStat := pool[rand.Intn(len(pool))]
-		for attempts := 0; usedTypes[randStat.Type] && attempts < 10; attempts++ {
-			randStat = pool[rand.Intn(len(pool))]
+	// ── Roll one stat per slot ────────────────────────────────────────────────
+	// Duplicates in the slot list are intentional — they roll independently and
+	// both end up in the Stats slice, summing when applied to the player.
+	for _, s := range slots {
+		var variance float32
+		if s.isPrimary {
+			variance = (0.9 + rand.Float32()*0.2) * scaleMult * rarityMult
+		} else {
+			variance = (0.8 + rand.Float32()*0.4) * scaleMult * rarityMult
 		}
-		usedTypes[randStat.Type] = true
-
-		variance = (0.8 + rand.Float32()*0.4) * scaleMult * rarityMult
-		val = randStat.Base * variance
+		bv := baseValForStatType(s.statType, itemType)
+		val := rollStatVal(s.statType, bv*variance)
 		newItem.Stats = append(newItem.Stats, ItemStat{
-			StatType:  randStat.Type,
+			StatType:  s.statType,
 			BaseValue: val,
 			Value:     val,
-			Growth:    val,
+			Growth:    0,
 		})
 	}
 
-	// Roll for unique modifier on epic and legendary items.
-	newItem.UniqueModifier = rollUniqueModifier(rarity)
+	// ── Roll unique modifiers ─────────────────────────────────────────────────
+	// Epic:      ~30% chance at one modifier.
+	// Legendary: guaranteed one modifier, ~5% chance at a second distinct one.
+	switch rarity {
+	case RarityEpic:
+		if rand.Float32() < 0.30 {
+			newItem.UniqueModifier = pickModifier("")
+			newItem.UniqueModifierValue = rollModifierValue(newItem.UniqueModifier, amount)
+		}
+	case RarityLegendary, RaritySet:
+		newItem.UniqueModifier = pickModifier("")
+		newItem.UniqueModifierValue = rollModifierValue(newItem.UniqueModifier, amount)
+		if rand.Float32() < 0.05 {
+			newItem.UniqueModifier2 = pickModifier(newItem.UniqueModifier)
+			if newItem.UniqueModifier2 != "" {
+				newItem.UniqueModifierValue2 = rollModifierValue(newItem.UniqueModifier2, amount)
+			}
+		}
+	}
 
 	// Set items always carry a SetID.  For now set items come from the normal
 	// template pool but are flagged; actual named sets live in SetRegistry.
@@ -526,6 +876,14 @@ func applyStat(p *Player, stat ItemStat, adding bool) {
 	case "DmgDist":
 		p.DamagePerMeter += val
 		clampZero(&p.DamagePerMeter)
+		// Cap at the hard ceiling so the displayed stat reflects the
+		// effective in-game value. Without this, players could see DPM
+		// climb past the cap and wonder why their damage doesn't keep
+		// scaling. Removing the dpm > cap wedge also keeps the use-site
+		// math simple.
+		if p.DamagePerMeter > MaxDmgPerMeter {
+			p.DamagePerMeter = MaxDmgPerMeter
+		}
 	case "PureDef":
 		p.PureDefense += val
 		clampZero(&p.PureDefense)
@@ -533,8 +891,8 @@ func applyStat(p *Player, stat ItemStat, adding bool) {
 		p.OvershieldRate += val
 		clampZero(&p.OvershieldRate)
 	case "CDR":
-		state.Player.CooldownRate += val
-		clampZero(&state.Player.CooldownRate)
+		p.CooldownRate += val
+		clampZero(&p.CooldownRate)
 	case "FreeUp":
 		p.FreeUpgradeChance += val
 		clampZero(&p.FreeUpgradeChance)
@@ -606,15 +964,9 @@ func startRun() {
 				if item.Stats[i].BaseValue == 0 && item.Stats[i].Value > 0 {
 					item.Stats[i].BaseValue = item.Stats[i].Value
 				}
-
-				if isStatStatic(item.Stats[i].StatType) {
-					item.Stats[i].Growth = 0
-				} else {
-					item.Stats[i].Growth = item.Stats[i].BaseValue
-				}
-
-				// Reset current run value to the BaseValue
+				// Items are flat bonuses — reset to crafted BaseValue each run.
 				item.Stats[i].Value = item.Stats[i].BaseValue
+				item.Stats[i].Growth = 0
 			}
 		}
 	}
@@ -651,8 +1003,6 @@ func startRun() {
 		LightningArcs:           make([]*LightningArc, 0),
 		GravityZones:            make([]*GravityZone, 0),
 		LingerZones:             make([]*LingerZone, 0),
-		Wave:                    1,
-		WaveTimer:               WaveTimeLimit,
 		SpawnTimer:              0.0,
 		EnemiesAlive:            0,
 		Camera:                  camera,
@@ -957,11 +1307,19 @@ func fireProjectile(target *Enemy) {
 		damage *= (1.0 + state.Player.BulletStormDmgBonus)
 	}
 
+	// Resonance: every 10 hits charges a multiplied next shot.
+	if state.Player.ResonanceCharged && state.Player.ResonanceMultiplier > 0 {
+		damage *= state.Player.ResonanceMultiplier
+		state.Player.ResonanceCharged = false
+	}
+
 	dx := target.X - state.Player.X
 	dy := target.Y - state.Player.Y
 	dist := float32(math.Sqrt(float64(dx*dx + dy*dy)))
 
 	//more damage further enemies are. can lean into sniper builds.
+	// DPM is already capped at MaxDmgPerMeter in applyStat, so we can use
+	// it directly here.
 	if state.Player.DamagePerMeter > 0 {
 		meters := dist / 100.0
 		damage *= (1.0 + (state.Player.DamagePerMeter * meters))
@@ -1098,6 +1456,9 @@ func moveProjectiles(dt float32) {
 									finalDmg *= (1.0 + debuff)
 								}
 							}
+							if state.Player.GlassCannonDmgMult > 0 {
+								finalDmg *= (1.0 + state.Player.GlassCannonDmgMult)
+							}
 							enemy.HP -= finalDmg
 							// Basic shots are Physical damage.
 							spawnDamageText(enemy.X, enemy.Y-enemy.Size, finalDmg, DmgPhysical, p.IsCrit)
@@ -1137,18 +1498,20 @@ func moveProjectiles(dt float32) {
 							})
 							//divider logic. should pop out lil guys
 							if enemy.Type == EnemyDivider {
-								spawnFragments(enemy.X, enemy.Y, state.Wave)
+								spawnFragments(enemy.X, enemy.Y, state.RunTime)
 							}
 							spawnDyingEnemy(enemy)
 							state.Enemies = append(state.Enemies[:i], state.Enemies[i+1:]...)
 							state.EnemiesAlive--
 						}
 					}
-					break
+					if !p.IsPiercing {
+						break
+					}
 				}
 			}
 
-			if hit {
+			if hit && !p.IsPiercing {
 				if state.Player.ExplosiveShotChance >= 0.01 && rand.Float32() < state.Player.ExplosiveShotChance {
 					state.Explosions = append(state.Explosions, &Explosion{
 						X: p.X, Y: p.Y, Radius: VolatileRadius,
@@ -1237,6 +1600,9 @@ func moveProjectiles(dt float32) {
 					armor = 0.90
 				}
 				damage *= (1.0 - armor)
+				if state.Player.GlassCannonDamageTakenMult > 0 {
+					damage *= (1.0 + state.Player.GlassCannonDamageTakenMult)
+				}
 
 				if state.Player.Overshield > 0 {
 					if state.Player.Overshield >= damage {
@@ -1348,7 +1714,7 @@ func moveMines(dt float32) {
 						Position: rl.Vector2{X: enemy.X, Y: enemy.Y},
 					})
 					if enemy.Type == EnemyDivider {
-						spawnFragments(enemy.X, enemy.Y, state.Wave)
+						spawnFragments(enemy.X, enemy.Y, state.RunTime)
 					}
 					spawnDyingEnemy(enemy)
 					state.Enemies = append(state.Enemies[:j], state.Enemies[j+1:]...)
@@ -1493,11 +1859,11 @@ func moveEnemies(dt float32) {
 		//berserker logic too
 		if enemy.Type == EnemyBerserker {
 			speedMult += float32(enemy.RageStacks) * 0.10 // +10% speed per stack
-			// Recompute the wave damage scale the same way initEnemy does so we
-			// can apply rage stacks on top of it without referencing dmgScale.
-			waveDmgScale := 1.0 + 0.05*float32(state.Wave-1)
-			if state.Wave > 19 {
-				waveDmgScale *= float32(math.Pow(1.03, float64(state.Wave-19)))
+			// Recompute the damage scale from RunTime (same formula as initEnemy).
+			waveNum := int(state.RunTime/15) + 1
+			waveDmgScale := 1.0 + 0.05*float32(waveNum-1)
+			if waveNum > 19 {
+				waveDmgScale *= float32(math.Pow(1.03, float64(waveNum-19)))
 			}
 			enemy.Damage = 5.0 * waveDmgScale * (1.0 + float32(enemy.RageStacks)*0.08)
 		}
@@ -1732,7 +2098,7 @@ func moveEnemies(dt float32) {
 			})
 			//divider logic. should pop out lil guys
 			if enemy.Type == EnemyDivider {
-				spawnFragments(enemy.X, enemy.Y, state.Wave)
+				spawnFragments(enemy.X, enemy.Y, state.RunTime)
 			}
 			spawnDyingEnemy(enemy)
 			state.Enemies = append(state.Enemies[:i], state.Enemies[i+1:]...)
@@ -1761,32 +2127,27 @@ func isPositionBlocked(x, y float32, self *Enemy) bool {
 // isEnemyProtected returns true if the target cannot be hit by the player
 // from the player's current position.
 //
-// Phase-layer model: each Shielder defines a circular zone. Entities (the
-// player and every enemy) are inside or outside each zone independently.
-// Two entities can interact (deal damage, get hit) only if they share the
-// same zone-membership set — i.e. for every active Shielder, both are
-// either inside its zone or both are outside.
+// Two-layer model: all shielder zones share a single layer. The player and
+// every enemy are either "inside the layer" (inside at least one shielder
+// zone) or "outside the layer" (not inside any zone). A target is protected
+// when it and the player are on different sides of that boundary.
 //
 // Practical effects:
-//   - Outside any Shielder zone, the player can hit enemies that are also
-//     outside every Shielder zone. Anything tucked into a Shielder is
-//     untouchable until the player phases in.
-//   - Stepping into a Shielder's zone phases the player into that layer:
-//     they can hit enemies inside that same zone, but enemies outside the
-//     zone (including their own bullets and abilities — see callers) become
-//     untouchable until they leave.
-//   - Overlapping Shielders create tiered zones — to hit an enemy inside
-//     both Shielder A and B, the player must also be inside both.
-//   - The Shielder itself is "inside its own zone" so it can only be
-//     killed by going in.
-//
-// A target is "protected" when its membership set differs from the player's.
+//   - Player outside all zones can only hit enemies also outside all zones.
+//   - Player inside any zone can hit enemies inside any zone (even a
+//     different shielder's zone), but enemies outside all zones become
+//     untouchable until the player leaves.
+//   - The Shielder itself is "inside its own zone", so it can only be
+//     killed by a player who has entered at least one zone.
 func isEnemyProtected(target *Enemy) bool {
 	if target == nil {
 		return false
 	}
-	// Fast path: no live Shielders means everyone is in the empty set,
-	// so nothing is protected.
+	// PhaseBreaker modifier bypasses all zone protection.
+	if state.Player.ShieldPiercing {
+		return false
+	}
+	// Fast path: no live Shielders means no zones exist.
 	hasAnyShielder := false
 	for _, s := range state.Enemies {
 		if s.Type == EnemyShielder && s.HP > 0 {
@@ -1799,26 +2160,34 @@ func isEnemyProtected(target *Enemy) bool {
 	}
 
 	radSq := float32(ShielderRadius * ShielderRadius)
+
+	playerInAnyZone := false
 	for _, s := range state.Enemies {
 		if s.Type != EnemyShielder || s.HP <= 0 {
 			continue
 		}
-		// Is the target inside this Shielder's zone?
-		dx := target.X - s.X
-		dy := target.Y - s.Y
-		targetIn := (dx*dx + dy*dy) < radSq
-
-		// Is the player inside this Shielder's zone?
 		pdx := state.Player.X - s.X
 		pdy := state.Player.Y - s.Y
-		playerIn := (pdx*pdx + pdy*pdy) < radSq
-
-		// Different sides of this zone → protected (different phase layer).
-		if targetIn != playerIn {
-			return true
+		if pdx*pdx+pdy*pdy < radSq {
+			playerInAnyZone = true
+			break
 		}
 	}
-	return false
+
+	targetInAnyZone := false
+	for _, s := range state.Enemies {
+		if s.Type != EnemyShielder || s.HP <= 0 {
+			continue
+		}
+		dx := target.X - s.X
+		dy := target.Y - s.Y
+		if dx*dx+dy*dy < radSq {
+			targetInAnyZone = true
+			break
+		}
+	}
+
+	return playerInAnyZone != targetInAnyZone
 }
 
 func accumulateDamage(e *Enemy, source string, amount float32) {
@@ -1836,19 +2205,7 @@ func checkXP() {
 		state.Player.ASCooldown = 0.0
 		state.IsLeveling = true
 
-		//scale items.
-		for _, item := range state.Player.EquippedItems {
-			if item != nil {
-				for i := range item.Stats {
-					item.Stats[i].Value += item.Stats[i].Growth
-					applyItemStats(&state.Player, &Item{Stats: []ItemStat{{
-						StatType: item.Stats[i].StatType,
-						Value:    item.Stats[i].Growth,
-					}}}, true)
-				}
-			}
-		}
-		//pretty sure i got it so it grants one free level of item scaling.
+		// FreeUpgradeChance: randomly pick one of the level-up options for free.
 		if state.Player.FreeUpgradeChance >= 0.01 && rand.Float32() < state.Player.FreeUpgradeChance {
 			applyRandomUpgrade()
 		}
@@ -1864,17 +2221,13 @@ func checkXP() {
 }
 
 func applyRandomUpgrade() {
-	for _, item := range state.Player.EquippedItems {
-		if item != nil {
-			for i := range item.Stats {
-				item.Stats[i].Value += item.Stats[i].Growth
-				applyItemStats(&state.Player, &Item{Stats: []ItemStat{{
-					StatType: item.Stats[i].StatType,
-					Value:    item.Stats[i].Growth,
-				}}}, true)
-			}
-		}
+	setupLevelUpOptions()
+	if len(state.LevelUpOptions) == 0 {
+		return
 	}
+	picked := state.LevelUpOptions[rand.Intn(len(state.LevelUpOptions))]
+	picked.Effect(&state.Player)
+	state.LevelUpOptions = nil
 }
 
 func shuffle(slice []LevelOption) {
@@ -2161,10 +2514,10 @@ func setupLevelUpOptions() {
 	}
 }
 
-func spawnFragments(x, y float32, wave int) {
+func spawnFragments(x, y, runTime float32) {
 	// Spawns 3 mini enemies
 	for i := 0; i < 3; i++ {
-		frag := initEnemy(wave)
+		frag := initEnemy(runTime)
 		frag.Type = EnemyFragment
 		frag.Size = 10
 		frag.HP = frag.MaxHP * 0.3
@@ -2195,7 +2548,7 @@ func updateGame(dt float32) {
 			for state.SpawnTimer >= spawnInterval {
 				state.SpawnTimer -= spawnInterval
 				if state.EnemiesAlive < 150 {
-					state.Enemies = append(state.Enemies, initEnemy(state.Wave))
+					state.Enemies = append(state.Enemies, initEnemy(state.RunTime))
 					state.EnemiesAlive++
 				}
 			}
@@ -2225,14 +2578,10 @@ func updateGame(dt float32) {
 		state.DeathTimer -= dt
 		if state.DeathTimer <= 0 {
 			state.GameOver = true
-			// Award MetaXP for the run. Wave is 1-indexed so subtract 1 so
-			// dying on wave 1 doesn't grant survival XP. SaveMetaProg flushes
-			// the grant to disk so it survives a crash-at-game-over.
+			// Award MetaXP for the run. SaveMetaProg flushes the grant to disk
+			// so it survives a crash-at-game-over.
 			if !state.MetaXPAwarded {
-				wavesCleared := state.Wave - 1
-				if wavesCleared < 0 {
-					wavesCleared = 0
-				}
+				wavesCleared := int(state.RunTime / 15)
 				gained := state.RunKills*MetaXPPerKill +
 					state.RunBossKills*MetaXPPerBossKill +
 					wavesCleared*MetaXPPerWave
@@ -2265,6 +2614,13 @@ func updateGame(dt float32) {
 	}
 	if state.IsLeveling {
 		handleLevelUpInput()
+		return
+	}
+
+	// Aim tutorial pseudo-pause: freeze the world but let the cursor-snap
+	// logic run so the player can see the reticle snap to enemies.
+	if state.TutAimActive {
+		handleTutAimInput()
 		return
 	}
 
@@ -2396,13 +2752,6 @@ func updateGame(dt float32) {
 
 	triggerGravityEffect(effectiveDt)
 
-	//update the timer for waves (though now its a difficulty scaling timer...maybe rename this.)
-	state.WaveTimer -= effectiveDt
-	if state.WaveTimer <= 0 {
-		state.Wave++
-		state.WaveTimer = WaveTimeLimit
-	}
-
 	//update hp/overshield values.
 	if state.Player.HP < state.Player.MaxHP {
 		state.Player.HP += state.Player.RegenRate * effectiveDt
@@ -2414,12 +2763,16 @@ func updateGame(dt float32) {
 		state.Player.Overshield += state.Player.OvershieldRate * effectiveDt
 	}
 
-	// Overclock unique modifier: count down the haste burst, remove bonus when it expires.
-	if state.Player.OverclockHasteTimer > 0 {
-		state.Player.OverclockHasteTimer -= effectiveDt
-		if state.Player.OverclockHasteTimer <= 0 {
-			state.Player.OverclockHasteTimer = 0
-			state.Player.Haste -= state.Player.OverclockHasteBonus
+	// CrisisAura: activate haste bonus below 40% HP, remove it when HP recovers.
+	if state.Player.CrisisAuraEnabled {
+		below := state.Player.HP < state.Player.MaxHP*0.40
+		if below && !state.Player.CrisisAuraActive {
+			state.Player.CrisisAuraActive = true
+			state.Player.Haste += state.Player.CrisisAuraBonus
+			recalculateAttackSpeed(&state.Player)
+		} else if !below && state.Player.CrisisAuraActive {
+			state.Player.CrisisAuraActive = false
+			state.Player.Haste -= state.Player.CrisisAuraBonus
 			if state.Player.Haste < 0 {
 				state.Player.Haste = 0
 			}
@@ -2442,15 +2795,9 @@ func updateGame(dt float32) {
 	for state.SpawnTimer >= spawnInterval {
 		state.SpawnTimer -= spawnInterval
 		if state.EnemiesAlive < 150 {
-			state.Enemies = append(state.Enemies, initEnemy(state.Wave))
+			state.Enemies = append(state.Enemies, initEnemy(state.RunTime))
 			state.EnemiesAlive++
 		}
-	}
-
-	//stops a crash or close at start of game.
-	if state.EnemiesAlive == 0 && state.WaveTimer <= 0 {
-		state.Wave++
-		state.WaveTimer = WaveTimeLimit
 	}
 
 	effectiveASDelay := state.Player.ASDelay
@@ -2545,10 +2892,67 @@ func updateInRunTutorial(dt float32) {
 		pushTutTip("Your ability fires from the action bar at the bottom. AUTO mode fires it automatically -- at 70% reduced power.", 8.0)
 	}
 
+	// ── Step 5b: Aim tutorial -- fires when a Dodger enters player range ─────
+	// Pseudo-pauses the game and waits for the player to click-hold the dodger
+	// before unblocking.  Runs only once per run on first-time players.
+	if !meta.TutorialComplete && !state.TutAimShown {
+		for _, e := range state.Enemies {
+			if e.HP <= 0 || e.Type != EnemyDodger {
+				continue
+			}
+			dx := e.X - state.Player.X
+			dy := e.Y - state.Player.Y
+			if dx*dx+dy*dy <= state.Player.Range*state.Player.Range {
+				state.TutAimShown = true
+				state.TutAimActive = true
+				break
+			}
+		}
+	}
+
 	// ── Step 6: Scaling warning -- enemies ramp hard around 2 minutes in ──────
 	if !state.TutScalingShown && state.RunTime > 120.0 {
 		state.TutScalingShown = true
 		pushTutTip("Heads up -- the polygons are getting stronger over time. Survive as long as you can!", 8.0)
 	}
 	// RP and level-up tips are pushed from dropResearchPoint / checkXP directly.
+}
+
+// handleTutAimInput runs the cursor-snap targeting logic in isolation so the
+// reticle updates while the game is pseudo-paused for the aim tutorial.
+// It clears TutAimActive once the player holds LMB over the closest enemy.
+func handleTutAimInput() {
+	const cursorSnapRadius = float32(60)
+	state.CursorAimTarget = nil
+
+	if rl.IsMouseButtonDown(rl.MouseButtonLeft) {
+		mouseWorld := rl.GetScreenToWorld2D(rl.GetMousePosition(), state.Camera)
+		cursorBestSq := cursorSnapRadius * cursorSnapRadius
+		for _, enemy := range state.Enemies {
+			if enemy.HP <= 0 {
+				continue
+			}
+			if isEnemyProtected(enemy) {
+				continue
+			}
+			if enemy.Type == EnemyPhaser && enemy.IsPhased {
+				continue
+			}
+			pdx := enemy.X - state.Player.X
+			pdy := enemy.Y - state.Player.Y
+			if pdx*pdx+pdy*pdy > state.Player.Range*state.Player.Range {
+				continue
+			}
+			cdx := enemy.X - mouseWorld.X
+			cdy := enemy.Y - mouseWorld.Y
+			if cdx*cdx+cdy*cdy < cursorBestSq {
+				cursorBestSq = cdx*cdx + cdy*cdy
+				state.CursorAimTarget = enemy
+			}
+		}
+		// Unlock: LMB held and the snapped target is any dodger.
+		if state.CursorAimTarget != nil && state.CursorAimTarget.Type == EnemyDodger {
+			state.TutAimActive = false
+		}
+	}
 }

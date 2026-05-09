@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"math/rand"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
@@ -61,8 +62,7 @@ func Subscribe(t GameEventType, h EventHandler) {
 func Dispatch(e GameEvent) {
 	if e.Type == EventOnKill && e.Enemy != nil {
 		state.RunKills++
-		// Bosses are ~3x+ larger than base enemies and come from SpawnQueue.
-		// A size-based proxy is reliable enough for XP scoring.
+		// Bosses are ~3x+ larger than base enemies — size-based proxy is reliable enough for XP scoring.
 		if e.Enemy.Size >= 40 {
 			state.RunBossKills++
 		}
@@ -90,13 +90,31 @@ func RebuildEventSubscriptions(p *Player) {
 	p.ExplosiveModChance = 0
 	p.VampireLeechPct = 0
 	p.StaticBurstChance = 0
-	p.SwiftReloadKillCDR = 0
-	p.OverclockHasteBonus = 0
 	p.LuckyDropBonus = 0
+	p.SparkChainChance = 0
+	p.LifeDrainPct = 0
+	p.ShieldPiercing = false
+	p.CrisisAuraEnabled = false
+	p.CrisisAuraActive = false
+	p.CrisisAuraBonus = 0
+	p.KillChargeStacks = 0
+	p.KillChargeMax = 0
+	p.KillChargeBonus = 0
+	p.GlassCannonDmgMult = 0
+	p.GlassCannonDamageTakenMult = 0
+	p.AbilityEchoChance = 0
+	p.ClockworkCDR = 0
+	p.ResonanceHitCount = 0
+	p.ResonanceCharged = false
+	p.ResonanceMultiplier = 0
 
 	for _, item := range p.EquippedItems {
 		if item == nil || item.UniqueModifier == "" {
 			continue
+		}
+		val := item.UniqueModifierValue
+		if val == 0 {
+			val = 1.0 // old saves without a rolled value — treat as base
 		}
 
 		switch item.UniqueModifier {
@@ -104,7 +122,7 @@ func RebuildEventSubscriptions(p *Player) {
 		// ── LifeOnHit ────────────────────────────────────────────────────
 		// Restores a small flat amount of HP on every enemy hit.
 		case "LifeOnHit":
-			p.LifeOnHitAmount += 2.0
+			p.LifeOnHitAmount += val
 			Subscribe(EventOnHit, func(ev GameEvent) {
 				ev.Player.HP += ev.Player.LifeOnHitAmount
 				if ev.Player.HP > ev.Player.MaxHP {
@@ -113,18 +131,16 @@ func RebuildEventSubscriptions(p *Player) {
 			})
 
 		// ── ExplosiveShots ───────────────────────────────────────────────
-		// Grants a 20% chance for basic shots to explode on impact.
-		// This is intentionally the same scale as the Explosive stat so
-		// stacking both is meaningful but not absurd.
+		// Grants a chance for basic shots to explode on impact.
 		// Handled directly in moveProjectiles (not via event bus) so it only
 		// fires on basic shot hits, never on ability damage.
 		case "ExplosiveShots":
-			p.ExplosiveModChance += 0.20
+			p.ExplosiveModChance += val
 
 		// ── VampireRounds ────────────────────────────────────────────────
 		// A percentage of damage dealt is returned as HP.
 		case "VampireRounds":
-			p.VampireLeechPct += 0.04 // 4% lifesteal
+			p.VampireLeechPct += val
 			Subscribe(EventOnHit, func(ev GameEvent) {
 				heal := ev.Damage * ev.Player.VampireLeechPct
 				ev.Player.HP += heal
@@ -136,7 +152,7 @@ func RebuildEventSubscriptions(p *Player) {
 		// ── StaticBurst ──────────────────────────────────────────────────
 		// Chance on hit to arc a mini lightning bolt to a nearby enemy.
 		case "StaticBurst":
-			p.StaticBurstChance += 0.20 // 20% proc chance
+			p.StaticBurstChance += val
 			Subscribe(EventOnHit, func(ev GameEvent) {
 				if ev.Enemy == nil {
 					return
@@ -144,7 +160,6 @@ func RebuildEventSubscriptions(p *Player) {
 				if rand.Float32() >= ev.Player.StaticBurstChance {
 					return
 				}
-				// Find a different nearby enemy to arc to.
 				arcDmg := ev.Damage * 0.5
 				for _, e := range state.Enemies {
 					if e.ID == ev.Enemy.ID {
@@ -170,29 +185,248 @@ func RebuildEventSubscriptions(p *Player) {
 			})
 
 		// ── ShieldSpike ──────────────────────────────────────────────────
-		// Reflects flat damage to any enemy that directly strikes the player.
+		// When hit, fires a piercing spike toward the attacker dealing
+		// val% of Thorns stat to each enemy it passes through.
 		case "ShieldSpike":
-			const spikeDmg = float32(8.0)
+			spikeVal := val
 			Subscribe(EventOnPlayerHit, func(ev GameEvent) {
+				if ev.Enemy == nil || ev.Player.ThornsDamage <= 0 {
+					return
+				}
+				spikeDmg := ev.Player.ThornsDamage * spikeVal
+				dx := ev.Enemy.X - ev.Player.X
+				dy := ev.Enemy.Y - ev.Player.Y
+				dist := float32(math.Sqrt(float64(dx*dx + dy*dy)))
+				if dist == 0 {
+					return
+				}
+				vx := (dx / dist) * BulletSpeed
+				vy := (dy / dist) * BulletSpeed
+				state.Projectiles = append(state.Projectiles, &Projectile{
+					X: ev.Player.X, Y: ev.Player.Y,
+					VelX: vx, VelY: vy,
+					Radius:      BaseBulletRadius,
+					Damage:      spikeDmg,
+					IsPiercing:  true,
+					IsEnemy:     false,
+					BouncesLeft: -1,
+				})
+			})
+
+		// ── LuckyDrop ────────────────────────────────────────────────────
+		// Intentionally weak. Adds a small bonus to RP gain rate.
+		case "LuckyDrop":
+			p.LuckyDropBonus += val
+			p.RPRate += val
+
+		// ── Opportunist ──────────────────────────────────────────────────
+		// Deals bonus damage to enemies already below 30% HP.
+		case "Opportunist":
+			opportunistVal := val
+			Subscribe(EventOnHit, func(ev GameEvent) {
 				if ev.Enemy == nil {
 					return
 				}
-				if !isEnemyProtected(ev.Enemy) {
-					ev.Enemy.HP -= spikeDmg
-					spawnDamageText(ev.Enemy.X, ev.Enemy.Y-ev.Enemy.Size, spikeDmg, DmgPhysical, false)
+				if ev.Enemy.HP < ev.Enemy.MaxHP*0.30 {
+					bonus := ev.Damage * opportunistVal
+					if !isEnemyProtected(ev.Enemy) {
+						ev.Enemy.HP -= bonus
+						spawnDamageText(ev.Enemy.X, ev.Enemy.Y-ev.Enemy.Size, bonus, DmgPhysical, false)
+					}
 				}
 			})
 
-		// ── SwiftReload ──────────────────────────────────────────────────
-		// Each kill slightly reduces ability cooldowns.
-		case "SwiftReload":
-			p.SwiftReloadKillCDR += 0.5 // seconds shaved per kill
+		// ── Overkill ─────────────────────────────────────────────────────
+		// Excess damage from a killing blow splashes to nearby enemies.
+		case "Overkill":
+			overkillVal := val
 			Subscribe(EventOnKill, func(ev GameEvent) {
-				reduction := ev.Player.SwiftReloadKillCDR
+				if ev.Enemy == nil || ev.Enemy.HP >= 0 {
+					return
+				}
+				splash := (-ev.Enemy.HP) * overkillVal
+				if splash <= 0 {
+					return
+				}
+				for _, e := range state.Enemies {
+					if e.ID == ev.Enemy.ID {
+						continue
+					}
+					dx := e.X - ev.Enemy.X
+					dy := e.Y - ev.Enemy.Y
+					if dx*dx+dy*dy < 140*140 && !isEnemyProtected(e) {
+						e.HP -= splash
+						spawnDamageText(e.X, e.Y-e.Size, splash, DmgFire, false)
+					}
+				}
+			})
+
+		// ── Resonance ────────────────────────────────────────────────────
+		// Every 10 hits, the next shot deals multiplied damage.
+		case "Resonance":
+			p.ResonanceMultiplier = val
+			Subscribe(EventOnHit, func(ev GameEvent) {
+				ev.Player.ResonanceHitCount++
+				if ev.Player.ResonanceHitCount >= 10 {
+					ev.Player.ResonanceCharged = true
+					ev.Player.ResonanceHitCount = 0
+				}
+			})
+
+		// ── SparkChain ───────────────────────────────────────────────────
+		// Chance on hit to fire a spark to the nearest enemy within 250u.
+		case "SparkChain":
+			p.SparkChainChance += val
+			Subscribe(EventOnHit, func(ev GameEvent) {
+				if ev.Enemy == nil {
+					return
+				}
+				if rand.Float32() >= ev.Player.SparkChainChance {
+					return
+				}
+				sparkDmg := ev.Damage * 0.35
+				var nearest *Enemy
+				var nearestDist float32 = 250 * 250
+				for _, e := range state.Enemies {
+					if e.ID == ev.Enemy.ID {
+						continue
+					}
+					dx := e.X - ev.Player.X
+					dy := e.Y - ev.Player.Y
+					d2 := dx*dx + dy*dy
+					if d2 < nearestDist && !isEnemyProtected(e) {
+						nearestDist = d2
+						nearest = e
+					}
+				}
+				if nearest != nil {
+					nearest.HP -= sparkDmg
+					state.LightningArcs = append(state.LightningArcs, &LightningArc{
+						SourceX: ev.Player.X, SourceY: ev.Player.Y,
+						TargetX: nearest.X, TargetY: nearest.Y,
+						VisualTimer: 1.0,
+						IsChain:     true,
+						Seed:        rand.Int31(),
+					})
+					spawnDamageText(nearest.X, nearest.Y-nearest.Size, sparkDmg, DmgLightning, false)
+				}
+			})
+
+		// ── LifeDrain ────────────────────────────────────────────────────
+		// Leech a percentage of all damage dealt as HP. Crits heal twice.
+		case "LifeDrain":
+			p.LifeDrainPct += val
+			Subscribe(EventOnHit, func(ev GameEvent) {
+				heal := ev.Damage * ev.Player.LifeDrainPct
+				ev.Player.HP += heal
+				if ev.Player.HP > ev.Player.MaxHP {
+					ev.Player.HP = ev.Player.MaxHP
+				}
+			})
+			Subscribe(EventOnCrit, func(ev GameEvent) {
+				heal := ev.Damage * ev.Player.LifeDrainPct
+				ev.Player.HP += heal
+				if ev.Player.HP > ev.Player.MaxHP {
+					ev.Player.HP = ev.Player.MaxHP
+				}
+			})
+
+		// ── ThornsEcho ───────────────────────────────────────────────────
+		// All damage dealt gains a bonus equal to val% of Thorns stat.
+		case "ThornsEcho":
+			echoVal := val
+			Subscribe(EventOnHit, func(ev GameEvent) {
+				if ev.Enemy == nil || ev.Player.ThornsDamage <= 0 {
+					return
+				}
+				bonus := ev.Player.ThornsDamage * echoVal
+				if !isEnemyProtected(ev.Enemy) {
+					ev.Enemy.HP -= bonus
+					spawnDamageText(ev.Enemy.X, ev.Enemy.Y-ev.Enemy.Size, bonus, DmgPhysical, false)
+				}
+			})
+
+		// ── PhaseBreaker ─────────────────────────────────────────────────
+		// Attacks bypass shielder zone boundaries entirely.
+		case "PhaseBreaker":
+			p.ShieldPiercing = true
+
+		// ── CrisisAura ───────────────────────────────────────────────────
+		// Below 40% HP: +val attack speed bonus. Reverses when HP recovers.
+		// Per-frame check lives in updateGame(); this just marks it equipped.
+		case "CrisisAura":
+			p.CrisisAuraEnabled = true
+			p.CrisisAuraActive = false
+			p.CrisisAuraBonus += val
+
+		// ── KillCharge ───────────────────────────────────────────────────
+		// Each kill adds flat damage (max 10 stacks). Any hit resets stacks.
+		case "KillCharge":
+			dmgPerStack := val
+			p.KillChargeMax += 10
+			Subscribe(EventOnKill, func(ev GameEvent) {
+				if ev.Player.KillChargeStacks < ev.Player.KillChargeMax {
+					ev.Player.KillChargeStacks++
+					ev.Player.Damage += dmgPerStack
+					ev.Player.KillChargeBonus += dmgPerStack
+				}
+			})
+			Subscribe(EventOnPlayerHit, func(ev GameEvent) {
+				if ev.Player.KillChargeStacks > 0 {
+					ev.Player.Damage -= ev.Player.KillChargeBonus
+					ev.Player.KillChargeStacks = 0
+					ev.Player.KillChargeBonus = 0
+				}
+			})
+
+		// ── GlassCannon ──────────────────────────────────────────────────
+		// +val% damage dealt; incoming damage increased by val*0.75%.
+		case "GlassCannon":
+			p.GlassCannonDmgMult += val
+			p.GlassCannonDamageTakenMult += val * 0.75
+
+		// ── AbilityEcho ──────────────────────────────────────────────────
+		// 1% chance on kill to instantly reset the longest active cooldown.
+		case "AbilityEcho":
+			p.AbilityEchoChance += val
+			Subscribe(EventOnKill, func(ev GameEvent) {
+				if rand.Float32() >= ev.Player.AbilityEchoChance {
+					return
+				}
 				p := ev.Player
-				// Subtract from all active cooldowns, floor at 0.
+				type cdRef struct {
+					ptr *float32
+					val float32
+				}
+				cds := []cdRef{
+					{&p.RapidFireCooldown, p.RapidFireCooldown},
+					{&p.DeathRayCooldown, p.DeathRayCooldown},
+					{&p.GravityCooldown, p.GravityCooldown},
+					{&p.BombardmentCooldown, p.BombardmentCooldown},
+					{&p.StaticCooldown, p.StaticCooldown},
+					{&p.ChronoCooldown, p.ChronoCooldown},
+				}
+				var longest *float32
+				var longestVal float32
+				for _, cd := range cds {
+					if cd.val > longestVal {
+						longestVal = cd.val
+						longest = cd.ptr
+					}
+				}
+				if longest != nil {
+					*longest = 0
+				}
+			})
+
+		// ── Clockwork ────────────────────────────────────────────────────
+		// Every kill shaves a small amount off all ability cooldowns.
+		case "Clockwork":
+			p.ClockworkCDR += val
+			Subscribe(EventOnKill, func(ev GameEvent) {
+				p := ev.Player
 				shave := func(cd *float32) {
-					*cd -= reduction
+					*cd -= p.ClockworkCDR
 					if *cd < 0 {
 						*cd = 0
 					}
@@ -205,28 +439,11 @@ func RebuildEventSubscriptions(p *Player) {
 				shave(&p.ChronoCooldown)
 			})
 
-		// ── Overclock ────────────────────────────────────────────────────
-		// Grants a brief haste burst after any ability is activated.
-		// The timer is set in triggerAbility (hooked via EventOnHit as a proxy
-		// for now); actual decay happens in updateGame.
-		case "Overclock":
-			p.OverclockHasteBonus += 0.40 // 40% haste burst
-			// We use EventOnKill as a reliable "something active happened" proxy.
-			// A dedicated EventOnAbilityUse would be cleaner — add it later if needed.
-			Subscribe(EventOnKill, func(ev GameEvent) {
-				if ev.Player.OverclockHasteTimer <= 0 {
-					ev.Player.OverclockHasteTimer = 2.5 // 2.5s burst duration
-					ev.Player.Haste += ev.Player.OverclockHasteBonus
-					recalculateAttackSpeed(ev.Player)
-				}
-			})
-
-		// ── LuckyDrop ────────────────────────────────────────────────────
-		// Increases RP drop rate from enemies slightly on every hit.
-		// Applied as a bonus multiplier to the RPRate field.
-		case "LuckyDrop":
-			p.LuckyDropBonus += 0.10
-			p.RPRate += p.LuckyDropBonus
+		// ── Deprecated ───────────────────────────────────────────────────
+		// SwiftReload replaced by Clockwork. Overclock removed (broken trigger).
+		// Old save items with these keys are silently inert.
+		case "SwiftReload", "Overclock":
+			// Deprecated — no effect.
 		}
 	}
 }
