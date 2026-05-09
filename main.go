@@ -18,6 +18,8 @@ func main() {
 
 	//start game, if game should close/crash save current state of your meta progression/items.
 	initGame()
+	initNegativeEffect()
+	defer unloadNegativeEffect()
 	state.MenuClickSound = buttonClickSound
 	defer SaveMetaProg()
 	rl.SetMusicVolume(bgm, state.MusicVolume)

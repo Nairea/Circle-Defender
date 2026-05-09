@@ -169,8 +169,15 @@ func handleResearchInput() {
 
 	mousePos := rl.GetMousePosition()
 
+	// After Rapid Fire is invested the screen is locked down — only the Back
+	// button (handled below) remains interactive.
+	postRapidFire := meta.TutorialStep == TutorialBackFromResearch
+
 	// Tree tabs (real talent trees).
-	if rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
+	// Blocked entirely while the talent-spend tutorial step is active so the
+	// player cannot wander off the Damage tab before finishing the objective.
+	tabsLocked := meta.TutorialStep == TutorialSpendTP || postRapidFire
+	if !tabsLocked && rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
 		for i := range TreesInOrder {
 			r := treeTabRect(i)
 			if rl.CheckCollisionPointRec(mousePos, r) {
@@ -189,8 +196,8 @@ func handleResearchInput() {
 		}
 	}
 
-	// Respec.
-	if rl.IsMouseButtonPressed(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(mousePos, respecButtonRect()) {
+	// Respec — disabled post-Rapid-Fire (only Back is live then).
+	if !postRapidFire && rl.IsMouseButtonPressed(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(mousePos, respecButtonRect()) {
 		playButtonSound()
 		if !HasSaveFile() {
 			performRespec()
@@ -201,9 +208,11 @@ func handleResearchInput() {
 	// If we're on the Research tab, skip talent-tree input handling and
 	// run the catalog input flow instead.
 	if activeTreeIdx == researchTabIdx {
-		handleResearchPanelInput(mousePos)
+		if !postRapidFire {
+			handleResearchPanelInput(mousePos)
+		}
 		// Back button at the bottom is handled below — don't return early.
-	} else {
+	} else if !postRapidFire {
 		// Talent-tree node click handling.
 		tree := TreesInOrder[activeTreeIdx]
 		for _, n := range TalentsByTree[tree] {
@@ -212,12 +221,17 @@ func handleResearchInput() {
 				continue
 			}
 			if rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
-				if AllocatePoint(n.ID) {
-					playButtonSound()
-					SaveMetaProg()
-					if meta.TutorialStep == TutorialSpendTP && n.ID == "dmg_rapidfire_unlock" {
-						meta.TutorialStep = TutorialBackFromResearch
+				// During the tutorial TP step only Pyromaniac and Rapid Fire may be purchased.
+				tutorialBlocked := meta.TutorialStep == TutorialSpendTP &&
+					n.ID != "dmg_pyro" && n.ID != "dmg_rapidfire_unlock"
+				if !tutorialBlocked {
+					if AllocatePoint(n.ID) {
+						playButtonSound()
 						SaveMetaProg()
+						if meta.TutorialStep == TutorialSpendTP && n.ID == "dmg_rapidfire_unlock" {
+							meta.TutorialStep = TutorialBackFromResearch
+							SaveMetaProg()
+						}
 					}
 				}
 				return
@@ -796,6 +810,11 @@ func drawTalentNode(n *TalentNode, mousePos rl.Vector2, prereqChain map[string]b
 		hoveredNodeID = n.ID
 	}
 
+	// During the tutorial TP step, nodes outside the guided path are dimmed
+	// and uninteractable so the player isn't distracted by other choices.
+	tutorialDimmed := meta.TutorialStep == TutorialSpendTP &&
+		n.ID != "dmg_pyro" && n.ID != "dmg_rapidfire_unlock"
+
 	// Card fill / border based on state.
 	var fill, border rl.Color
 	switch {
@@ -814,7 +833,11 @@ func drawTalentNode(n *TalentNode, mousePos rl.Vector2, prereqChain map[string]b
 		fill = rl.NewColor(22, 22, 32, 255)
 		border = rl.NewColor(70, 70, 80, 255)
 	}
-	if hovered && canAlloc {
+	if tutorialDimmed {
+		fill = rl.NewColor(14, 14, 20, 255)
+		border = rl.NewColor(30, 30, 38, 255)
+	}
+	if hovered && canAlloc && !tutorialDimmed {
 		fill = rl.NewColor(60, 60, 80, 255)
 		border = rl.White
 	}
@@ -940,7 +963,7 @@ func drawBackButton(mousePos rl.Vector2) {
 	rl.DrawRectangleLinesEx(r, 1, rl.White)
 	lbl := "BACK"
 	if backLocked {
-		lbl = "BACK (spend a TP first)"
+		lbl = "BACK (unlock Rapid Fire first)"
 	}
 	rl.DrawText(lbl, int32(r.X+r.Width/2)-rl.MeasureText(lbl, 16)/2, int32(r.Y)+17, 16, rl.White)
 }
@@ -1264,13 +1287,14 @@ func drawResearchTutorialOverlay() {
 		dmgTab := treeTabRect(0)
 		drawTutorialBubble(
 			dmgTab.X-20, dmgTab.Y+48,
-			"SPEND A TALENT POINT",
+			"SPEND YOUR TALENT POINTS",
 			[]string{
-				"You have 3 Talent Points.",
-				"Click the DAMAGE tab, then spend",
-				"one point on Rapid Fire (gold stripe)",
+				"You have 4 Talent Points to spend.",
+				"Open the DAMAGE tab and put all 3",
+				"points into Pyromaniac first, then",
+				"spend the last point on Rapid Fire",
 				"to unlock your first ability.",
-				"Tip: right-click to refund a rank.",
+				"Tip: right-click a node to refund.",
 			}, rl.Purple)
 		if int(rl.GetTime()*4)%2 == 0 {
 			rl.DrawRectangleLinesEx(dmgTab, 3, rl.Yellow)

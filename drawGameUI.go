@@ -424,6 +424,64 @@ func drawInRunTip() {
 	}
 }
 
+// drawTutAimOverlay renders the click-to-aim tutorial pause screen.
+// It dims the world, shows an instruction bubble, and draws a pulsing
+// highlight ring on the closest enemy so the player knows which one to target.
+func drawTutAimOverlay() {
+	// Full-screen dim so the world reads as "paused".
+	rl.DrawRectangle(0, 0, ScreenWidth, int32(ScreenHeight), rl.NewColor(0, 0, 0, 140))
+
+	// Find the first alive dodger to highlight — that's what the player needs to target.
+	var closest *Enemy
+	for _, e := range state.Enemies {
+		if e.HP > 0 && e.Type == EnemyDodger {
+			closest = e
+			break
+		}
+	}
+	if closest != nil {
+		// Convert enemy world position to screen space.
+		screenPos := rl.GetWorldToScreen2D(rl.Vector2{X: closest.X, Y: closest.Y}, state.Camera)
+		// Pulsing ring: radius oscillates between 22 and 32 px.
+		pulse := float32(22) + float32(5)*(1+float32(math.Sin(float64(rl.GetTime())*4)))/2
+		ringCol := rl.NewColor(255, 220, 60, 220)
+		rl.DrawCircleLinesV(screenPos, pulse+2, rl.NewColor(0, 0, 0, 120))
+		rl.DrawCircleLinesV(screenPos, pulse, ringCol)
+		// Arrow pointing up from below the ring so the eye is drawn to it.
+		arrowBase := rl.Vector2{X: screenPos.X, Y: screenPos.Y + pulse + 22}
+		rl.DrawTriangle(
+			rl.Vector2{X: screenPos.X, Y: screenPos.Y + pulse + 4},
+			rl.Vector2{X: arrowBase.X - 10, Y: arrowBase.Y},
+			rl.Vector2{X: arrowBase.X + 10, Y: arrowBase.Y},
+			ringCol,
+		)
+	}
+
+	// Central instruction bubble.
+	lines := []string{
+		"Some enemies are tricky to hit!",
+		"Click and hold the left mouse button near an enemy to manually target it.",
+		"Try it on the highlighted enemy to continue.",
+	}
+	const fs0 = int32(22)
+	const fs1 = int32(15)
+	bubbleW := int32(580)
+	bubbleH := int32(110)
+	bx := ScreenWidth/2 - bubbleW/2
+	by := int32(ScreenHeight)/2 - bubbleH/2 - 60
+	rl.DrawRectangle(bx, by, bubbleW, bubbleH, rl.NewColor(10, 10, 28, 235))
+	rl.DrawRectangleLinesEx(rl.Rectangle{X: float32(bx), Y: float32(by), Width: float32(bubbleW), Height: float32(bubbleH)}, 2, rl.Gold)
+
+	// Title line.
+	tw0 := rl.MeasureText(lines[0], fs0)
+	rl.DrawText(lines[0], bx+bubbleW/2-tw0/2, by+12, fs0, rl.Gold)
+	// Detail lines.
+	for i, l := range lines[1:] {
+		tw := rl.MeasureText(l, fs1)
+		rl.DrawText(l, bx+bubbleW/2-tw/2, by+44+int32(i)*20, fs1, rl.NewColor(210, 210, 230, 255))
+	}
+}
+
 // enemyIntroText returns a one-line flavour description for first encounters.
 func enemyIntroText(t int) string {
 	switch t {
@@ -1811,7 +1869,7 @@ func drawUI(hudAlpha uint8) {
 	timeText := fmt.Sprintf("%02d:%02d", minutes, seconds)
 	rl.DrawText(timeText, ScreenWidth/2-rl.MeasureText(timeText, 30)/2, 15, 30, fa(rl.White))
 
-	currentScale := 1.0 + 0.1*float32(state.Wave-1)
+	currentScale := 1.0 + 0.1*float32(int(state.RunTime/15))
 	const scalingThresholdTime = 570.0
 	if state.RunTime > scalingThresholdTime {
 		excessTime := state.RunTime - scalingThresholdTime
@@ -1912,6 +1970,7 @@ func drawGame() {
 		rl.ClearBackground(bgColor)
 		drawGameOverScreen()
 	} else {
+		beginNegativeScene()
 		rl.ClearBackground(bgColor)
 
 		rl.BeginMode2D(state.Camera)
@@ -2491,9 +2550,16 @@ func drawGame() {
 		rl.EndMode2D()
 
 		drawUI(255)
+		endNegativeScene()
+		drawNegativeComposite()
 
 		if state.IsLeveling {
 			drawLevelUpMenu()
+		}
+
+		// Aim tutorial overlay — drawn above the world but below the pause menu.
+		if state.TutAimActive {
+			drawTutAimOverlay()
 		}
 
 		// Tutorial tip drawn last so it always sits above the level-up menu.

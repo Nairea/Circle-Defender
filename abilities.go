@@ -501,7 +501,7 @@ func updateGravityZones(dt float32) {
 								Position: rl.Vector2{X: enemy.X, Y: enemy.Y},
 							})
 							if enemy.Type == EnemyDivider {
-								spawnFragments(enemy.X, enemy.Y, state.Wave)
+								spawnFragments(enemy.X, enemy.Y, state.RunTime)
 							}
 							// Mark dead but cleanup happens in moveEnemies
 							// To prevent double counting, you might set HP slightly below 0 or handle it
@@ -808,7 +808,7 @@ func updateAbilityTimers(dt float32) {
 										Position: rl.Vector2{X: e.X, Y: e.Y},
 									})
 									if e.Type == EnemyDivider {
-										spawnFragments(e.X, e.Y, state.Wave)
+										spawnFragments(e.X, e.Y, state.RunTime)
 									}
 
 									state.Enemies = append(state.Enemies[:i], state.Enemies[i+1:]...)
@@ -928,7 +928,7 @@ func updateAbilityTimers(dt float32) {
 							Position: rl.Vector2{X: target.X, Y: target.Y},
 						})
 						if target.Type == EnemyDivider {
-							spawnFragments(target.X, target.Y, state.Wave)
+							spawnFragments(target.X, target.Y, state.RunTime)
 						}
 						state.Enemies = append(state.Enemies[:index], state.Enemies[index+1:]...)
 						state.EnemiesAlive--
