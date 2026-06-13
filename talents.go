@@ -66,15 +66,14 @@ const (
 // Curve: T1-2 free, then accelerating cost so the tree opens up steadily.
 // Keeps total spend budget reasonable (a maxed tree is ~120-140 ranks but
 // players typically spend 30-40 in a single tree per build).
-var TierGates = [8]int{0, 0, 3, 6, 10, 14, 19, 25}
+var TierGates = [8]int{0, 0, 0, 0, 0, 0, 0, 0}
 
 // ───── Meta progression tuning ───────────────────────────────────────────
 const (
 	MetaXPPerKill     = 1
-	MetaXPPerBossKill = 50
-	MetaXPPerWave     = 25
-	TPPerMetaLevel    = 3
-	MaxMetaLevel      = 99
+	MetaXPPerBossKill = 15
+	TPPerMetaLevel    = 1
+	MaxMetaLevel      = 40
 	// Small MetaXP bonus for spending RP in the fab, to keep RP relevant.
 	// Tuned: spending 100 RP gives 1 MetaXP, so a decent run-end splurge
 	// converts to maybe 5-10 XP — noticeable but never the main source.
@@ -283,7 +282,7 @@ func metaXPForLevel(level int) int {
 		return 0
 	}
 	n := level - 1
-	return 100*n + 10*n*n
+	return 160*n + 18*n*n
 }
 
 // awardMetaXP adds XP and pushes through any level-ups, granting TP each time.
@@ -470,10 +469,36 @@ func setAbilityUnlocked(p *Player, abilityName string) {
 		p.ChronoFieldUnlocked = true
 		meta.ChronoFieldUnlocked = true
 	case "Mines":
+		// Innate on talent unlock — no in-run pickup.
 		meta.MinesUnlocked = true
+		p.MinesUnlocked = true
+		p.MineMaxCooldown = MineBaseCD
+		p.MineCount = MinesToPlace
+		p.MinesCooldown = 2.0
+		if meta.MinesBranch == BranchMinesHellfire {
+			p.MineHellfireRadius = 100.0
+			p.MineLingerDamage = p.Damage * 0.5
+			p.MineCount = 1
+		} else if meta.MinesBranch == BranchMinesCluster {
+			p.MineCount += 2
+			p.MineMaxCooldown *= 0.75
+		}
 	case "Satellites":
+		// Innate on talent unlock — no in-run pickup.
 		meta.SatellitesUnlocked = true
+		p.SatelliteCount = 1
+		p.SatelliteDamage = 5.0
+		if meta.SatellitesBranch == BranchSatSentry {
+			p.SatelliteShooting = true
+			p.SatelliteOverdrive = false
+		} else if meta.SatellitesBranch == BranchSatOverdrive {
+			p.SatelliteOverdrive = true
+			p.SatelliteShooting = false
+		}
 	case "Shockwave":
+		// Innate on talent unlock, like the active abilities — no in-run pickup.
+		p.ShockwaveUnlocked = true
+		p.ShockwaveCooldown = 0
 		meta.ShockwaveUnlocked = true
 	}
 }
@@ -611,153 +636,151 @@ func fmtT(format string, args ...interface{}) string {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// TREE LAYOUT CONVENTIONS — WIDE LATTICE (6 cols × 8 tiers)
-// =========================================================
-// Each tree fans out into a 6-column, 8-tier lattice graph. Goals:
-//   - Every ability is reachable via 2-3 alternative paths
-//   - Stat nodes never gate abilities behind multi-node investment
-//   - Capstones unlock by tree-spend (SpendGate), not by chain
-//   - Choice nodes (mutex pairs) appear at multiple tiers, not just one
-//   - Cols 0-2 and cols 3-5 form two thematic halves, with bridge nodes
-//     in cols 2-3 that synergize across both halves
+// TREE LAYOUT CONVENTIONS — 8-TIER CHAIN (parent-gated)
+// ======================================================
+// Each tree has two entry nodes at T1 that fan into parallel paths,
+// then converge at a single T7 node before three T8 masterwork options.
 //
-// Per-tier convention (rough — varies by tree):
-//   T1: 3-4 stat anchors in mid columns (low-cost entry points).
-//   T2: 2-3 ability unlocks at varied columns + 2-3 stat scalings.
-//   T3: 2-3 mutex keystone pairs per ability + 1-2 stat scalings.
-//   T4-T5: Per-ability scaling and mid-tier synergies, broad spread.
-//   T6: Deep scaling nodes per ability, occasional standalone synergies.
-//   T7: Final mutex choice nodes (Pierce|Scatter, etc.) for build flavor.
-//   T8: 3 capstone keystones (one per thematic third), SpendGate 25.
+// Design rules:
+//   - Each node has 1-2 children. Children unlock only once parent is maxed.
+//   - MaxRank 1-2 per node (fast and snappy investment feel).
+//   - Mutex pairs share a Tier+Col slot and a MutexGroupID.
+//   - Universal abilities sit at T2-T3; high-value abilities at T3-T4.
+//   - T7 convergence uses OR prereqs — any T6 path reaches it.
+//   - T8 masterworks require the T7 convergence node + SpendGate 28.
+//   - Total budget: ~28-32 points to reach masterwork in one tree;
+//     ~18-22 points left for a second tree (roughly halfway in).
+//   - 50 total talent points cap.
 //
 // Allowed prereq topology:
-//   - A child node may list multiple parents (OR semantics — any one
-//     allocated counts as met).
-//   - Parents may sit ANY number of tiers above the child, in ANY column.
-//   - Diagonals and tier-spanning prereqs are FIRST-CLASS, not exceptions.
-//   - Mutex pairs share a Tier+Col slot and a MutexGroupID.
-//   - Spend-gated capstones leave Prereqs empty and rely on SpendGate.
+//   - Multiple parents in Prereqs = OR semantics (any one maxed unlocks).
+//   - Mutex pairs share Exclusive list and MutexGroupID.
 // ═════════════════════════════════════════════════════════════════════════
 
 // ═════════════════════════════════════════════════════════════════════════
-// DAMAGE TREE — WIDE LATTICE (33 nodes, 6×8)
+// DAMAGE TREE — 8-TIER CHAIN (22 nodes)
 //
-// Two abilities (Rapid Fire and Death Ray), no new abilities added per the
-// design constraint. Density comes from passive scaling and synergy nodes
-// that touch the existing damage stats from many angles:
-//   - Damage levers: Damage, ExplosiveShotChance, Range, ThornsDamage
-//   - Crit levers: CritChance, CritMultiplier
-//   - Spread levers: MultishotChance, MultishotCount, ChainChance, ChainCount
-//   - Rapid Fire levers: RapidFireDuration, RapidFireMultiplier, RapidFireCooldown
-//   - Death Ray levers: DeathRayDamageMult, DeathRayCount, DeathRaySpinSpeed
-//   - Cross-cut: Frenzy*, ConsecutiveHits, BulletStormDmgBonus
+// Two entry points fan into parallel paths; all converge at T7 Sharpshooter
+// before choosing one of three T8 masterwork keystones.
 //
-// Layout (col, tier):
-//   T1: Sharpshooter c1, Pyromaniac c2, Precision c4
-//   T2: Heavy Rounds c0, ★Death Ray c1, ★Rapid Fire c3, Marksman c4, Ricochet c5
-//   T3: Annihil|Prism c0 mutex, BulletStorm|Overcharge c3 mutex, Headshot c5
-//   T4: Beam Width c0, Frenzy c2, Pressure Fire c3, Multishot Mastery c4, Sniper c5
-//   T5: Focal Lens c0, Burnout c1, Tempo Strike c2, Chain Theory c3, Splitfire c4
-//   T6: Demolisher c1, Combo c3, Double Tap c4, Crit Mass c5
-//   T7: Pierce|Scatter c0 mutex, Resonance c3, HeadHunter|Overload c5 mutex
-//   T8: Apex c1, Glass Cannon c3, Hypercritical c5  (all SpendGate 25)
+// Layout (tier, col):
+//   T1: Precision c1, Pressure Fire c4
+//   T2: Pyromaniac c0, ★Rapid Fire c2, Ricochet c3, Heavy Rounds c5
+//        Precision→{Pyromaniac,Rapid Fire}  PressureFire→{Ricochet,Heavy Rounds}
+//   T3: Headshot c0, BulletStorm|Overcharge c2 mutex, Marksman c3, Extended Magazine c4, Sniper c5
+//        Ricochet→{Marksman,Extended Magazine}  Rapid Fire→{BulletStorm|Overcharge}
+//   T4: Long Shot c0, Multishot Mastery c1, Chain Theory c3, ★Death Ray c4
+//        BulletStorm|Overcharge→{Multishot Mastery,Chain Theory}
+//        Marksman|Extended Magazine→{Death Ray}
+//   T5: Frenzy c0, Splitfire c2, Annihilator|Prism c3 mutex
+//   T6: Tempo Strike c1, Chain Reaction c2, Beam Width c3
+//   T7: Sharpshooter c2 (convergence — any T6 node)
+//   T8: Apex Predator c1 | Glass Cannon c3 | Hypercritical c5  (SpendGate 28)
 // ═════════════════════════════════════════════════════════════════════════
 
 func registerDamageTree() {
-	// ── Tier 1 — three stat anchors ──────────────────────────────────────
+	// ── Tier 1 — two entry anchors ────────────────────────────────────────
 	registerNode(&TalentNode{
-		ID: "dmg_sharpshooter", Tree: TreeDamage, Tier: 1, Col: 1,
-		Name: "Sharpshooter", MaxRank: 5, Kind: NodeScaling,
-		Apply:    func(p *Player, r int) { p.Damage *= 1.0 + float32(r)*0.10 },
-		Describe: func(r int) string { return fmtT("+%.0f%% damage", float32(r)*10) },
+		ID: "dmg_pressure_fire", Tree: TreeDamage, Tier: 1, Col: 4,
+		Name: "First Strike", MaxRank: 2, Kind: NodeSynergy,
+		Apply:    func(p *Player, r int) { p.OpenerBonus += float32(r) * 0.15 },
+		Describe: func(r int) string { return fmtT("+%.0f%% damage to full-HP enemies", float32(r)*15) },
 	})
 	registerNode(&TalentNode{
-		ID: "dmg_pyro", Tree: TreeDamage, Tier: 1, Col: 2,
-		Name: "Pyromaniac", MaxRank: 3, Kind: NodeScaling,
-		Apply:    func(p *Player, r int) { p.ExplosiveShotChance += float32(r) * 0.04 },
-		Describe: func(r int) string { return fmtT("+%.0f%% explosive shot chance", float32(r)*4) },
-	})
-	registerNode(&TalentNode{
-		ID: "dmg_precision", Tree: TreeDamage, Tier: 1, Col: 4,
-		Name: "Precision", MaxRank: 5, Kind: NodeScaling,
-		Apply:    func(p *Player, r int) { p.CritChance += float32(r) * 0.02 },
-		Describe: func(r int) string { return fmtT("+%.0f%% crit chance", float32(r)*2) },
+		ID: "dmg_ricochet", Tree: TreeDamage, Tier: 2, Col: 3,
+		Name: "Ricochet", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"dmg_pressure_fire"},
+		Apply:    func(p *Player, r int) { p.ChainChance += float32(r) * 0.06 },
+		Describe: func(r int) string { return fmtT("+%.0f%% bullet ricochet chance", float32(r)*6) },
 	})
 
-	// ── Tier 2 — abilities + bridge stats ────────────────────────────────
-	// Death Ray reachable from Sharpshooter or Pyromaniac. Rapid Fire from
-	// Sharpshooter, Pyromaniac, or Precision (the central ability).
-	// Marksman bridges crit path → multishot synergies.
+	// ── Tier 2 — two paths per entry ─────────────────────────────────────
 	registerNode(&TalentNode{
-		ID: "dmg_heavy_rounds", Tree: TreeDamage, Tier: 2, Col: 0,
-		Name: "Heavy Rounds", MaxRank: 3, Kind: NodeScaling,
-		Prereqs:  []string{"dmg_sharpshooter"},
-		Apply:    func(p *Player, r int) { p.Damage *= 1.0 + float32(r)*0.10 },
-		Describe: func(r int) string { return fmtT("+%.0f%% damage", float32(r)*10) },
+		ID: "dmg_pyro", Tree: TreeDamage, Tier: 2, Col: 0,
+		Name: "Pyromaniac", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"dmg_precision"},
+		Apply:    func(p *Player, r int) { p.ExplosiveShotChance += float32(r) * 0.06 },
+		Describe: func(r int) string { return fmtT("+%.0f%% explosive shot chance", float32(r)*6) },
 	})
 	registerNode(&TalentNode{
-		ID: "dmg_deathray_unlock", Tree: TreeDamage, Tier: 2, Col: 1,
-		Name: AbilityDeathRay, MaxRank: 1, Kind: NodeUnlock,
-		GrantsAbility: AbilityDeathRay,
-		Prereqs:       []string{"dmg_sharpshooter", "dmg_pyro"},
-		Apply:         func(p *Player, r int) {},
-		Describe:      func(r int) string { return "Unlocks Death Ray: a sustained beam that melts targets." },
+		ID: "dmg_precision", Tree: TreeDamage, Tier: 1, Col: 1,
+		Name: "Precision", MaxRank: 2, Kind: NodeScaling,
+		Apply:    func(p *Player, r int) { p.CritChance += float32(r) * 0.04 },
+		Describe: func(r int) string { return fmtT("+%.0f%% crit chance", float32(r)*4) },
 	})
 	registerNode(&TalentNode{
-		ID: "dmg_rapidfire_unlock", Tree: TreeDamage, Tier: 2, Col: 3,
+		ID: "dmg_chain_reaction", Tree: TreeDamage, Tier: 6, Col: 2,
+		Name: "Chain Reaction", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"dmg_splitfire"},
+		Apply:    func(p *Player, r int) { p.ChainCount += r },
+		Describe: func(r int) string { return fmtT("+%d ricochet chain count", r) },
+	})
+	registerNode(&TalentNode{
+		ID: "dmg_heavy_rounds", Tree: TreeDamage, Tier: 2, Col: 5,
+		Name: "Executioner", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"dmg_pressure_fire"},
+		Apply:    func(p *Player, r int) { p.ExecuteBonus += float32(r) * 0.30 },
+		Describe: func(r int) string { return fmtT("+%.0f%% damage to enemies below 30%% HP", float32(r)*30) },
+	})
+
+	// ── Tier 3 — Rapid Fire (universal) + crit/sniper scalings ───────────
+	registerNode(&TalentNode{
+		ID: "dmg_rapidfire_unlock", Tree: TreeDamage, Tier: 2, Col: 2,
 		Name: AbilityRapidFire, MaxRank: 1, Kind: NodeUnlock,
 		GrantsAbility: AbilityRapidFire,
-		Prereqs:       []string{"dmg_pyro"},
+		Prereqs:       []string{"dmg_precision"},
 		Apply:         func(p *Player, r int) {},
 		Describe:      func(r int) string { return "Unlocks Rapid Fire: a burst of rapid bullets on cast." },
 	})
 	registerNode(&TalentNode{
-		ID: "dmg_marksman", Tree: TreeDamage, Tier: 2, Col: 4,
-		Name: "Marksman", MaxRank: 5, Kind: NodeScaling,
-		Prereqs:  []string{"dmg_precision"},
-		Apply:    func(p *Player, r int) { p.CritMultiplier += float32(r) * 0.15 },
-		Describe: func(r int) string { return fmtT("+%.2fx crit multiplier", float32(r)*0.15) },
+		ID: "dmg_marksman", Tree: TreeDamage, Tier: 3, Col: 3,
+		Name: "Marksman", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"dmg_ricochet"},
+		Apply:    func(p *Player, r int) { p.CritMultiplier += float32(r) * 0.20 },
+		Describe: func(r int) string { return fmtT("+%.2fx crit multiplier", float32(r)*0.20) },
 	})
 	registerNode(&TalentNode{
-		ID: "dmg_ricochet", Tree: TreeDamage, Tier: 2, Col: 5,
-		Name: "Ricochet", MaxRank: 3, Kind: NodeScaling,
-		Prereqs:  []string{"dmg_precision"},
-		Apply:    func(p *Player, r int) { p.ChainChance += float32(r) * 0.04 },
-		Describe: func(r int) string { return fmtT("+%.0f%% bullet ricochet chance", float32(r)*4) },
+		ID: "dmg_headshot", Tree: TreeDamage, Tier: 3, Col: 0,
+		Name: "Pile On", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"dmg_pyro"},
+		Apply:    func(p *Player, r int) { p.SlowAmpBonus += float32(r) * 0.20 },
+		Describe: func(r int) string { return fmtT("+%.0f%% damage to stunned/knocked enemies", float32(r)*20) },
+	})
+	registerNode(&TalentNode{
+		ID: "dmg_sniper", Tree: TreeDamage, Tier: 3, Col: 5,
+		Name: "Sniper", MaxRank: 2, Kind: NodeScaling,
+		Prereqs: []string{"dmg_heavy_rounds"},
+		Apply: func(p *Player, r int) {
+			p.RangePct += float32(r) * 0.08
+			p.Damage *= 1.0 + float32(r)*0.04
+		},
+		Describe: func(r int) string {
+			return fmtT("+%.0f%% range, +%.0f%% damage", float32(r)*8, float32(r)*4)
+		},
 	})
 
-	// ── Tier 3 — keystone mutexes + Headshot ─────────────────────────────
+	// ── Tier 4 — RF keystones + magazine branch + Death Ray unlock ───────
 	registerNode(&TalentNode{
-		ID: "dmg_annihilator_key", Tree: TreeDamage, Tier: 3, Col: 0,
-		Name: "Annihilator", MaxRank: 1, Kind: NodeKeystone,
-		Prereqs:      []string{"dmg_deathray_unlock"},
-		Exclusive:    []string{"dmg_prism_key"},
-		MutexGroupID: "dmg_dr_branch",
-		BranchSlot:   "DeathRay", SetsBranch: BranchDeathRayAnnihilator,
-		Apply: func(p *Player, r int) {
-			p.DeathRayDamageMult += 3.0
-			p.DeathRayScaling = 0.5
-			p.DeathRayPath = 1
-		},
-		Describe: func(r int) string { return "Death Ray: focused beam, damage ramps up." },
+		ID: "dmg_magazine", Tree: TreeDamage, Tier: 3, Col: 4,
+		Name: "Extended Magazine", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"dmg_ricochet"},
+		Apply:    func(p *Player, r int) { p.RapidFireDuration *= 1.0 + float32(r)*0.10 },
+		Describe: func(r int) string { return fmtT("+%.0f%% Rapid Fire duration", float32(r)*10) },
 	})
 	registerNode(&TalentNode{
-		ID: "dmg_prism_key", Tree: TreeDamage, Tier: 3, Col: 0,
-		Name: "Prism", MaxRank: 1, Kind: NodeKeystone,
-		Prereqs:      []string{"dmg_deathray_unlock"},
-		Exclusive:    []string{"dmg_annihilator_key"},
-		MutexGroupID: "dmg_dr_branch",
-		BranchSlot:   "DeathRay", SetsBranch: BranchDeathRayPrism,
+		ID: "dmg_long_shot", Tree: TreeDamage, Tier: 4, Col: 0,
+		Name: "Long Shot", MaxRank: 2, Kind: NodeScaling,
+		Prereqs: []string{"dmg_headshot"},
 		Apply: func(p *Player, r int) {
-			p.DeathRayCount = 0
-			p.DeathRaySpinCount = 2
-			p.DeathRaySpinSpeed = 1.5
-			p.DeathRayPath = 2
+			p.RangePct += float32(r) * 0.10
+			p.DamagePerMeter += float32(r) * 0.0004
 		},
-		Describe: func(r int) string { return "Death Ray: spinning multi-beams." },
+		Describe: func(r int) string {
+			return fmtT("+%.0f%% range, +%.2f%% damage per meter to target", float32(r)*10, float32(r)*0.04)
+		},
 	})
 	registerNode(&TalentNode{
-		ID: "dmg_bulletstorm_key", Tree: TreeDamage, Tier: 3, Col: 3,
+		ID: "dmg_bulletstorm_key", Tree: TreeDamage, Tier: 3, Col: 2,
 		Name: "Bullet Storm", MaxRank: 1, Kind: NodeKeystone,
 		Prereqs:      []string{"dmg_rapidfire_unlock"},
 		Exclusive:    []string{"dmg_overcharge_key"},
@@ -773,227 +796,164 @@ func registerDamageTree() {
 		Describe: func(r int) string { return "Rapid Fire: higher rate, shorter duration." },
 	})
 	registerNode(&TalentNode{
-		ID: "dmg_overcharge_key", Tree: TreeDamage, Tier: 3, Col: 3,
+		ID: "dmg_overcharge_key", Tree: TreeDamage, Tier: 3, Col: 2,
 		Name: "Overcharge", MaxRank: 1, Kind: NodeKeystone,
 		Prereqs:      []string{"dmg_rapidfire_unlock"},
 		Exclusive:    []string{"dmg_bulletstorm_key"},
 		MutexGroupID: "dmg_rf_branch",
 		BranchSlot:   "RapidFire", SetsBranch: BranchRapidFireOvercharge,
-		Apply:    func(p *Player, r int) { p.RapidFireMultiplier += 0.5 },
-		Describe: func(r int) string { return "Rapid Fire: +crit and multishot burst while active." },
+		Apply:    func(p *Player, r int) { p.RapidFireMultiplier += 1.0; p.MultishotCount++ },
+		Describe: func(r int) string { return "Rapid Fire: +crit and multishot burst, +1 permanent multishot." },
 	})
 	registerNode(&TalentNode{
-		ID: "dmg_headshot", Tree: TreeDamage, Tier: 3, Col: 5,
-		Name: "Headshot", MaxRank: 3, Kind: NodeScaling,
-		Prereqs:  []string{"dmg_ricochet"},
-		Apply:    func(p *Player, r int) { p.CritMultiplier += float32(r) * 0.20 },
-		Describe: func(r int) string { return fmtT("+%.2fx crit multiplier", float32(r)*0.20) },
+		ID: "dmg_multishot_mastery", Tree: TreeDamage, Tier: 4, Col: 1,
+		Name: "Multishot Mastery", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"dmg_bulletstorm_key", "dmg_overcharge_key"},
+		Apply:    func(p *Player, r int) { p.MultishotChance += float32(r) * 0.10 },
+		Describe: func(r int) string { return fmtT("+%.0f%% multishot chance", float32(r)*10) },
+	})
+	registerNode(&TalentNode{
+		ID: "dmg_deathray_unlock", Tree: TreeDamage, Tier: 4, Col: 4,
+		Name: AbilityDeathRay, MaxRank: 1, Kind: NodeUnlock,
+		GrantsAbility: AbilityDeathRay,
+		Prereqs:       []string{"dmg_marksman", "dmg_magazine"},
+		Apply:         func(p *Player, r int) {},
+		Describe:      func(r int) string { return "Unlocks Death Ray: a sustained beam that melts targets." },
 	})
 
-	// ── Tier 4 — per-path scaling ────────────────────────────────────────
-	// Beam Width adds Death Ray beams. Frenzy adds frenzy chance. Pressure
-	// Fire is a synergy that benefits from controlled foes (works with
-	// Control tree). Multishot Mastery is the multishot scaling. Sniper
-	// is a range/long-shot scaling.
+	// ── Tier 5 — frenzy, splitfire, focal lens, Death Ray keystones ──────
 	registerNode(&TalentNode{
-		ID: "dmg_beam_width", Tree: TreeDamage, Tier: 4, Col: 0,
-		Name: "Beam Width", MaxRank: 3, Kind: NodeScaling,
-		Prereqs:  []string{"dmg_annihilator_key", "dmg_prism_key", "dmg_heavy_rounds"},
-		Apply:    func(p *Player, r int) { p.DeathRayDamageMult += float32(r) * 0.50 },
-		Describe: func(r int) string { return fmtT("+%.2fx Death Ray damage", float32(r)*0.50) },
+		ID: "dmg_focal_lens", Tree: TreeDamage, Tier: 5, Col: 3,
+		Name: "Focal Lens", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"dmg_chain_theory"},
+		Apply:    func(p *Player, r int) { p.DeathRayDuration *= 1.0 + float32(r)*0.12 },
+		Describe: func(r int) string { return fmtT("+%.0f%% Death Ray duration", float32(r)*12) },
 	})
 	registerNode(&TalentNode{
-		ID: "dmg_frenzy", Tree: TreeDamage, Tier: 4, Col: 2,
-		Name: "Frenzy", MaxRank: 3, Kind: NodeSynergy,
+		ID: "dmg_frenzy", Tree: TreeDamage, Tier: 5, Col: 0,
+		Name: "Frenzy", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"dmg_long_shot"},
+		Apply: func(p *Player, r int) {
+			p.FrenzyChance += float32(r) * 0.05
+			p.FrenzyDuration *= 1.0 + float32(r)*0.20
+		},
+		Describe: func(r int) string {
+			return fmtT("+%.0f%% frenzy chance, +%.0f%% duration", float32(r)*5, float32(r)*20)
+		},
+	})
+	registerNode(&TalentNode{
+		ID: "dmg_splitfire", Tree: TreeDamage, Tier: 5, Col: 2,
+		Name: "Splitfire", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"dmg_chain_theory", "dmg_multishot_mastery"},
+		Apply:    func(p *Player, r int) { p.MultishotChance += float32(r) * 0.08 },
+		Describe: func(r int) string { return fmtT("+%.0f%% multishot chance", float32(r)*8) },
+	})
+	registerNode(&TalentNode{
+		ID: "dmg_annihilator_key", Tree: TreeDamage, Tier: 5, Col: 4,
+		Name: "Annihilator", MaxRank: 1, Kind: NodeKeystone,
+		Prereqs:      []string{"dmg_deathray_unlock"},
+		Exclusive:    []string{"dmg_prism_key"},
+		MutexGroupID: "dmg_dr_branch",
+		BranchSlot:   "DeathRay", SetsBranch: BranchDeathRayAnnihilator,
+		Apply: func(p *Player, r int) {
+			p.DeathRayDamageMult += 3.0
+			p.DeathRayScaling = 0.5
+			p.DeathRayPath = 1
+		},
+		Describe: func(r int) string { return "Death Ray: focused beam, damage ramps up." },
+	})
+	registerNode(&TalentNode{
+		ID: "dmg_prism_key", Tree: TreeDamage, Tier: 5, Col: 4,
+		Name: "Prism", MaxRank: 1, Kind: NodeKeystone,
+		Prereqs:      []string{"dmg_deathray_unlock"},
+		Exclusive:    []string{"dmg_annihilator_key"},
+		MutexGroupID: "dmg_dr_branch",
+		BranchSlot:   "DeathRay", SetsBranch: BranchDeathRayPrism,
+		Apply: func(p *Player, r int) {
+			p.DeathRayCount = 0
+			p.DeathRaySpinCount = 2
+			p.DeathRaySpinSpeed = 1.5
+			p.DeathRayPath = 2
+		},
+		Describe: func(r int) string { return "Death Ray: spinning multi-beams." },
+	})
+
+	// ── Tier 6 — deep scaling, one per path ──────────────────────────────
+	registerNode(&TalentNode{
+		ID: "dmg_tempo_strike", Tree: TreeDamage, Tier: 6, Col: 1,
+		Name: "Tempo Strike", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"dmg_frenzy"},
+		Apply:    func(p *Player, r int) { p.Haste += float32(r) * 0.04 },
+		Describe: func(r int) string { return fmtT("+%.0f%% haste", float32(r)*4) },
+	})
+	registerNode(&TalentNode{
+		ID: "dmg_chain_theory", Tree: TreeDamage, Tier: 4, Col: 3,
+		Name: "Adrenaline Rush", MaxRank: 2, Kind: NodeSynergy,
 		Prereqs: []string{"dmg_bulletstorm_key", "dmg_overcharge_key"},
 		Apply: func(p *Player, r int) {
-			p.FrenzyChance += float32(r) * 0.04
-			p.FrenzyDuration += float32(r) * 0.5
+			p.FrenzyChance += float32(r) * 0.06
+			p.FrenzyDuration *= 1.0 + float32(r)*0.15
 		},
 		Describe: func(r int) string {
-			return fmtT("+%.0f%% frenzy chance, +%.1fs duration", float32(r)*4, float32(r)*0.5)
+			return fmtT("+%.0f%% frenzy chance, +%.0f%% frenzy duration", float32(r)*6, float32(r)*15)
 		},
 	})
 	registerNode(&TalentNode{
-		ID: "dmg_pressure_fire", Tree: TreeDamage, Tier: 4, Col: 3,
-		Name: "Pressure Fire", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs:  []string{"dmg_marksman", "dmg_bulletstorm_key", "dmg_overcharge_key"},
-		Apply:    func(p *Player, r int) { p.Damage *= 1.0 + float32(r)*0.05 },
-		Describe: func(r int) string { return fmtT("+%.0f%% damage", float32(r)*5) },
+		ID: "dmg_beam_width", Tree: TreeDamage, Tier: 6, Col: 3,
+		Name: "Beam Width", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"dmg_annihilator_key", "dmg_prism_key", "dmg_focal_lens"},
+		Apply:    func(p *Player, r int) { p.DeathRayDamageMult += float32(r) * 0.60 },
+		Describe: func(r int) string { return fmtT("+%.2fx Death Ray damage", float32(r)*0.60) },
 	})
+
+	// ── Tier 7 — path-specific keystones ─────────────────────────────────
 	registerNode(&TalentNode{
-		ID: "dmg_multishot_mastery", Tree: TreeDamage, Tier: 4, Col: 4,
-		Name: "Multishot Mastery", MaxRank: 5, Kind: NodeScaling,
-		Prereqs:  []string{"dmg_marksman"},
-		Apply:    func(p *Player, r int) { p.MultishotChance += float32(r) * 0.06 },
-		Describe: func(r int) string { return fmtT("+%.0f%% multishot chance", float32(r)*6) },
-	})
-	registerNode(&TalentNode{
-		ID: "dmg_sniper", Tree: TreeDamage, Tier: 4, Col: 5,
-		Name: "Sniper", MaxRank: 3, Kind: NodeScaling,
-		Prereqs: []string{"dmg_ricochet"},
+		ID: "dmg_war_machine", Tree: TreeDamage, Tier: 7, Col: 1,
+		Name: "War Machine", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"dmg_tempo_strike"},
 		Apply: func(p *Player, r int) {
-			p.Range += float32(r) * (50.0 / 3.0)
-			p.Damage *= 1.0 + float32(r)*0.03
+			p.Haste += float32(r) * 0.05
+			p.Damage *= 1.0 + float32(r)*0.06
 		},
 		Describe: func(r int) string {
-			return fmtT("+%.0f range, +%.0f%% damage", float32(r)*50/3, float32(r)*3)
+			return fmtT("+%.0f%% haste, +%.0f%% damage", float32(r)*5, float32(r)*6)
+		},
+	})
+	registerNode(&TalentNode{
+		ID: "dmg_sharpshooter", Tree: TreeDamage, Tier: 7, Col: 3,
+		Name: "Sharpshooter", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"dmg_chain_reaction"},
+		Apply:    func(p *Player, r int) { p.Damage *= 1.0 + float32(r)*0.12 },
+		Describe: func(r int) string { return fmtT("+%.0f%% damage", float32(r)*12) },
+	})
+	registerNode(&TalentNode{
+		ID: "dmg_laser_focus", Tree: TreeDamage, Tier: 7, Col: 5,
+		Name: "Laser Focus", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"dmg_beam_width"},
+		Apply: func(p *Player, r int) {
+			p.CritMultiplier += float32(r) * 0.20
+			p.Damage *= 1.0 + float32(r)*0.08
+		},
+		Describe: func(r int) string {
+			return fmtT("+%.2fx crit mult, +%.0f%% damage", float32(r)*0.20, float32(r)*8)
 		},
 	})
 
-	// ── Tier 5 — synergies ───────────────────────────────────────────────
-	registerNode(&TalentNode{
-		ID: "dmg_focal_lens", Tree: TreeDamage, Tier: 5, Col: 0,
-		Name: "Focal Lens", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs:  []string{"dmg_beam_width"},
-		Apply:    func(p *Player, r int) { p.DeathRayDuration += float32(r) * 0.5 },
-		Describe: func(r int) string { return fmtT("+%.1fs Death Ray duration", float32(r)*0.5) },
-	})
-	registerNode(&TalentNode{
-		ID: "dmg_burnout", Tree: TreeDamage, Tier: 5, Col: 1,
-		Name: "Burnout", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs:  []string{"dmg_beam_width", "dmg_frenzy"},
-		Apply:    func(p *Player, r int) { p.BulletStormDmgBonus += float32(r) * 0.4 },
-		Describe: func(r int) string { return fmtT("+%.1f sustained-fire damage bonus", float32(r)*0.4) },
-	})
-	registerNode(&TalentNode{
-		ID: "dmg_tempo_strike", Tree: TreeDamage, Tier: 5, Col: 2,
-		Name: "Tempo Strike", MaxRank: 3, Kind: NodeScaling,
-		Prereqs:  []string{"dmg_frenzy", "dmg_pressure_fire"},
-		Apply:    func(p *Player, r int) { p.Haste += float32(r) * 0.03 },
-		Describe: func(r int) string { return fmtT("+%.0f%% haste", float32(r)*3) },
-	})
-	registerNode(&TalentNode{
-		ID: "dmg_chain_theory", Tree: TreeDamage, Tier: 5, Col: 3,
-		Name: "Chain Theory", MaxRank: 4, Kind: NodeSynergy,
-		Prereqs:  []string{"dmg_pressure_fire", "dmg_multishot_mastery"},
-		Apply:    func(p *Player, r int) { p.ChainChance += float32(r) * 0.05 },
-		Describe: func(r int) string { return fmtT("+%.0f%% ricochet chance on bullet hits", float32(r)*5) },
-	})
-	registerNode(&TalentNode{
-		ID: "dmg_splitfire", Tree: TreeDamage, Tier: 5, Col: 4,
-		Name: "Splitfire", MaxRank: 3, Kind: NodeScaling,
-		Prereqs:  []string{"dmg_multishot_mastery", "dmg_sniper"},
-		Apply:    func(p *Player, r int) { p.MultishotChance += float32(r) * 0.04 },
-		Describe: func(r int) string { return fmtT("+%.0f%% multishot chance", float32(r)*4) },
-	})
-
-	// ── Tier 6 — deep synergies ──────────────────────────────────────────
-	registerNode(&TalentNode{
-		ID: "dmg_demolisher", Tree: TreeDamage, Tier: 6, Col: 1,
-		Name: "Demolisher", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"dmg_focal_lens", "dmg_burnout"},
-		Apply: func(p *Player, r int) {
-			p.ExplosiveShotChance += float32(r) * 0.03
-			p.Damage *= 1.0 + float32(r)*0.03
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.0f%% explosive, +%.0f%% damage", float32(r)*3, float32(r)*3)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "dmg_combo", Tree: TreeDamage, Tier: 6, Col: 3,
-		Name: "Combo", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"dmg_chain_theory", "dmg_tempo_strike"},
-		// ConsecutiveHits is read elsewhere; we boost crit multiplier as a
-		// rank-scaling proxy for "rewarding hit streaks".
-		Apply: func(p *Player, r int) {
-			p.CritMultiplier += float32(r) * 0.10
-			p.Haste += float32(r) * 0.02
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.2fx crit mult, +%.0f%% haste", float32(r)*0.10, float32(r)*2)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "dmg_double_tap", Tree: TreeDamage, Tier: 6, Col: 4,
-		Name: "Double Tap", MaxRank: 3, Kind: NodeScaling,
-		Prereqs:  []string{"dmg_chain_theory", "dmg_splitfire"},
-		Apply:    func(p *Player, r int) { p.RapidFireMultiplier += float32(r) * 0.4 },
-		Describe: func(r int) string { return fmtT("+%.2fx Rapid Fire rate multiplier", float32(r)*0.4) },
-	})
-	registerNode(&TalentNode{
-		ID: "dmg_crit_mass", Tree: TreeDamage, Tier: 6, Col: 5,
-		Name: "Crit Mass", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"dmg_splitfire"},
-		Apply: func(p *Player, r int) {
-			p.CritChance += float32(r) * 0.03
-			p.MultishotCount += r
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.0f%% crit, +%d multishot bullet", float32(r)*3, r)
-		},
-	})
-
-	// ── Tier 7 — final mutex choices ─────────────────────────────────────
-	registerNode(&TalentNode{
-		ID: "dmg_piercing", Tree: TreeDamage, Tier: 7, Col: 0,
-		Name: "Piercing Rounds", MaxRank: 1, Kind: NodeKeystone,
-		Prereqs:      []string{"dmg_demolisher", "dmg_combo"},
-		Exclusive:    []string{"dmg_scatter_shot"},
-		MutexGroupID: "dmg_t7_branch",
-		Apply:        func(p *Player, r int) { p.ChainCount += 2 },
-		Describe:     func(r int) string { return "+2 ricochet targets." },
-	})
-	registerNode(&TalentNode{
-		ID: "dmg_scatter_shot", Tree: TreeDamage, Tier: 7, Col: 0,
-		Name: "Scatter Shot", MaxRank: 1, Kind: NodeKeystone,
-		Prereqs:      []string{"dmg_demolisher", "dmg_combo"},
-		Exclusive:    []string{"dmg_piercing"},
-		MutexGroupID: "dmg_t7_branch",
-		Apply:        func(p *Player, r int) { p.MultishotCount += 2 },
-		Describe:     func(r int) string { return "+2 multishot bullets." },
-	})
-	registerNode(&TalentNode{
-		ID: "dmg_resonance", Tree: TreeDamage, Tier: 7, Col: 3,
-		Name: "Resonance", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"dmg_combo", "dmg_double_tap"},
-		Apply: func(p *Player, r int) {
-			p.Damage *= 1.0 + float32(r)*0.05
-			p.CritChance += float32(r) * 0.02
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.0f%% damage, +%.0f%% crit", float32(r)*5, float32(r)*2)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "dmg_headhunter", Tree: TreeDamage, Tier: 7, Col: 5,
-		Name: "Headhunter", MaxRank: 1, Kind: NodeKeystone,
-		Prereqs:      []string{"dmg_double_tap", "dmg_crit_mass"},
-		Exclusive:    []string{"dmg_overload_dmg"},
-		MutexGroupID: "dmg_t7_capstone_choice",
-		Apply: func(p *Player, r int) {
-			p.CritChance += 0.10
-			p.CritMultiplier += 0.5
-		},
-		Describe: func(r int) string { return "+10% crit, +0.5x crit multiplier." },
-	})
-	registerNode(&TalentNode{
-		ID: "dmg_overload_dmg", Tree: TreeDamage, Tier: 7, Col: 5,
-		Name: "Overload", MaxRank: 1, Kind: NodeKeystone,
-		Prereqs:      []string{"dmg_double_tap", "dmg_crit_mass"},
-		Exclusive:    []string{"dmg_headhunter"},
-		MutexGroupID: "dmg_t7_capstone_choice",
-		Apply: func(p *Player, r int) {
-			p.MultishotCount += 1
-			p.MultishotChance += 0.20
-		},
-		Describe: func(r int) string { return "+1 multishot bullet, +20% multishot chance." },
-	})
-
-	// ── Tier 8 — capstones, SpendGate 25 ─────────────────────────────────
+	// ── Tier 8 — masterwork capstones, SpendGate 28 ───────────────────────
 	registerNode(&TalentNode{
 		ID: "dmg_apex_predator", Tree: TreeDamage, Tier: 8, Col: 1,
 		Name: "Apex Predator", MaxRank: 1, Kind: NodeKeystone,
-		SpendGate: 25,
+		Prereqs:   []string{"dmg_war_machine"},
+		SpendGate: 28,
 		Exclusive: []string{"dmg_glass_cannon", "dmg_hypercritical"},
-		Apply:     func(p *Player, r int) { p.Damage *= 1.25 },
-		Describe:  func(r int) string { return "+25% total damage." },
+		Apply:     func(p *Player, r int) { p.Damage *= 1.40 },
+		Describe:  func(r int) string { return "+40% total damage." },
 	})
 	registerNode(&TalentNode{
 		ID: "dmg_glass_cannon", Tree: TreeDamage, Tier: 8, Col: 3,
 		Name: "Glass Cannon", MaxRank: 1, Kind: NodeKeystone,
-		SpendGate: 25,
+		Prereqs:   []string{"dmg_sharpshooter", "dmg_laser_focus"},
+		SpendGate: 28,
 		Exclusive: []string{"dmg_apex_predator", "dmg_hypercritical"},
 		Apply: func(p *Player, r int) {
 			p.Damage *= 1.6
@@ -1005,7 +965,8 @@ func registerDamageTree() {
 	registerNode(&TalentNode{
 		ID: "dmg_hypercritical", Tree: TreeDamage, Tier: 8, Col: 5,
 		Name: "Hypercritical", MaxRank: 1, Kind: NodeKeystone,
-		SpendGate: 25,
+		Prereqs:   []string{"dmg_sharpshooter", "dmg_laser_focus"},
+		SpendGate: 28,
 		Exclusive: []string{"dmg_apex_predator", "dmg_glass_cannon"},
 		Apply: func(p *Player, r int) {
 			p.CritChance += 0.25
@@ -1016,55 +977,43 @@ func registerDamageTree() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// CONTROL TREE — WIDE LATTICE (33 nodes, 6×8)
+// CONTROL TREE — 8-TIER CHAIN (23 nodes)
 //
-// Three abilities: Gravity, Static Discharge, Chrono Field.
-// New synergies beyond what existed: dedicated cross-ability synergies
-// like Conduction (static-into-gravity), Slip (chrono-into-static),
-// GravityWave (boosts gravity radius and adds AoE), etc.
+// Two entry points: Suppression (enemy slow) and Static Residue (contact dmg).
+// Gravity is T2 universal; Static is T3 moderate; Chrono is T4 high-value.
+// All paths converge at T7 Kinetic Feedback.
 //
-// Layout (col, tier):
-//   T1: Crowd Control c1, Static Charge c3, Temporal c5
-//   T2: Tether c0, ★Gravity c1, Conduction c2, ★Static c3, Slip c4, ★Chrono c5
-//   T3: Singularity|Anomaly c0, ChainLightning|Overload c3, TimeStop|Entropy c5
-//   T4: Event Horizon c0, Grav Well c1, Lightning Rod c2, Static Aura c3, Time Dilation c4, Entropic Coil c5
-//   T5: Kinetic Feedback c0, Black Hole c1, Capacitor c2, Overload Field c3, Entropy Engine c4, Stasis Field c5
-//   T6: Gravity Wave c0, Chain Storm c2, Time Warp c4
-//   T7: Singular Bomb c1, Resonant Field c3, Time Crystal c5
-//   T8: Puppeteer c1, Chronomancer c3, Storm Caller c5  (SpendGate 25)
+// Layout (tier, col):
+//   T1: Suppression c1, Static Residue c4
+//   T2: ★Gravity c0 (universal), Tether c2, Conduction c3, Slip c5
+//   T3: Singularity|Anomaly c0 mutex, Foresight c2, ★Static c3 (moderate), Entropic Coil c5
+//   T4: Event Horizon c0, ★Chrono c2 (high-value), ChainLightning|Overload c3 mutex, Stasis Field c5
+//   T5: Gravity Well c0, TimeStop|Entropy c2 mutex, Lightning Rod c3
+//   T6: Black Hole c0, Time Dilation c2, Static Aura c3
+//   T7: Kinetic Feedback c2 (convergence — any T6 node)
+//   T8: Puppeteer c1 | Chronomancer c3 | Storm Caller c5  (SpendGate 28)
 // ═════════════════════════════════════════════════════════════════════════
 
 func registerControlTree() {
-	// ── Tier 1 — three stat anchors ──────────────────────────────────────
+	// ── Tier 1 — two generic anchors ─────────────────────────────────────
 	registerNode(&TalentNode{
 		ID: "ctrl_crowd_control", Tree: TreeControl, Tier: 1, Col: 1,
-		Name: "Crowd Control", MaxRank: 5, Kind: NodeScaling,
-		Apply:    func(p *Player, r int) { p.GravityDuration += float32(r) * 0.3 },
-		Describe: func(r int) string { return fmtT("+%.2fs Gravity duration", float32(r)*0.3) },
+		Name: "Suppression", MaxRank: 2, Kind: NodeScaling,
+		Apply:    func(p *Player, r int) { p.PassiveEnemySlow += float32(r) * 0.04 },
+		Describe: func(r int) string { return fmtT("-%.0f%% enemy movement speed", float32(r)*4) },
 	})
 	registerNode(&TalentNode{
-		ID: "ctrl_static_charge", Tree: TreeControl, Tier: 1, Col: 3,
-		Name: "Static Charge", MaxRank: 3, Kind: NodeScaling,
-		Apply:    func(p *Player, r int) { p.StaticDmgMult += float32(r) * 0.5 },
-		Describe: func(r int) string { return fmtT("+%.2fx Static Discharge damage", float32(r)*0.5) },
-	})
-	registerNode(&TalentNode{
-		ID: "ctrl_temporal", Tree: TreeControl, Tier: 1, Col: 5,
-		Name: "Temporal Sense", MaxRank: 5, Kind: NodeScaling,
-		Apply:    func(p *Player, r int) { p.ChronoDuration += float32(r) * 0.3 },
-		Describe: func(r int) string { return fmtT("+%.2fs Chrono Field duration", float32(r)*0.3) },
+		ID: "ctrl_static_charge", Tree: TreeControl, Tier: 1, Col: 4,
+		Name: "Static Residue", MaxRank: 2, Kind: NodeScaling,
+		Apply: func(p *Player, r int) { p.ReflectPct += float32(r) * 0.10 },
+		Describe: func(r int) string {
+			return fmtT("discharge %.0f%% of damage taken back at nearby enemies", float32(r)*10)
+		},
 	})
 
-	// ── Tier 2 — abilities + bridge stats ────────────────────────────────
+	// ── Tier 2 — Gravity (universal) + bridges ────────────────────────────
 	registerNode(&TalentNode{
-		ID: "ctrl_tether", Tree: TreeControl, Tier: 2, Col: 0,
-		Name: "Tether", MaxRank: 3, Kind: NodeScaling,
-		Prereqs:  []string{"ctrl_crowd_control"},
-		Apply:    func(p *Player, r int) { p.GravityRadius += float32(r) * 10.0 },
-		Describe: func(r int) string { return fmtT("+%.0f Gravity radius", float32(r)*10) },
-	})
-	registerNode(&TalentNode{
-		ID: "ctrl_gravity_unlock", Tree: TreeControl, Tier: 2, Col: 1,
+		ID: "ctrl_gravity_unlock", Tree: TreeControl, Tier: 2, Col: 0,
 		Name: AbilityGravity, MaxRank: 1, Kind: NodeUnlock,
 		GrantsAbility: AbilityGravity,
 		Prereqs:       []string{"ctrl_crowd_control"},
@@ -1072,46 +1021,44 @@ func registerControlTree() {
 		Describe:      func(r int) string { return "Unlocks Gravity Field: pulls and damages foes in a zone." },
 	})
 	registerNode(&TalentNode{
-		ID: "ctrl_conduction", Tree: TreeControl, Tier: 2, Col: 2,
-		Name: "Conduction", MaxRank: 3, Kind: NodeSynergy,
+		ID: "ctrl_tether", Tree: TreeControl, Tier: 2, Col: 2,
+		Name: "Pressure Point", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"ctrl_crowd_control"},
+		Apply:    func(p *Player, r int) { p.SlowAmpBonus += float32(r) * 0.15 },
+		Describe: func(r int) string { return fmtT("+%.0f%% shot damage to stunned/knocked enemies", float32(r)*15) },
+	})
+	registerNode(&TalentNode{
+		ID: "ctrl_conduction", Tree: TreeControl, Tier: 2, Col: 3,
+		Name: "Conduction", MaxRank: 2, Kind: NodeScaling,
 		Prereqs:  []string{"ctrl_static_charge"},
-		Apply:    func(p *Player, r int) { p.GravityDmgPct += float32(r) * 0.02 },
-		Describe: func(r int) string { return fmtT("+%.0f%% Gravity DoT", float32(r)*2) },
+		Apply:    func(p *Player, r int) { p.ChainChance += float32(r) * 0.04 },
+		Describe: func(r int) string { return fmtT("+%.0f%% bullet chain chance", float32(r)*4) },
 	})
 	registerNode(&TalentNode{
-		ID: "ctrl_static_unlock", Tree: TreeControl, Tier: 2, Col: 3,
-		Name: AbilityStatic, MaxRank: 1, Kind: NodeUnlock,
-		GrantsAbility: AbilityStatic,
-		Prereqs:       []string{"ctrl_static_charge"},
-		Apply:         func(p *Player, r int) {},
-		Describe:      func(r int) string { return "Unlocks Static Discharge: lightning strike on cast." },
-	})
-	registerNode(&TalentNode{
-		ID: "ctrl_slip", Tree: TreeControl, Tier: 2, Col: 4,
-		Name: "Slip", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs:  []string{"ctrl_temporal"},
-		Apply:    func(p *Player, r int) { p.ChronoPassiveSlow += float32(r) * 0.02 },
-		Describe: func(r int) string { return fmtT("+%.0f%% passive global slow", float32(r)*2) },
-	})
-	registerNode(&TalentNode{
-		ID: "ctrl_chrono_unlock", Tree: TreeControl, Tier: 2, Col: 5,
-		Name: AbilityChrono, MaxRank: 1, Kind: NodeUnlock,
-		GrantsAbility: AbilityChrono,
-		Prereqs:       []string{"ctrl_temporal"},
-		Apply:         func(p *Player, r int) {},
-		Describe:      func(r int) string { return "Unlocks Chrono Field: slows or stops non-bosses." },
+		ID: "ctrl_slip", Tree: TreeControl, Tier: 2, Col: 5,
+		Name: "Live Wire", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"ctrl_static_charge"},
+		Apply:    func(p *Player, r int) { p.StaticBurstChance += float32(r) * 0.05 },
+		Describe: func(r int) string { return fmtT("+%.0f%% chance to zap on bullet hit", float32(r)*5) },
 	})
 
-	// ── Tier 3 — three keystone mutex pairs ──────────────────────────────
+	// ── Tier 3 — Gravity keystones + vortex branch, Foresight, Static unlock, Entropic Coil ──
+	registerNode(&TalentNode{
+		ID: "ctrl_vortex", Tree: TreeControl, Tier: 3, Col: 1,
+		Name: "Vortex", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"ctrl_gravity_unlock"},
+		Apply:    func(p *Player, r int) { p.GravityDmgPct += float32(r) * 0.04 },
+		Describe: func(r int) string { return fmtT("+%.0f%% Gravity damage", float32(r)*4) },
+	})
 	registerNode(&TalentNode{
 		ID: "ctrl_singularity_key", Tree: TreeControl, Tier: 3, Col: 0,
 		Name: "Singularity", MaxRank: 1, Kind: NodeKeystone,
-		Prereqs:      []string{"ctrl_gravity_unlock", "ctrl_tether"},
+		Prereqs:      []string{"ctrl_gravity_unlock"},
 		Exclusive:    []string{"ctrl_anomaly_key"},
 		MutexGroupID: "ctrl_grav_branch",
 		BranchSlot:   "Gravity", SetsBranch: BranchGravitySingularity,
 		Apply: func(p *Player, r int) {
-			p.GravityRadius -= 40.0
+			p.GravityRadius *= 0.77
 			if p.GravityRadius < 80.0 {
 				p.GravityRadius = 80.0
 			}
@@ -1122,21 +1069,60 @@ func registerControlTree() {
 	registerNode(&TalentNode{
 		ID: "ctrl_anomaly_key", Tree: TreeControl, Tier: 3, Col: 0,
 		Name: "Anomaly", MaxRank: 1, Kind: NodeKeystone,
-		Prereqs:      []string{"ctrl_gravity_unlock", "ctrl_tether"},
+		Prereqs:      []string{"ctrl_gravity_unlock"},
 		Exclusive:    []string{"ctrl_singularity_key"},
 		MutexGroupID: "ctrl_grav_branch",
 		BranchSlot:   "Gravity", SetsBranch: BranchGravityAnomaly,
 		Apply: func(p *Player, r int) {
-			p.GravityRadius += 50.0
+			p.GravityRadius *= 1.30
 			p.GravityAnomalyUnlocked = true
 			p.GravityPassiveTimer = 5.0
 		},
 		Describe: func(r int) string { return "Gravity: wider field, spawns passive zones nearby." },
 	})
 	registerNode(&TalentNode{
-		ID: "ctrl_chainlightning_key", Tree: TreeControl, Tier: 3, Col: 3,
+		ID: "ctrl_temporal", Tree: TreeControl, Tier: 3, Col: 2,
+		Name: "Foresight", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"ctrl_tether"},
+		Apply:    func(p *Player, r int) { p.Haste += float32(r) * 0.04 },
+		Describe: func(r int) string { return fmtT("+%.0f%% haste", float32(r)*4) },
+	})
+	registerNode(&TalentNode{
+		ID: "ctrl_static_unlock", Tree: TreeControl, Tier: 3, Col: 3,
+		Name: AbilityStatic, MaxRank: 1, Kind: NodeUnlock,
+		GrantsAbility: AbilityStatic,
+		Prereqs:       []string{"ctrl_conduction"},
+		Apply:         func(p *Player, r int) {},
+		Describe:      func(r int) string { return "Unlocks Static Discharge: lightning strike on cast." },
+	})
+	registerNode(&TalentNode{
+		ID: "ctrl_entropic_coil", Tree: TreeControl, Tier: 3, Col: 5,
+		Name: "Arc Conductor", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs:  []string{"ctrl_slip"},
+		Apply:    func(p *Player, r int) { p.ChainCount += r },
+		Describe: func(r int) string { return fmtT("+%d bullet chain / lightning arc targets", r) },
+	})
+
+	// ── Tier 4 — Event Horizon, Chrono unlock, Static keystones, Stasis Field ──
+	registerNode(&TalentNode{
+		ID: "ctrl_event_horizon", Tree: TreeControl, Tier: 4, Col: 0,
+		Name: "Event Horizon", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"ctrl_singularity_key", "ctrl_anomaly_key", "ctrl_vortex"},
+		Apply:    func(p *Player, r int) { p.GravityRadius *= 1.0 + float32(r)*0.12 },
+		Describe: func(r int) string { return fmtT("+%.0f%% Gravity radius", float32(r)*12) },
+	})
+	registerNode(&TalentNode{
+		ID: "ctrl_chrono_unlock", Tree: TreeControl, Tier: 4, Col: 2,
+		Name: AbilityChrono, MaxRank: 1, Kind: NodeUnlock,
+		GrantsAbility: AbilityChrono,
+		Prereqs:       []string{"ctrl_temporal"},
+		Apply:         func(p *Player, r int) {},
+		Describe:      func(r int) string { return "Unlocks Chrono Field: slows or stops non-bosses." },
+	})
+	registerNode(&TalentNode{
+		ID: "ctrl_chainlightning_key", Tree: TreeControl, Tier: 4, Col: 3,
 		Name: "Chain Lightning", MaxRank: 1, Kind: NodeKeystone,
-		Prereqs:      []string{"ctrl_static_unlock", "ctrl_conduction"},
+		Prereqs:      []string{"ctrl_static_unlock"},
 		Exclusive:    []string{"ctrl_overload_key"},
 		MutexGroupID: "ctrl_static_branch",
 		BranchSlot:   "Static", SetsBranch: BranchStaticChain,
@@ -1144,9 +1130,9 @@ func registerControlTree() {
 		Describe: func(r int) string { return "Static: arcs to additional nearby enemies." },
 	})
 	registerNode(&TalentNode{
-		ID: "ctrl_overload_key", Tree: TreeControl, Tier: 3, Col: 3,
+		ID: "ctrl_overload_key", Tree: TreeControl, Tier: 4, Col: 3,
 		Name: "Overload", MaxRank: 1, Kind: NodeKeystone,
-		Prereqs:      []string{"ctrl_static_unlock", "ctrl_conduction"},
+		Prereqs:      []string{"ctrl_static_unlock"},
 		Exclusive:    []string{"ctrl_chainlightning_key"},
 		MutexGroupID: "ctrl_static_branch",
 		BranchSlot:   "Static", SetsBranch: BranchStaticOverload,
@@ -1154,9 +1140,32 @@ func registerControlTree() {
 		Describe: func(r int) string { return "Static: fewer targets, massive damage." },
 	})
 	registerNode(&TalentNode{
-		ID: "ctrl_timestop_key", Tree: TreeControl, Tier: 3, Col: 5,
+		ID: "ctrl_stasis_field", Tree: TreeControl, Tier: 4, Col: 5,
+		Name: "Stasis Field", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"ctrl_entropic_coil"},
+		Apply:    func(p *Player, r int) { p.ChronoPassiveSlow += float32(r) * 0.05 },
+		Describe: func(r int) string { return fmtT("+%.0f%% global enemy slow (always active)", float32(r)*5) },
+	})
+
+	// ── Tier 5 — Gravity Well, temporal flux branch, Chrono keystones, Lightning Rod ──
+	registerNode(&TalentNode{
+		ID: "ctrl_temporal_flux", Tree: TreeControl, Tier: 5, Col: 1,
+		Name: "Temporal Flux", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"ctrl_chrono_unlock"},
+		Apply:    func(p *Player, r int) { p.ChronoDuration *= 1.0 + float32(r)*0.10 },
+		Describe: func(r int) string { return fmtT("+%.0f%% Chrono duration", float32(r)*10) },
+	})
+	registerNode(&TalentNode{
+		ID: "ctrl_grav_well", Tree: TreeControl, Tier: 5, Col: 0,
+		Name: "Gravity Well", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs:  []string{"ctrl_event_horizon"},
+		Apply:    func(p *Player, r int) { p.GravityDuration *= 1.0 + float32(r)*0.15 },
+		Describe: func(r int) string { return fmtT("+%.0f%% Gravity duration", float32(r)*15) },
+	})
+	registerNode(&TalentNode{
+		ID: "ctrl_timestop_key", Tree: TreeControl, Tier: 5, Col: 2,
 		Name: "Time Stop", MaxRank: 1, Kind: NodeKeystone,
-		Prereqs:      []string{"ctrl_chrono_unlock", "ctrl_slip"},
+		Prereqs:      []string{"ctrl_chrono_unlock"},
 		Exclusive:    []string{"ctrl_entropy_key"},
 		MutexGroupID: "ctrl_chrono_branch",
 		BranchSlot:   "Chrono", SetsBranch: BranchChronoTimeStop,
@@ -1164,224 +1173,112 @@ func registerControlTree() {
 		Describe: func(r int) string { return "Chrono: fully freezes non-bosses." },
 	})
 	registerNode(&TalentNode{
-		ID: "ctrl_entropy_key", Tree: TreeControl, Tier: 3, Col: 5,
+		ID: "ctrl_entropy_key", Tree: TreeControl, Tier: 5, Col: 2,
 		Name: "Entropy", MaxRank: 1, Kind: NodeKeystone,
-		Prereqs:      []string{"ctrl_chrono_unlock", "ctrl_slip"},
+		Prereqs:      []string{"ctrl_chrono_unlock"},
 		Exclusive:    []string{"ctrl_timestop_key"},
 		MutexGroupID: "ctrl_chrono_branch",
 		BranchSlot:   "Chrono", SetsBranch: BranchChronoEntropy,
 		Apply: func(p *Player, r int) {
 			p.ChronoBossSlow = 0.6
-			p.ChronoDoT += 8.0
+			p.ChronoDoTPct += 0.15
 		},
-		Describe: func(r int) string { return "Chrono: weaker slow but stacking DoT." },
+		Describe: func(r int) string { return "Chrono: weaker slow, field burns for 15% of your damage/s." },
+	})
+	registerNode(&TalentNode{
+		ID: "ctrl_lightning_rod", Tree: TreeControl, Tier: 5, Col: 3,
+		Name: "Lightning Rod", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs:  []string{"ctrl_chainlightning_key", "ctrl_overload_key"},
+		Apply:    func(p *Player, r int) { p.StaticBurstChance += float32(r) * 0.05 },
+		Describe: func(r int) string { return fmtT("+%.0f%% static burst on bullet hits", float32(r)*5) },
 	})
 
-	// ── Tier 4 — per-ability scaling, 6 wide ─────────────────────────────
+	// ── Tier 6 — deep ability scaling ────────────────────────────────────
 	registerNode(&TalentNode{
-		ID: "ctrl_event_horizon", Tree: TreeControl, Tier: 4, Col: 0,
-		Name: "Event Horizon", MaxRank: 4, Kind: NodeScaling,
-		Prereqs:  []string{"ctrl_singularity_key", "ctrl_anomaly_key"},
-		Apply:    func(p *Player, r int) { p.GravityRadius += float32(r) * 15.0 },
-		Describe: func(r int) string { return fmtT("+%.0f Gravity radius", float32(r)*15) },
-	})
-	registerNode(&TalentNode{
-		ID: "ctrl_grav_well", Tree: TreeControl, Tier: 4, Col: 1,
-		Name: "Gravity Well", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs:  []string{"ctrl_singularity_key", "ctrl_anomaly_key"},
-		Apply:    func(p *Player, r int) { p.GravityDmgPct += float32(r) * 0.02 },
-		Describe: func(r int) string { return fmtT("+%.0f%% Gravity DoT", float32(r)*2) },
-	})
-	registerNode(&TalentNode{
-		ID: "ctrl_lightning_rod", Tree: TreeControl, Tier: 4, Col: 2,
-		Name: "Lightning Rod", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs:  []string{"ctrl_chainlightning_key", "ctrl_overload_key"},
-		Apply:    func(p *Player, r int) { p.StaticBurstChance += float32(r) * 0.04 },
-		Describe: func(r int) string { return fmtT("+%.0f%% static burst on bullet hits", float32(r)*4) },
-	})
-	registerNode(&TalentNode{
-		ID: "ctrl_static_aura", Tree: TreeControl, Tier: 4, Col: 3,
-		Name: "Static Aura", MaxRank: 3, Kind: NodeScaling,
-		Prereqs:  []string{"ctrl_chainlightning_key", "ctrl_overload_key"},
-		Apply:    func(p *Player, r int) { p.StaticDmgMult += float32(r) * 0.4 },
-		Describe: func(r int) string { return fmtT("+%.2fx Static damage", float32(r)*0.4) },
-	})
-	registerNode(&TalentNode{
-		ID: "ctrl_time_dilation", Tree: TreeControl, Tier: 4, Col: 4,
-		Name: "Time Dilation", MaxRank: 3, Kind: NodeScaling,
-		Prereqs:  []string{"ctrl_timestop_key", "ctrl_entropy_key"},
-		Apply:    func(p *Player, r int) { p.ChronoPassiveSlow += float32(r) * 0.03 },
-		Describe: func(r int) string { return fmtT("+%.0f%% passive global slow", float32(r)*3) },
-	})
-	registerNode(&TalentNode{
-		ID: "ctrl_entropic_coil", Tree: TreeControl, Tier: 4, Col: 5,
-		Name: "Entropic Coil", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"ctrl_timestop_key", "ctrl_entropy_key"},
+		ID: "ctrl_black_hole", Tree: TreeControl, Tier: 6, Col: 0,
+		Name: "Black Hole", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"ctrl_grav_well"},
 		Apply: func(p *Player, r int) {
-			p.ChronoDoT += float32(r) * 1.5
-			p.ChronoDuration += float32(r) * 0.2
+			p.GravityDuration *= 1.0 + float32(r)*0.12
+			p.GravityRadius *= 1.0 + float32(r)*0.06
 		},
 		Describe: func(r int) string {
-			return fmtT("+%.1f Chrono DoT, +%.1fs duration", float32(r)*1.5, float32(r)*0.2)
+			return fmtT("+%.0f%% Gravity duration, +%.0f%% radius", float32(r)*12, float32(r)*6)
 		},
+	})
+	registerNode(&TalentNode{
+		ID: "ctrl_time_dilation", Tree: TreeControl, Tier: 6, Col: 2,
+		Name: "Time Dilation", MaxRank: 2, Kind: NodeScaling,
+		Prereqs: []string{"ctrl_timestop_key", "ctrl_entropy_key", "ctrl_temporal_flux"},
+		Apply:   func(p *Player, r int) { p.ChronoDoTPct += float32(r) * 0.10 },
+		Describe: func(r int) string {
+			return fmtT("Chrono field burns for %.0f%% of your damage per second", float32(r)*10)
+		},
+	})
+	registerNode(&TalentNode{
+		ID: "ctrl_static_aura", Tree: TreeControl, Tier: 6, Col: 3,
+		Name: "Static Aura", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"ctrl_lightning_rod"},
+		Apply:    func(p *Player, r int) { p.StaticDmgMult += float32(r) * 0.5 },
+		Describe: func(r int) string { return fmtT("+%.2fx Static damage", float32(r)*0.5) },
 	})
 
-	// ── Tier 5 — synergies, 6 wide ───────────────────────────────────────
+	// ── Tier 7 — path-specific keystones ─────────────────────────────────
 	registerNode(&TalentNode{
-		ID: "ctrl_kinetic_feedback", Tree: TreeControl, Tier: 5, Col: 0,
-		Name: "Kinetic Feedback", MaxRank: 4, Kind: NodeSynergy,
-		Prereqs: []string{"ctrl_event_horizon"},
+		ID: "ctrl_event_collapse", Tree: TreeControl, Tier: 7, Col: 1,
+		Name: "Event Collapse", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"ctrl_black_hole"},
 		Apply: func(p *Player, r int) {
-			p.Damage *= 1.0 + float32(r)*0.03
-			p.GravityDmgPct += float32(r) * 0.01
+			p.GravityDmgPct += float32(r) * 0.05
+			p.GravityDuration *= 1.0 + float32(r)*0.10
 		},
 		Describe: func(r int) string {
-			return fmtT("+%.0f%% damage, +%.0f%% Gravity DoT", float32(r)*3, float32(r)*1)
+			return fmtT("+%.0f%% Gravity damage, +%.0f%% duration", float32(r)*5, float32(r)*10)
 		},
 	})
 	registerNode(&TalentNode{
-		ID: "ctrl_black_hole", Tree: TreeControl, Tier: 5, Col: 1,
-		Name: "Black Hole", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"ctrl_grav_well", "ctrl_event_horizon"},
-		Apply: func(p *Player, r int) {
-			p.GravityDuration += float32(r) * 0.4
-			p.GravityRadius += float32(r) * 5.0
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.1fs duration, +%.0f radius", float32(r)*0.4, float32(r)*5)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "ctrl_capacitor", Tree: TreeControl, Tier: 5, Col: 2,
-		Name: "Capacitor Banks", MaxRank: 3, Kind: NodeScaling,
-		Prereqs:  []string{"ctrl_lightning_rod", "ctrl_static_aura"},
-		Apply:    func(p *Player, r int) { p.StaticFreeChance += float32(r) * 0.05 },
-		Describe: func(r int) string { return fmtT("+%.0f%% free-cast chance on Static", float32(r)*5) },
-	})
-	registerNode(&TalentNode{
-		ID: "ctrl_overload_field", Tree: TreeControl, Tier: 5, Col: 3,
-		Name: "Overload Field", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs:  []string{"ctrl_static_aura", "ctrl_lightning_rod"},
-		Apply:    func(p *Player, r int) { p.StaticPassiveCDR += float32(r) * 0.03 },
-		Describe: func(r int) string { return fmtT("+%.0f%% Static cooldown reduction", float32(r)*3) },
-	})
-	registerNode(&TalentNode{
-		ID: "ctrl_entropy_engine", Tree: TreeControl, Tier: 5, Col: 4,
-		Name: "Entropy Engine", MaxRank: 4, Kind: NodeSynergy,
+		ID: "ctrl_kinetic_feedback", Tree: TreeControl, Tier: 7, Col: 3,
+		Name: "Kinetic Feedback", MaxRank: 2, Kind: NodeSynergy,
 		Prereqs: []string{"ctrl_time_dilation"},
 		Apply: func(p *Player, r int) {
-			p.ChronoDoT += float32(r) * 2.0
-			p.RegenRate += float32(r) * 0.25
+			p.Damage *= 1.0 + float32(r)*0.04
+			p.PassiveEnemySlow += float32(r) * 0.02
 		},
 		Describe: func(r int) string {
-			return fmtT("+%.1f Chrono DoT, +%.2f regen", float32(r)*2, float32(r)*0.25)
+			return fmtT("+%.0f%% damage, +%.0f%% enemy slow", float32(r)*4, float32(r)*2)
 		},
 	})
 	registerNode(&TalentNode{
-		ID: "ctrl_stasis_field", Tree: TreeControl, Tier: 5, Col: 5,
-		Name: "Stasis Field", MaxRank: 3, Kind: NodeScaling,
-		Prereqs: []string{"ctrl_entropic_coil", "ctrl_time_dilation"},
+		ID: "ctrl_arc_discharge", Tree: TreeControl, Tier: 7, Col: 5,
+		Name: "Arc Discharge", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"ctrl_static_aura"},
 		Apply: func(p *Player, r int) {
-			p.ChronoDuration += float32(r) * 0.4
-			p.ChronoBossSlow += float32(r) * 0.05
+			p.StaticBurstChance += float32(r) * 0.06
+			p.StaticDmgMult += float32(r) * 0.30
 		},
 		Describe: func(r int) string {
-			return fmtT("+%.1fs Chrono dur, +%.0f%% boss slow", float32(r)*0.4, float32(r)*5)
+			return fmtT("+%.0f%% static burst chance, +%.2fx static damage", float32(r)*6, float32(r)*0.30)
 		},
 	})
 
-	// ── Tier 6 — deep synergies, 3 nodes ─────────────────────────────────
-	registerNode(&TalentNode{
-		ID: "ctrl_gravity_wave", Tree: TreeControl, Tier: 6, Col: 0,
-		Name: "Gravity Wave", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"ctrl_kinetic_feedback", "ctrl_black_hole"},
-		Apply: func(p *Player, r int) {
-			p.GravityDmgPct += float32(r) * 0.03
-			p.GravityRadius += float32(r) * 8.0
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.0f%% Gravity DoT, +%.0f radius", float32(r)*3, float32(r)*8)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "ctrl_chain_storm", Tree: TreeControl, Tier: 6, Col: 2,
-		Name: "Chain Storm", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"ctrl_capacitor", "ctrl_overload_field"},
-		Apply: func(p *Player, r int) {
-			p.ChainCount += r
-			p.ChainChance += float32(r) * 0.03
-		},
-		Describe: func(r int) string {
-			return fmtT("+%d ricochet, +%.0f%% chance", r, float32(r)*3)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "ctrl_time_warp", Tree: TreeControl, Tier: 6, Col: 4,
-		Name: "Time Warp", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"ctrl_entropy_engine", "ctrl_stasis_field"},
-		Apply: func(p *Player, r int) {
-			p.CooldownRate += float32(r) * 0.04
-			p.ChronoPassiveSlow += float32(r) * 0.02
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.0f%% CDR, +%.0f%% global slow", float32(r)*4, float32(r)*2)
-		},
-	})
-
-	// ── Tier 7 — three deep capstones-precursors ─────────────────────────
-	registerNode(&TalentNode{
-		ID: "ctrl_singular_bomb", Tree: TreeControl, Tier: 7, Col: 1,
-		Name: "Singular Bomb", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"ctrl_gravity_wave"},
-		Apply: func(p *Player, r int) {
-			p.GravityDuration += float32(r) * 0.5
-			p.Damage *= 1.0 + float32(r)*0.03
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.1fs Gravity dur, +%.0f%% dmg", float32(r)*0.5, float32(r)*3)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "ctrl_resonant_field", Tree: TreeControl, Tier: 7, Col: 3,
-		Name: "Resonant Field", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"ctrl_chain_storm"},
-		Apply: func(p *Player, r int) {
-			p.StaticDmgMult += float32(r) * 0.3
-			p.StaticBurstChance += float32(r) * 0.02
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.2fx Static, +%.0f%% burst", float32(r)*0.3, float32(r)*2)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "ctrl_time_crystal", Tree: TreeControl, Tier: 7, Col: 5,
-		Name: "Time Crystal", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"ctrl_time_warp"},
-		Apply: func(p *Player, r int) {
-			p.ChronoDuration += float32(r) * 0.4
-			p.ChronoDoT += float32(r) * 1.5
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.1fs Chrono dur, +%.1f DoT", float32(r)*0.4, float32(r)*1.5)
-		},
-	})
-
-	// ── Tier 8 — capstones, SpendGate 25 ─────────────────────────────────
+	// ── Tier 8 — masterwork capstones, SpendGate 28 ───────────────────────
 	registerNode(&TalentNode{
 		ID: "ctrl_puppeteer", Tree: TreeControl, Tier: 8, Col: 1,
 		Name: "Puppeteer", MaxRank: 1, Kind: NodeKeystone,
-		SpendGate: 25,
+		Prereqs:   []string{"ctrl_event_collapse", "ctrl_kinetic_feedback"},
+		SpendGate: 28,
 		Exclusive: []string{"ctrl_chronomancer", "ctrl_storm_caller"},
 		Apply: func(p *Player, r int) {
-			p.GravityDuration += 2.0
-			p.ChronoDuration += 2.0
+			p.GravityDuration *= 1.40
+			p.ChronoDuration *= 1.40
 		},
-		Describe: func(r int) string { return "+2s duration on Gravity and Chrono." },
+		Describe: func(r int) string { return "+40% duration on Gravity and Chrono." },
 	})
 	registerNode(&TalentNode{
 		ID: "ctrl_chronomancer", Tree: TreeControl, Tier: 8, Col: 3,
 		Name: "Chronomancer", MaxRank: 1, Kind: NodeKeystone,
-		SpendGate: 25,
+		Prereqs:   []string{"ctrl_kinetic_feedback", "ctrl_arc_discharge"},
+		SpendGate: 28,
 		Exclusive: []string{"ctrl_puppeteer", "ctrl_storm_caller"},
 		Apply:     func(p *Player, r int) { p.CooldownRate += 0.25 },
 		Describe:  func(r int) string { return "+25% cooldown reduction on all abilities." },
@@ -1389,7 +1286,8 @@ func registerControlTree() {
 	registerNode(&TalentNode{
 		ID: "ctrl_storm_caller", Tree: TreeControl, Tier: 8, Col: 5,
 		Name: "Storm Caller", MaxRank: 1, Kind: NodeKeystone,
-		SpendGate: 25,
+		Prereqs:   []string{"ctrl_kinetic_feedback", "ctrl_arc_discharge"},
+		SpendGate: 28,
 		Exclusive: []string{"ctrl_puppeteer", "ctrl_chronomancer"},
 		Apply: func(p *Player, r int) {
 			p.StaticDmgMult += 2.0
@@ -1400,87 +1298,85 @@ func registerControlTree() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// DEFENSE TREE — WIDE LATTICE (30 nodes, 6×8)
+// DEFENSE TREE — 8-TIER CHAIN (21 nodes)
 //
-// One ability (Shockwave). Density comes from layered defensive systems:
-// HP, armor, regen, overshield, thorns, lifesteal, life-on-hit, knockback,
-// pure flat damage reduction. Each row mixes flavors so the player can
-// build "tank" (HP + armor), "vampire" (lifesteal + life-on-hit), or
-// "thorns/reflect" (thorns + retribution + counterpunch).
+// Two entry points: Toughness (HP) and Rapid Mending (regen).
+// Shockwave is T2 early unlock. All paths converge at T7 Untouchable.
 //
-// Layout (col, tier):
-//   T1: Toughness c1, Reactive Plating c3, Rapid Mending c5
-//   T2: Bracing c0, Fortify c1, ★Shockwave c3, Overshield c5
-//   T3: Repulsor|Shatter c3 (mutex), Vital Core c5, Iron Skin c0
-//   T4: Retribution c0, Hardened c1, Seismic Mastery c3, Bulwark c4, Resilience c5
-//   T5: Payback c0, Iron Heart c1, Tremor c3, Vital Plates c4, Restoration c5
-//   T6: Counterpunch c0, Adrenaline c2, Aftershock c3, Second Wind c5
-//   T7: Reflective Aura c1, Untouchable c3, Lifeline c5
-//   T8: Immortal c1, Aegis c3, Vampiric c5  (SpendGate 25)
+// Layout (tier, col):
+//   T1: Toughness c1, Rapid Mending c4
+//   T2: Bracing c0, ★Shockwave c2, Overshield c3, Fortify c5
+//   T3: Iron Skin c0, Repulsor|Shatter c2 mutex, Vital Core c3, Iron Heart c5
+//   T4: Hardened c0, Seismic c2, Resilience c3, Retribution c5
+//   T5: Bulwark c1, Vital Plates c3, Payback c5
+//   T6: Adrenaline c2, Restoration c3, Counterpunch c4
+//   T7: Untouchable c3 (convergence — any T6 node)
+//   T8: Immortal c1 | Aegis c3 | Vampiric c5  (SpendGate 28)
 // ═════════════════════════════════════════════════════════════════════════
 
 func registerDefenseTree() {
-	// ── Tier 1 — three stat anchors ──────────────────────────────────────
+	// ── Tier 1 — two entry anchors ────────────────────────────────────────
 	registerNode(&TalentNode{
 		ID: "def_toughness", Tree: TreeDefense, Tier: 1, Col: 1,
-		Name: "Toughness", MaxRank: 5, Kind: NodeScaling,
-		Apply:    func(p *Player, r int) { p.MaxHP += float32(r) * 10.0; p.HP = p.MaxHP },
-		Describe: func(r int) string { return fmtT("+%.0f max HP", float32(r)*10) },
+		Name: "Toughness", MaxRank: 2, Kind: NodeScaling,
+		Apply:    func(p *Player, r int) { p.MaxHPPct += float32(r) * 0.06 },
+		Describe: func(r int) string { return fmtT("+%.0f%% max HP (includes gear)", float32(r)*6) },
 	})
 	registerNode(&TalentNode{
-		ID: "def_plating", Tree: TreeDefense, Tier: 1, Col: 3,
-		Name: "Reactive Plating", MaxRank: 5, Kind: NodeScaling,
-		Apply:    func(p *Player, r int) { p.Armor += float32(r) * 0.02 },
-		Describe: func(r int) string { return fmtT("+%.0f%% armor", float32(r)*2) },
-	})
-	registerNode(&TalentNode{
-		ID: "def_regen", Tree: TreeDefense, Tier: 1, Col: 5,
-		Name: "Rapid Mending", MaxRank: 5, Kind: NodeScaling,
-		Apply:    func(p *Player, r int) { p.RegenRate += float32(r) * 0.4 },
-		Describe: func(r int) string { return fmtT("+%.1f/s HP regen", float32(r)*0.4) },
+		ID: "def_regen", Tree: TreeDefense, Tier: 1, Col: 4,
+		Name: "Rapid Mending", MaxRank: 2, Kind: NodeScaling,
+		Apply:    func(p *Player, r int) { p.RegenPctHP += float32(r) * 0.004 },
+		Describe: func(r int) string { return fmtT("regen %.1f%% of max HP per second", float32(r)*0.4) },
 	})
 
-	// ── Tier 2 — Shockwave + bridge stats ────────────────────────────────
+	// ── Tier 2 — Shockwave unlock + defensive bridges ─────────────────────
 	registerNode(&TalentNode{
 		ID: "def_bracing", Tree: TreeDefense, Tier: 2, Col: 0,
-		Name: "Bracing", MaxRank: 3, Kind: NodeScaling,
+		Name: "Spiked Plating", MaxRank: 2, Kind: NodeScaling,
 		Prereqs:  []string{"def_toughness"},
-		Apply:    func(p *Player, r int) { p.PureDefense += float32(r) * 0.5 },
-		Describe: func(r int) string { return fmtT("+%.1f flat damage reduction", float32(r)*0.5) },
+		Apply:    func(p *Player, r int) { p.ReflectPct += float32(r) * 0.20 },
+		Describe: func(r int) string { return fmtT("reflect +%.0f%% of damage taken to nearby enemies", float32(r)*20) },
 	})
 	registerNode(&TalentNode{
-		ID: "def_fortify", Tree: TreeDefense, Tier: 2, Col: 1,
-		Name: "Fortify", MaxRank: 3, Kind: NodeScaling,
-		Prereqs:  []string{"def_toughness", "def_plating"},
-		Apply:    func(p *Player, r int) { p.MaxHP += float32(r) * 20.0; p.HP = p.MaxHP },
-		Describe: func(r int) string { return fmtT("+%.0f max HP", float32(r)*20) },
-	})
-	registerNode(&TalentNode{
-		ID: "def_shockwave_unlock", Tree: TreeDefense, Tier: 2, Col: 3,
+		ID: "def_shockwave_unlock", Tree: TreeDefense, Tier: 2, Col: 2,
 		Name: "Shockwave", MaxRank: 1, Kind: NodeUnlock,
 		GrantsAbility: "Shockwave",
-		Prereqs:       []string{"def_plating"},
+		Prereqs:       []string{"def_toughness"},
 		Apply:         func(p *Player, r int) {},
 		Describe:      func(r int) string { return "Unlocks Shockwave: passive AoE knockback pulse." },
 	})
 	registerNode(&TalentNode{
-		ID: "def_overshield", Tree: TreeDefense, Tier: 2, Col: 5,
-		Name: "Overshield Generator", MaxRank: 3, Kind: NodeScaling,
+		ID: "def_overshield", Tree: TreeDefense, Tier: 2, Col: 3,
+		Name: "Overshield Generator", MaxRank: 2, Kind: NodeScaling,
 		Prereqs:  []string{"def_regen"},
-		Apply:    func(p *Player, r int) { p.OvershieldRate += float32(r) * 0.25 },
-		Describe: func(r int) string { return fmtT("+%.2f/s overshield regen", float32(r)*0.25) },
+		Apply:    func(p *Player, r int) { p.OSRegenPctHP += float32(r) * 0.0025 },
+		Describe: func(r int) string { return fmtT("overshield regen %.2f%% of max HP per second", float32(r)*0.25) },
+	})
+	registerNode(&TalentNode{
+		ID: "def_fortify", Tree: TreeDefense, Tier: 2, Col: 5,
+		Name: "Fortify", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"def_regen"},
+		Apply:    func(p *Player, r int) { p.MaxHPPct += float32(r) * 0.05 },
+		Describe: func(r int) string { return fmtT("+%.0f%% max HP (includes gear)", float32(r)*5) },
 	})
 
-	// ── Tier 3 — Shockwave keystones + flanking scalings ─────────────────
+	// ── Tier 3 — Shockwave keystones + endurance branch, flanking scalings ─
 	registerNode(&TalentNode{
-		ID: "def_iron_skin", Tree: TreeDefense, Tier: 3, Col: 0,
-		Name: "Iron Skin", MaxRank: 3, Kind: NodeScaling,
-		Prereqs:  []string{"def_bracing"},
-		Apply:    func(p *Player, r int) { p.Armor += float32(r) * 0.025 },
-		Describe: func(r int) string { return fmtT("+%.1f%% armor", float32(r)*2.5) },
+		ID: "def_endurance", Tree: TreeDefense, Tier: 3, Col: 1,
+		Name: "Endurance", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"def_shockwave_unlock"},
+		Apply:    func(p *Player, r int) { p.VampireLeechPct += float32(r) * 0.015 },
+		Describe: func(r int) string { return fmtT("heal %.1f%% of all damage you deal", float32(r)*1.5) },
 	})
 	registerNode(&TalentNode{
-		ID: "def_repulsor_key", Tree: TreeDefense, Tier: 3, Col: 3,
+		ID: "def_iron_skin", Tree: TreeDefense, Tier: 3, Col: 0,
+		Name: "Iron Skin", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"def_bracing"},
+		Apply:    func(p *Player, r int) { p.Armor += float32(r) * 0.03 },
+		Describe: func(r int) string { return fmtT("+%.0f%% armor", float32(r)*3) },
+	})
+	registerNode(&TalentNode{
+		ID: "def_repulsor_key", Tree: TreeDefense, Tier: 3, Col: 2,
 		Name: "Repulsor", MaxRank: 1, Kind: NodeKeystone,
 		Prereqs:      []string{"def_shockwave_unlock"},
 		Exclusive:    []string{"def_shatter_key"},
@@ -1490,7 +1386,7 @@ func registerDefenseTree() {
 		Describe: func(r int) string { return "Shockwave: bigger knockback and longer stun." },
 	})
 	registerNode(&TalentNode{
-		ID: "def_shatter_key", Tree: TreeDefense, Tier: 3, Col: 3,
+		ID: "def_shatter_key", Tree: TreeDefense, Tier: 3, Col: 2,
 		Name: "Shatter", MaxRank: 1, Kind: NodeKeystone,
 		Prereqs:      []string{"def_shockwave_unlock"},
 		Exclusive:    []string{"def_repulsor_key"},
@@ -1500,363 +1396,388 @@ func registerDefenseTree() {
 		Describe: func(r int) string { return "Shockwave: weaker knockback, applies armor debuff." },
 	})
 	registerNode(&TalentNode{
-		ID: "def_vital_core", Tree: TreeDefense, Tier: 3, Col: 5,
-		Name: "Vital Core", MaxRank: 4, Kind: NodeScaling,
-		Prereqs:  []string{"def_overshield", "def_regen"},
-		Apply:    func(p *Player, r int) { p.Overshield += float32(r) * 10.0 },
-		Describe: func(r int) string { return fmtT("+%.0f starting overshield", float32(r)*10) },
+		ID: "def_vital_core", Tree: TreeDefense, Tier: 3, Col: 3,
+		Name: "Vital Core", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"def_overshield"},
+		Apply:    func(p *Player, r int) { p.OvershieldCapPct += float32(r) * 0.05 },
+		Describe: func(r int) string { return fmtT("overshield cap +%.0f%% of max HP", float32(r)*5) },
 	})
-
-	// ── Tier 4 — wider defensive synergies ───────────────────────────────
 	registerNode(&TalentNode{
-		ID: "def_retribution", Tree: TreeDefense, Tier: 4, Col: 0,
-		Name: "Retribution", MaxRank: 4, Kind: NodeSynergy,
-		Prereqs: []string{"def_iron_skin", "def_fortify"},
+		ID: "def_iron_heart", Tree: TreeDefense, Tier: 3, Col: 5,
+		Name: "Iron Heart", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"def_fortify"},
 		Apply: func(p *Player, r int) {
-			p.ThornsDamage += float32(r) * 3.0
-			p.Damage *= 1.0 + float32(r)*0.02
+			p.MaxHPPct += float32(r) * 0.05
+			p.RegenPctHP += float32(r) * 0.003
 		},
 		Describe: func(r int) string {
-			return fmtT("+%.0f thorns, +%.0f%% damage", float32(r)*3, float32(r)*2)
+			return fmtT("+%.0f%% max HP, regen +%.1f%% of max HP/s", float32(r)*5, float32(r)*0.3)
 		},
-	})
-	registerNode(&TalentNode{
-		ID: "def_hardened", Tree: TreeDefense, Tier: 4, Col: 1,
-		Name: "Hardened", MaxRank: 3, Kind: NodeScaling,
-		Prereqs:  []string{"def_fortify"},
-		Apply:    func(p *Player, r int) { p.MaxHP += float32(r) * 25.0; p.HP = p.MaxHP },
-		Describe: func(r int) string { return fmtT("+%.0f max HP", float32(r)*25) },
-	})
-	registerNode(&TalentNode{
-		ID: "def_seismic", Tree: TreeDefense, Tier: 4, Col: 3,
-		Name: "Seismic Mastery", MaxRank: 3, Kind: NodeScaling,
-		Prereqs:  []string{"def_repulsor_key", "def_shatter_key"},
-		Apply:    func(p *Player, r int) { p.CooldownRate += float32(r) * 0.04 },
-		Describe: func(r int) string { return fmtT("+%.0f%% cooldown reduction", float32(r)*4) },
-	})
-	registerNode(&TalentNode{
-		ID: "def_bulwark", Tree: TreeDefense, Tier: 4, Col: 4,
-		Name: "Bulwark", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"def_repulsor_key", "def_shatter_key"},
-		Apply: func(p *Player, r int) {
-			p.PureDefense += float32(r) * 1.0
-			p.MaxHP += float32(r) * 10.0
-			p.HP = p.MaxHP
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.0f flat DR, +%.0f HP", float32(r)*1, float32(r)*10)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "def_resilience", Tree: TreeDefense, Tier: 4, Col: 5,
-		Name: "Resilience", MaxRank: 4, Kind: NodeScaling,
-		Prereqs:  []string{"def_vital_core", "def_overshield"},
-		Apply:    func(p *Player, r int) { p.Armor += float32(r) * 0.03 },
-		Describe: func(r int) string { return fmtT("+%.0f%% armor", float32(r)*3) },
 	})
 
-	// ── Tier 5 — synergies, 5 wide ───────────────────────────────────────
+	// ── Tier 4 — per-path deeper scaling ─────────────────────────────────
 	registerNode(&TalentNode{
-		ID: "def_payback", Tree: TreeDefense, Tier: 5, Col: 0,
-		Name: "Payback Protocol", MaxRank: 3, Kind: NodeSynergy,
+		ID: "def_life_spring", Tree: TreeDefense, Tier: 4, Col: 1,
+		Name: "Life Spring", MaxRank: 2, Kind: NodeScaling,
+		Prereqs: []string{"def_iron_skin"},
+		Apply: func(p *Player, r int) {
+			p.RegenPctHP += float32(r) * 0.003
+			p.MaxHPPct += float32(r) * 0.04
+		},
+		Describe: func(r int) string {
+			return fmtT("regen +%.1f%% max HP/s, +%.0f%% max HP", float32(r)*0.3, float32(r)*4)
+		},
+	})
+	registerNode(&TalentNode{
+		ID: "def_hardened", Tree: TreeDefense, Tier: 4, Col: 0,
+		Name: "Hardened", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"def_iron_skin"},
+		Apply:    func(p *Player, r int) { p.Armor += float32(r) * 0.04 },
+		Describe: func(r int) string { return fmtT("+%.0f%% armor", float32(r)*4) },
+	})
+	registerNode(&TalentNode{
+		ID: "def_seismic", Tree: TreeDefense, Tier: 4, Col: 2,
+		Name: "Seismic Mastery", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"def_repulsor_key", "def_shatter_key", "def_endurance"},
+		Apply:    func(p *Player, r int) { p.CooldownRate += float32(r) * 0.06 },
+		Describe: func(r int) string { return fmtT("+%.0f%% cooldown reduction", float32(r)*6) },
+	})
+	registerNode(&TalentNode{
+		ID: "def_resilience", Tree: TreeDefense, Tier: 4, Col: 3,
+		Name: "Bloodletting", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"def_vital_core"},
+		Apply:    func(p *Player, r int) { p.VampireLeechPct += float32(r) * 0.02 },
+		Describe: func(r int) string { return fmtT("heal %.0f%% of damage dealt", float32(r)*2) },
+	})
+	registerNode(&TalentNode{
+		ID: "def_retribution", Tree: TreeDefense, Tier: 4, Col: 5,
+		Name: "Retribution", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"def_iron_heart"},
+		Apply: func(p *Player, r int) {
+			p.ReflectPct += float32(r) * 0.25
+			p.ThornsPct += float32(r) * 0.15
+		},
+		Describe: func(r int) string {
+			return fmtT("reflect +%.0f%% damage taken, +%.0f%% thorns damage", float32(r)*25, float32(r)*15)
+		},
+	})
+
+	// ── Tier 5 — synergies ───────────────────────────────────────────────
+	registerNode(&TalentNode{
+		ID: "def_bulwark", Tree: TreeDefense, Tier: 5, Col: 1,
+		Name: "Bulwark", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"def_hardened", "def_seismic", "def_life_spring"},
+		Apply: func(p *Player, r int) {
+			p.DamageReductionPct += float32(r) * 0.04
+			p.MaxHPPct += float32(r) * 0.04
+		},
+		Describe: func(r int) string {
+			return fmtT("take %.0f%% less damage (after armor), +%.0f%% max HP", float32(r)*4, float32(r)*4)
+		},
+	})
+	registerNode(&TalentNode{
+		ID: "def_vital_plates", Tree: TreeDefense, Tier: 5, Col: 3,
+		Name: "Vital Plates", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"def_resilience"},
+		Apply: func(p *Player, r int) {
+			p.Armor += float32(r) * 0.03
+			p.OSRegenPctHP += float32(r) * 0.002
+		},
+		Describe: func(r int) string {
+			return fmtT("+%.0f%% armor, overshield regen +%.1f%% max HP/s", float32(r)*3, float32(r)*0.2)
+		},
+	})
+	registerNode(&TalentNode{
+		ID: "def_payback", Tree: TreeDefense, Tier: 5, Col: 5,
+		Name: "Payback Protocol", MaxRank: 2, Kind: NodeSynergy,
 		Prereqs: []string{"def_retribution"},
 		Apply: func(p *Player, r int) {
-			p.LifeOnHitAmount += float32(r) * 0.5
-			p.Damage *= 1.0 + float32(r)*0.03
+			p.ReflectPct += float32(r) * 0.20
+			p.Damage *= 1.0 + float32(r)*0.04
 		},
 		Describe: func(r int) string {
-			return fmtT("+%.1f life on hit, +%.0f%% damage", float32(r)*0.5, float32(r)*3)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "def_iron_heart", Tree: TreeDefense, Tier: 5, Col: 1,
-		Name: "Iron Heart", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"def_hardened", "def_retribution"},
-		Apply: func(p *Player, r int) {
-			p.MaxHP += float32(r) * 20.0
-			p.HP = p.MaxHP
-			p.RegenRate += float32(r) * 0.3
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.0f HP, +%.1f/s regen", float32(r)*20, float32(r)*0.3)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "def_tremor", Tree: TreeDefense, Tier: 5, Col: 3,
-		Name: "Tremor", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"def_seismic", "def_bulwark"},
-		Apply: func(p *Player, r int) {
-			p.ShockwaveCooldown -= float32(r) * 0.2
-			if p.ShockwaveCooldown < 0.5 {
-				p.ShockwaveCooldown = 0.5
-			}
-		},
-		Describe: func(r int) string {
-			return fmtT("-%.1fs Shockwave CD", float32(r)*0.2)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "def_vital_plates", Tree: TreeDefense, Tier: 5, Col: 4,
-		Name: "Vital Plates", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"def_bulwark", "def_resilience"},
-		Apply: func(p *Player, r int) {
-			p.Armor += float32(r) * 0.02
-			p.OvershieldRate += float32(r) * 0.15
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.0f%% armor, +%.2f/s OS regen", float32(r)*2, float32(r)*0.15)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "def_restoration", Tree: TreeDefense, Tier: 5, Col: 5,
-		Name: "Restoration", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"def_resilience", "def_vital_core"},
-		Apply: func(p *Player, r int) {
-			p.RegenRate += float32(r) * 0.4
-			p.OvershieldRate += float32(r) * 0.2
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.1f/s regen, +%.2f/s OS", float32(r)*0.4, float32(r)*0.2)
+			return fmtT("reflect +%.0f%% damage taken, +%.0f%% damage", float32(r)*20, float32(r)*4)
 		},
 	})
 
 	// ── Tier 6 — deep synergies ──────────────────────────────────────────
 	registerNode(&TalentNode{
-		ID: "def_counterpunch", Tree: TreeDefense, Tier: 6, Col: 0,
-		Name: "Counterpunch", MaxRank: 3, Kind: NodeSynergy,
+		ID: "def_adrenaline", Tree: TreeDefense, Tier: 6, Col: 2,
+		Name: "Adrenaline", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"def_bulwark"},
+		Apply: func(p *Player, r int) {
+			p.MaxHPPct += float32(r) * 0.06
+			p.Armor += float32(r) * 0.03
+		},
+		Describe: func(r int) string {
+			return fmtT("+%.0f%% max HP, +%.0f%% armor", float32(r)*6, float32(r)*3)
+		},
+	})
+	registerNode(&TalentNode{
+		ID: "def_restoration", Tree: TreeDefense, Tier: 6, Col: 3,
+		Name: "Restoration", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"def_vital_plates"},
+		Apply: func(p *Player, r int) {
+			p.RegenPctHP += float32(r) * 0.004
+			p.OSRegenPctHP += float32(r) * 0.0025
+		},
+		Describe: func(r int) string {
+			return fmtT("regen +%.1f%% max HP/s, overshield +%.2f%% max HP/s", float32(r)*0.4, float32(r)*0.25)
+		},
+	})
+	registerNode(&TalentNode{
+		ID: "def_counterpunch", Tree: TreeDefense, Tier: 6, Col: 4,
+		Name: "Counterpunch", MaxRank: 2, Kind: NodeSynergy,
 		Prereqs: []string{"def_payback"},
 		Apply: func(p *Player, r int) {
-			p.ThornsDamage += float32(r) * 4.0
-			p.LifeOnHitAmount += float32(r) * 0.25
+			p.ReflectPct += float32(r) * 0.20
+			p.VampireLeechPct += float32(r) * 0.01
 		},
 		Describe: func(r int) string {
-			return fmtT("+%.0f thorns, +%.2f life on hit", float32(r)*4, float32(r)*0.25)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "def_adrenaline", Tree: TreeDefense, Tier: 6, Col: 2,
-		Name: "Adrenaline", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"def_iron_heart", "def_tremor"},
-		Apply: func(p *Player, r int) {
-			p.RegenRate += float32(r) * 0.3
-			p.Haste += float32(r) * 0.03
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.2f/s regen, +%.0f%% haste", float32(r)*0.3, float32(r)*3)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "def_aftershock", Tree: TreeDefense, Tier: 6, Col: 3,
-		Name: "Aftershock", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"def_tremor", "def_vital_plates"},
-		Apply: func(p *Player, r int) {
-			p.ThornsDamage += float32(r) * 5.0
-			p.Damage *= 1.0 + float32(r)*0.03
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.0f thorns, +%.0f%% damage", float32(r)*5, float32(r)*3)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "def_second_wind", Tree: TreeDefense, Tier: 6, Col: 5,
-		Name: "Second Wind", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"def_vital_plates", "def_restoration"},
-		Apply: func(p *Player, r int) {
-			p.RegenRate += float32(r) * 0.5
-			p.MaxHP += float32(r) * 15.0
-			p.HP = p.MaxHP
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.1f/s regen, +%.0f HP", float32(r)*0.5, float32(r)*15)
+			return fmtT("reflect +%.0f%% damage taken, heal %.0f%% of damage dealt", float32(r)*20, float32(r)*1)
 		},
 	})
 
-	// ── Tier 7 — pre-capstone scalings ───────────────────────────────────
+	// ── Tier 7 — path-specific keystones ─────────────────────────────────
 	registerNode(&TalentNode{
-		ID: "def_reflective_aura", Tree: TreeDefense, Tier: 7, Col: 1,
-		Name: "Reflective Aura", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"def_counterpunch", "def_adrenaline"},
+		ID: "def_fortress", Tree: TreeDefense, Tier: 7, Col: 2,
+		Name: "Fortress", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"def_adrenaline"},
 		Apply: func(p *Player, r int) {
-			p.ThornsDamage += float32(r) * 6.0
-			p.Armor += float32(r) * 0.02
+			p.Armor += float32(r) * 0.05
+			p.MaxHPPct += float32(r) * 0.06
 		},
 		Describe: func(r int) string {
-			return fmtT("+%.0f thorns, +%.0f%% armor", float32(r)*6, float32(r)*2)
+			return fmtT("+%.0f%% armor, +%.0f%% max HP", float32(r)*5, float32(r)*6)
 		},
 	})
 	registerNode(&TalentNode{
 		ID: "def_untouchable", Tree: TreeDefense, Tier: 7, Col: 3,
-		Name: "Untouchable", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"def_aftershock", "def_adrenaline"},
+		Name: "Untouchable", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"def_restoration"},
 		Apply: func(p *Player, r int) {
-			p.PureDefense += float32(r) * 1.5
-			p.Armor += float32(r) * 0.02
+			p.DamageReductionPct += float32(r) * 0.05
+			p.Armor += float32(r) * 0.03
 		},
 		Describe: func(r int) string {
-			return fmtT("+%.1f flat DR, +%.0f%% armor", float32(r)*1.5, float32(r)*2)
+			return fmtT("take %.0f%% less damage (after armor), +%.0f%% armor", float32(r)*5, float32(r)*3)
 		},
 	})
 	registerNode(&TalentNode{
-		ID: "def_lifeline", Tree: TreeDefense, Tier: 7, Col: 5,
-		Name: "Lifeline", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"def_second_wind"},
+		ID: "def_retaliator", Tree: TreeDefense, Tier: 7, Col: 4,
+		Name: "Retaliator", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"def_counterpunch"},
 		Apply: func(p *Player, r int) {
-			p.RegenRate += float32(r) * 0.5
-			p.LifeOnHitAmount += float32(r) * 0.3
+			p.ReflectPct += float32(r) * 0.35
+			p.ThornsPct += float32(r) * 0.20
 		},
 		Describe: func(r int) string {
-			return fmtT("+%.1f/s regen, +%.2f life on hit", float32(r)*0.5, float32(r)*0.3)
+			return fmtT("reflect +%.0f%% damage taken, +%.0f%% thorns damage", float32(r)*35, float32(r)*20)
 		},
 	})
 
-	// ── Tier 8 — capstones, SpendGate 25 ─────────────────────────────────
+	// ── Tier 8 — masterwork capstones, SpendGate 28 ───────────────────────
 	registerNode(&TalentNode{
 		ID: "def_immortal", Tree: TreeDefense, Tier: 8, Col: 1,
 		Name: "Immortal", MaxRank: 1, Kind: NodeKeystone,
-		SpendGate: 25,
+		Prereqs:   []string{"def_fortress", "def_untouchable"},
+		SpendGate: 28,
 		Exclusive: []string{"def_aegis", "def_vampiric"},
 		Apply: func(p *Player, r int) {
-			p.MaxHP *= 1.5
-			p.HP = p.MaxHP
-			p.RegenRate += 2.0
+			p.MaxHPPct += 0.50
+			p.RegenPctHP += 0.01
 		},
-		Describe: func(r int) string { return "+50% max HP, +2.0/s regen." },
+		Describe: func(r int) string { return "+50% max HP, regen +1% of max HP per second." },
 	})
 	registerNode(&TalentNode{
 		ID: "def_aegis", Tree: TreeDefense, Tier: 8, Col: 3,
 		Name: "Aegis Protocol", MaxRank: 1, Kind: NodeKeystone,
-		SpendGate: 25,
+		Prereqs:   []string{"def_untouchable", "def_retaliator"},
+		SpendGate: 28,
 		Exclusive: []string{"def_immortal", "def_vampiric"},
 		Apply: func(p *Player, r int) {
 			p.Armor += 0.15
-			p.PureDefense += 3.0
-			p.OvershieldRate += 0.5
+			p.DamageReductionPct += 0.08
+			p.OSRegenPctHP += 0.005
 		},
-		Describe: func(r int) string { return "+15% armor, +3 pure defense, +0.5/s overshield." },
+		Describe: func(r int) string {
+			return "+15% armor, take 8% less damage, overshield regen +0.5% max HP/s."
+		},
 	})
 	registerNode(&TalentNode{
 		ID: "def_vampiric", Tree: TreeDefense, Tier: 8, Col: 5,
 		Name: "Vampiric Core", MaxRank: 1, Kind: NodeKeystone,
-		SpendGate: 25,
+		Prereqs:   []string{"def_untouchable", "def_retaliator"},
+		SpendGate: 28,
 		Exclusive: []string{"def_immortal", "def_aegis"},
 		Apply: func(p *Player, r int) {
-			p.VampireLeechPct += 0.06
-			p.LifeOnHitAmount += 2.0
+			p.VampireLeechPct += 0.08
 		},
-		Describe: func(r int) string { return "+6% lifesteal, +2 life on hit." },
+		Describe: func(r int) string { return "heal 8% of ALL damage you deal." },
 	})
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// PASSIVE TREE — WIDE LATTICE (33 nodes, 6×8)
+// PASSIVE TREE — 8-TIER CHAIN (23 nodes)
 //
-// Three abilities (Bombardment, Mines, Satellites). Lots of "always-on"
-// flavor: cooldown, haste, RP/XP, free-upgrade, lucky-drop, wave-skip.
+// Two entry points: Efficiency (CDR) and Scavenger (RP).
+// Satellites T2 universal; Bombard T3 moderate; Mines T3 high-value.
+// All paths converge at T7 Surplus.
 //
-// Layout (col, tier):
-//   T1: Efficiency c1, Tempo c3, Scavenger c5
-//   T2: Quickdraw c0, ★Bombard c1, ★Mines c3, ★Satellites c5, Treasure c4
-//   T3: Carpet|Siege c1, Cluster|Hellfire c3, Sentry|Overdrive c5
-//   T4: Bomb Load c0, Pyrotechnic c1, Mine Layer c2, Drone Control c4, Beacon c5
-//   T5: Heavy Ordnance c0, Saturation c1, Reclamation c2, Salvage c3, Fire Support c4, Surplus c5
-//   T6: Saturation Bombing c0, Field Mastery c2, Resupply c3, Sentinel c4
-//   T7: Annihilation Run c1, Minefield Tactics c3, Drone Swarm c5
-//   T8: Overwhelming c1, Perpetual c3, Fortune c5  (SpendGate 25)
+// Layout (tier, col):
+//   T1: Efficiency c1, Scavenger c5
+//   T2: Quickdraw c0, ★Satellites c2 (universal), Treasure c3, Tempo c5
+//   T3: ★Bombard c0 (moderate), Sentry|Overdrive c2 mutex, ★Mines c3 (high-value), Pyrotechnic c5
+//   T4: Carpet|Siege c0 mutex, Drone Control c2, Cluster|Hellfire c3 mutex, Mine Layer c5
+//   T5: Bomb Load c0, Beacon c2, Reclaim c3, Salvage c5
+//   T6: Saturation c0, Fire Support c2, Field Mastery c3
+//   T7: Surplus c2 (convergence — any T6 node)
+//   T8: Overwhelm c1 | Perpetual c3 | Fortune c5  (SpendGate 28)
 // ═════════════════════════════════════════════════════════════════════════
 
 func registerPassiveTree() {
-	// ── Tier 1 — three stat anchors ──────────────────────────────────────
+	// ── Tier 1 — two entry anchors ────────────────────────────────────────
 	registerNode(&TalentNode{
 		ID: "pas_efficiency", Tree: TreePassive, Tier: 1, Col: 1,
-		Name: "Efficiency", MaxRank: 5, Kind: NodeScaling,
-		Apply:    func(p *Player, r int) { p.CooldownRate += float32(r) * 0.02 },
-		Describe: func(r int) string { return fmtT("+%.0f%% cooldown reduction", float32(r)*2) },
-	})
-	registerNode(&TalentNode{
-		ID: "pas_tempo", Tree: TreePassive, Tier: 1, Col: 3,
-		Name: "Tempo", MaxRank: 3, Kind: NodeScaling,
-		Apply:    func(p *Player, r int) { p.Haste += float32(r) * 0.03 },
-		Describe: func(r int) string { return fmtT("+%.0f%% haste", float32(r)*3) },
+		Name: "Efficiency", MaxRank: 2, Kind: NodeScaling,
+		Apply:    func(p *Player, r int) { p.CooldownRate += float32(r) * 0.06 },
+		Describe: func(r int) string { return fmtT("+%.0f%% cooldown reduction", float32(r)*6) },
 	})
 	registerNode(&TalentNode{
 		ID: "pas_scavenger", Tree: TreePassive, Tier: 1, Col: 5,
-		Name: "Scavenger", MaxRank: 3, Kind: NodeScaling,
-		Apply:    func(p *Player, r int) { p.RPRate += float32(r) * 0.1 },
-		Describe: func(r int) string { return fmtT("+%.0f%% RP gain", float32(r)*10) },
+		Name: "Scavenger", MaxRank: 2, Kind: NodeScaling,
+		Apply:    func(p *Player, r int) { p.RPRate += float32(r) * 0.15 },
+		Describe: func(r int) string { return fmtT("+%.0f%% RP gain", float32(r)*15) },
 	})
 
-	// ── Tier 2 — abilities + bridge stats ────────────────────────────────
+	// ── Tier 2 — Satellites (universal) + bridges ─────────────────────────
 	registerNode(&TalentNode{
 		ID: "pas_quickdraw", Tree: TreePassive, Tier: 2, Col: 0,
-		Name: "Quickdraw", MaxRank: 3, Kind: NodeScaling,
+		Name: "Quickdraw", MaxRank: 2, Kind: NodeScaling,
 		Prereqs:  []string{"pas_efficiency"},
-		Apply:    func(p *Player, r int) { p.CooldownRate += float32(r) * 0.025 },
-		Describe: func(r int) string { return fmtT("+%.1f%% cooldown reduction", float32(r)*2.5) },
+		Apply:    func(p *Player, r int) { p.CooldownRate += float32(r) * 0.04 },
+		Describe: func(r int) string { return fmtT("+%.0f%% cooldown reduction", float32(r)*4) },
 	})
 	registerNode(&TalentNode{
-		ID: "pas_bombard_unlock", Tree: TreePassive, Tier: 2, Col: 1,
+		ID: "pas_satellites_unlock", Tree: TreePassive, Tier: 2, Col: 2,
+		Name: "Satellites", MaxRank: 1, Kind: NodeUnlock,
+		GrantsAbility: "Satellites",
+		Prereqs:       []string{"pas_efficiency"},
+		Apply:         func(p *Player, r int) {},
+		Describe:      func(r int) string { return "Unlocks Satellites: orbiting drones." },
+	})
+	registerNode(&TalentNode{
+		ID: "pas_treasure", Tree: TreePassive, Tier: 2, Col: 3,
+		Name: "Treasure Hunter", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"pas_scavenger"},
+		Apply:    func(p *Player, r int) { p.LuckyDropBonus += float32(r) * 0.07 },
+		Describe: func(r int) string { return fmtT("+%.0f%% RP drop chance", float32(r)*7) },
+	})
+	registerNode(&TalentNode{
+		ID: "pas_tempo", Tree: TreePassive, Tier: 2, Col: 5,
+		Name: "Tempo", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"pas_scavenger"},
+		Apply:    func(p *Player, r int) { p.Haste += float32(r) * 0.04 },
+		Describe: func(r int) string { return fmtT("+%.0f%% haste", float32(r)*4) },
+	})
+
+	// ── Tier 3 — Bombard (moderate), Sentry/Overdrive, Mines (high-value), Pyrotechnic ──
+	registerNode(&TalentNode{
+		ID: "pas_bombard_unlock", Tree: TreePassive, Tier: 3, Col: 0,
 		Name: AbilityBombard, MaxRank: 1, Kind: NodeUnlock,
 		GrantsAbility: AbilityBombard,
-		Prereqs:       []string{"pas_efficiency"},
+		Prereqs:       []string{"pas_quickdraw"},
 		Apply:         func(p *Player, r int) {},
 		Describe:      func(r int) string { return "Unlocks Bombardment: rain of explosions over time." },
 	})
 	registerNode(&TalentNode{
-		ID: "pas_mines_unlock", Tree: TreePassive, Tier: 2, Col: 3,
+		ID: "pas_sentry_key", Tree: TreePassive, Tier: 3, Col: 2,
+		Name: "Sentry Mode", MaxRank: 1, Kind: NodeKeystone,
+		Prereqs:      []string{"pas_satellites_unlock"},
+		Exclusive:    []string{"pas_overdrive_key"},
+		MutexGroupID: "pas_sat_branch",
+		BranchSlot:   "Satellites", SetsBranch: BranchSatSentry,
+		Apply: func(p *Player, r int) {
+			p.SatelliteShooting = true
+			p.SatelliteOverdrive = false
+		},
+		Describe: func(r int) string { return "Satellites: stationary turrets that shoot bullets." },
+	})
+	registerNode(&TalentNode{
+		ID: "pas_overdrive_key", Tree: TreePassive, Tier: 3, Col: 2,
+		Name: "Overdrive", MaxRank: 1, Kind: NodeKeystone,
+		Prereqs:      []string{"pas_satellites_unlock"},
+		Exclusive:    []string{"pas_sentry_key"},
+		MutexGroupID: "pas_sat_branch",
+		BranchSlot:   "Satellites", SetsBranch: BranchSatOverdrive,
+		Apply: func(p *Player, r int) {
+			p.SatelliteOverdrive = true
+			p.SatelliteShooting = false
+		},
+		Describe: func(r int) string { return "Satellites: fast orbit, contact damage only." },
+	})
+	registerNode(&TalentNode{
+		ID: "pas_mines_unlock", Tree: TreePassive, Tier: 3, Col: 3,
 		Name: "Prox. Mines", MaxRank: 1, Kind: NodeUnlock,
 		GrantsAbility: "Mines",
-		Prereqs:       []string{"pas_tempo"},
+		Prereqs:       []string{"pas_treasure"},
 		Apply:         func(p *Player, r int) { p.MinesUnlocked = true },
 		Describe:      func(r int) string { return "Unlocks Mines: passive minefield placement." },
 	})
 	registerNode(&TalentNode{
-		ID: "pas_treasure", Tree: TreePassive, Tier: 2, Col: 4,
-		Name: "Treasure Hunter", MaxRank: 3, Kind: NodeScaling,
-		Prereqs:  []string{"pas_tempo", "pas_scavenger"},
-		Apply:    func(p *Player, r int) { p.LuckyDropBonus += float32(r) * 0.05 },
-		Describe: func(r int) string { return fmtT("+%.0f%% RP drop chance", float32(r)*5) },
-	})
-	registerNode(&TalentNode{
-		ID: "pas_satellites_unlock", Tree: TreePassive, Tier: 2, Col: 5,
-		Name: "Satellites", MaxRank: 1, Kind: NodeUnlock,
-		GrantsAbility: "Satellites",
-		Prereqs:       []string{"pas_scavenger"},
-		Apply:         func(p *Player, r int) {},
-		Describe:      func(r int) string { return "Unlocks Satellites: orbiting drones." },
+		ID: "pas_pyrotechnic", Tree: TreePassive, Tier: 3, Col: 5,
+		Name: "Pyrotechnic", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs:  []string{"pas_tempo"},
+		Apply:    func(p *Player, r int) { p.BombardDmgMult += float32(r) * 0.4 },
+		Describe: func(r int) string { return fmtT("+%.1fx Bombard damage", float32(r)*0.4) },
 	})
 
-	// ── Tier 3 — three keystone mutex pairs ──────────────────────────────
+	// ── Tier 4 — Bombard keystones, Drone Control, Mine keystones, Mine Layer ──
 	registerNode(&TalentNode{
-		ID: "pas_carpet_key", Tree: TreePassive, Tier: 3, Col: 1,
+		ID: "pas_carpet_key", Tree: TreePassive, Tier: 4, Col: 0,
 		Name: "Carpet Bomb", MaxRank: 1, Kind: NodeKeystone,
 		Prereqs:      []string{"pas_bombard_unlock"},
 		Exclusive:    []string{"pas_siege_key"},
 		MutexGroupID: "pas_bombard_branch",
 		BranchSlot:   "Bombard", SetsBranch: BranchBombardCarpet,
 		Apply: func(p *Player, r int) {
-			p.BombardRadius -= 15.0
+			p.BombardRadius *= 0.75
 			if p.BombardRadius < 20.0 {
 				p.BombardRadius = 20.0
 			}
-			p.BombardDuration += 2.0
+			p.BombardDuration *= 1.40
 		},
 		Describe: func(r int) string { return "Bombard: rapid small strikes, longer duration." },
 	})
 	registerNode(&TalentNode{
-		ID: "pas_siege_key", Tree: TreePassive, Tier: 3, Col: 1,
+		ID: "pas_siege_key", Tree: TreePassive, Tier: 4, Col: 0,
 		Name: "Siege Strike", MaxRank: 1, Kind: NodeKeystone,
 		Prereqs:      []string{"pas_bombard_unlock"},
 		Exclusive:    []string{"pas_carpet_key"},
 		MutexGroupID: "pas_bombard_branch",
 		BranchSlot:   "Bombard", SetsBranch: BranchBombardSiege,
 		Apply: func(p *Player, r int) {
-			p.BombardRadius += 40.0
+			p.BombardRadius *= 1.65
 			p.BombardDmgMult += 2.0
 		},
 		Describe: func(r int) string { return "Bombard: slow massive blasts, +damage multiplier." },
 	})
 	registerNode(&TalentNode{
-		ID: "pas_cluster_key", Tree: TreePassive, Tier: 3, Col: 3,
+		ID: "pas_stockpile", Tree: TreePassive, Tier: 4, Col: 1,
+		Name: "Stockpile", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"pas_bombard_unlock"},
+		Apply:    func(p *Player, r int) { p.BombardDuration *= 1.0 + float32(r)*0.15 },
+		Describe: func(r int) string { return fmtT("+%.0f%% Bombard duration", float32(r)*15) },
+	})
+	registerNode(&TalentNode{
+		ID: "pas_drone_control", Tree: TreePassive, Tier: 4, Col: 2,
+		Name: "Drone Control", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"pas_sentry_key", "pas_overdrive_key"},
+		Apply:    func(p *Player, r int) { p.SatelliteDmgPct += float32(r) * 0.15 },
+		Describe: func(r int) string { return fmtT("orbs gain %.0f%% of your damage", float32(r)*15) },
+	})
+	registerNode(&TalentNode{
+		ID: "pas_cluster_key", Tree: TreePassive, Tier: 4, Col: 3,
 		Name: "Cluster Mines", MaxRank: 1, Kind: NodeKeystone,
 		Prereqs:      []string{"pas_mines_unlock"},
 		Exclusive:    []string{"pas_hellfire_key"},
@@ -1869,7 +1790,7 @@ func registerPassiveTree() {
 		Describe: func(r int) string { return "Mines: more mines, faster cooldown." },
 	})
 	registerNode(&TalentNode{
-		ID: "pas_hellfire_key", Tree: TreePassive, Tier: 3, Col: 3,
+		ID: "pas_hellfire_key", Tree: TreePassive, Tier: 4, Col: 3,
 		Name: "Hellfire Mines", MaxRank: 1, Kind: NodeKeystone,
 		Prereqs:      []string{"pas_mines_unlock"},
 		Exclusive:    []string{"pas_cluster_key"},
@@ -1883,243 +1804,151 @@ func registerPassiveTree() {
 		Describe: func(r int) string { return "Mines: fewer but massive blasts with lingering fire." },
 	})
 	registerNode(&TalentNode{
-		ID: "pas_sentry_key", Tree: TreePassive, Tier: 3, Col: 5,
-		Name: "Sentry Mode", MaxRank: 1, Kind: NodeKeystone,
-		Prereqs:      []string{"pas_satellites_unlock"},
-		Exclusive:    []string{"pas_overdrive_key"},
-		MutexGroupID: "pas_sat_branch",
-		BranchSlot:   "Satellites", SetsBranch: BranchSatSentry,
-		Apply: func(p *Player, r int) {
-			p.SatelliteShooting = true
-			p.SatelliteOverdrive = false
-		},
-		Describe: func(r int) string { return "Satellites: stationary turrets that shoot bullets." },
+		ID: "pas_rapid_deploy", Tree: TreePassive, Tier: 4, Col: 4,
+		Name: "Rapid Deploy", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"pas_mines_unlock"},
+		Apply:    func(p *Player, r int) { p.MineMaxCooldown *= (1.0 - float32(r)*0.08) },
+		Describe: func(r int) string { return fmtT("-%.0f%% Mine cooldown", float32(r)*8) },
 	})
 	registerNode(&TalentNode{
-		ID: "pas_overdrive_key", Tree: TreePassive, Tier: 3, Col: 5,
-		Name: "Overdrive", MaxRank: 1, Kind: NodeKeystone,
-		Prereqs:      []string{"pas_satellites_unlock"},
-		Exclusive:    []string{"pas_sentry_key"},
-		MutexGroupID: "pas_sat_branch",
-		BranchSlot:   "Satellites", SetsBranch: BranchSatOverdrive,
-		Apply: func(p *Player, r int) {
-			p.SatelliteOverdrive = true
-			p.SatelliteShooting = false
-		},
-		Describe: func(r int) string { return "Satellites: fast orbit, contact damage only." },
-	})
-
-	// ── Tier 4 — wider scaling ───────────────────────────────────────────
-	registerNode(&TalentNode{
-		ID: "pas_bombload", Tree: TreePassive, Tier: 4, Col: 0,
-		Name: "Bomb Load", MaxRank: 4, Kind: NodeScaling,
-		Prereqs:  []string{"pas_carpet_key", "pas_siege_key", "pas_quickdraw"},
-		Apply:    func(p *Player, r int) { p.BombardDuration += float32(r) * 0.75 },
-		Describe: func(r int) string { return fmtT("+%.2fs Bombard duration", float32(r)*0.75) },
-	})
-	registerNode(&TalentNode{
-		ID: "pas_pyrotechnic", Tree: TreePassive, Tier: 4, Col: 1,
-		Name: "Pyrotechnic", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs:  []string{"pas_carpet_key", "pas_siege_key"},
-		Apply:    func(p *Player, r int) { p.BombardDmgMult += float32(r) * 0.3 },
-		Describe: func(r int) string { return fmtT("+%.1fx Bombard damage", float32(r)*0.3) },
-	})
-	registerNode(&TalentNode{
-		ID: "pas_minelayer", Tree: TreePassive, Tier: 4, Col: 2,
-		Name: "Mine Layer", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"pas_cluster_key", "pas_hellfire_key"},
-		Apply: func(p *Player, r int) {
-			p.MineMaxCooldown *= (1.0 - float32(r)*0.08)
-			p.Damage *= 1.0 + float32(r)*0.02
-		},
-		Describe: func(r int) string {
-			return fmtT("-%.0f%% Mine CD, +%.0f%% damage", float32(r)*8, float32(r)*2)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "pas_drone_control", Tree: TreePassive, Tier: 4, Col: 4,
-		Name: "Drone Control", MaxRank: 4, Kind: NodeScaling,
-		Prereqs:  []string{"pas_sentry_key", "pas_overdrive_key", "pas_treasure"},
-		Apply:    func(p *Player, r int) { p.SatelliteDamage += float32(r) * 1.5 },
-		Describe: func(r int) string { return fmtT("+%.1f Satellite damage", float32(r)*1.5) },
-	})
-	registerNode(&TalentNode{
-		ID: "pas_beacon", Tree: TreePassive, Tier: 4, Col: 5,
-		Name: "Beacon", MaxRank: 3, Kind: NodeScaling,
-		Prereqs:  []string{"pas_sentry_key", "pas_overdrive_key"},
-		Apply:    func(p *Player, r int) { p.SatelliteCount += r },
-		Describe: func(r int) string { return fmtT("+%d Satellites", r) },
-	})
-
-	// ── Tier 5 — synergies, 6 wide ───────────────────────────────────────
-	registerNode(&TalentNode{
-		ID: "pas_ordnance", Tree: TreePassive, Tier: 5, Col: 0,
-		Name: "Heavy Ordnance", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"pas_bombload"},
-		Apply: func(p *Player, r int) {
-			p.BombardDmgMult += float32(r) * 0.5
-			p.BombardRadius += float32(r) * 5.0
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.1fx Bombard dmg, +%.0f radius", float32(r)*0.5, float32(r)*5)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "pas_saturation", Tree: TreePassive, Tier: 5, Col: 1,
-		Name: "Saturation", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"pas_pyrotechnic", "pas_bombload"},
-		Apply: func(p *Player, r int) {
-			p.BombardDuration += float32(r) * 0.5
-			p.BombardRadius += float32(r) * 8.0
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.1fs duration, +%.0f radius", float32(r)*0.5, float32(r)*8)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "pas_reclaim", Tree: TreePassive, Tier: 5, Col: 2,
-		Name: "Reclamation", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"pas_minelayer"},
-		Apply: func(p *Player, r int) {
-			p.XPRate += float32(r) * 0.08
-			p.RPRate += float32(r) * 0.05
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.0f%% XP, +%.0f%% RP gain", float32(r)*8, float32(r)*5)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "pas_salvage", Tree: TreePassive, Tier: 5, Col: 3,
-		Name: "Salvage", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"pas_minelayer"},
-		Apply: func(p *Player, r int) {
-			p.RPRate += float32(r) * 0.06
-			p.LuckyDropBonus += float32(r) * 0.03
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.0f%% RP, +%.0f%% drop chance", float32(r)*6, float32(r)*3)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "pas_fire_support", Tree: TreePassive, Tier: 5, Col: 4,
-		Name: "Fire Support", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"pas_drone_control"},
-		Apply: func(p *Player, r int) {
-			p.SatelliteDamage += float32(r) * 2.0
-			p.Haste += float32(r) * 0.02
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.1f Satellite dmg, +%.0f%% haste", float32(r)*2, float32(r)*2)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "pas_surplus", Tree: TreePassive, Tier: 5, Col: 5,
-		Name: "Surplus", MaxRank: 3, Kind: NodeScaling,
-		Prereqs: []string{"pas_drone_control", "pas_beacon"},
-		Apply: func(p *Player, r int) {
-			p.FreeUpgradeChance += float32(r) * 0.03
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.0f%% free upgrade chance", float32(r)*3)
-		},
-	})
-
-	// ── Tier 6 — deep synergies ──────────────────────────────────────────
-	registerNode(&TalentNode{
-		ID: "pas_sat_bombing", Tree: TreePassive, Tier: 6, Col: 0,
-		Name: "Saturation Bombing", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"pas_ordnance", "pas_saturation"},
-		Apply: func(p *Player, r int) {
-			p.BombardDmgMult += float32(r) * 0.4
-			p.CooldownRate += float32(r) * 0.02
-		},
-		Describe: func(r int) string {
-			return fmtT("+%.1fx Bombard, +%.0f%% CDR", float32(r)*0.4, float32(r)*2)
-		},
-	})
-	registerNode(&TalentNode{
-		ID: "pas_field_mastery", Tree: TreePassive, Tier: 6, Col: 2,
-		Name: "Field Mastery", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"pas_reclaim", "pas_salvage"},
+		ID: "pas_minelayer", Tree: TreePassive, Tier: 4, Col: 5,
+		Name: "Mine Layer", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"pas_pyrotechnic"},
 		Apply: func(p *Player, r int) {
 			p.MineCount += r
 			p.Damage *= 1.0 + float32(r)*0.03
 		},
 		Describe: func(r int) string {
-			return fmtT("+%d Mines, +%.0f%% damage", r, float32(r)*3)
+			return fmtT("+%d mines per batch, +%.0f%% damage", r, float32(r)*3)
 		},
 	})
+
+	// ── Tier 5 — per-path scaling ────────────────────────────────────────
 	registerNode(&TalentNode{
-		ID: "pas_resupply", Tree: TreePassive, Tier: 6, Col: 3,
-		Name: "Resupply", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"pas_salvage", "pas_fire_support"},
+		ID: "pas_bombload", Tree: TreePassive, Tier: 5, Col: 0,
+		Name: "Bomb Load", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"pas_carpet_key", "pas_siege_key", "pas_stockpile"},
+		Apply:    func(p *Player, r int) { p.BombardDuration *= 1.0 + float32(r)*0.18 },
+		Describe: func(r int) string { return fmtT("+%.0f%% Bombard duration", float32(r)*18) },
+	})
+	registerNode(&TalentNode{
+		ID: "pas_beacon", Tree: TreePassive, Tier: 5, Col: 2,
+		Name: "Beacon", MaxRank: 2, Kind: NodeScaling,
+		Prereqs:  []string{"pas_drone_control"},
+		Apply:    func(p *Player, r int) { p.SatelliteCount += r },
+		Describe: func(r int) string { return fmtT("+%d Satellites", r) },
+	})
+	registerNode(&TalentNode{
+		ID: "pas_reclaim", Tree: TreePassive, Tier: 5, Col: 3,
+		Name: "Reclamation", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"pas_cluster_key", "pas_hellfire_key", "pas_rapid_deploy"},
 		Apply: func(p *Player, r int) {
+			p.FreeUpgradeChance += float32(r) * 0.05
 			p.RPRate += float32(r) * 0.08
 		},
 		Describe: func(r int) string {
-			return fmtT("+%.0f%% RP gain", float32(r)*8)
+			return fmtT("+%.0f%% free upgrade, +%.0f%% RP gain", float32(r)*5, float32(r)*8)
 		},
 	})
 	registerNode(&TalentNode{
-		ID: "pas_sentinel", Tree: TreePassive, Tier: 6, Col: 4,
-		Name: "Sentinel", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"pas_fire_support", "pas_surplus"},
+		ID: "pas_salvage", Tree: TreePassive, Tier: 5, Col: 5,
+		Name: "Salvage", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"pas_minelayer"},
 		Apply: func(p *Player, r int) {
-			p.SatelliteDamage += float32(r) * 2.0
-			p.SatelliteCount += (r / 2)
+			p.FreeUpgradeChance += float32(r) * 0.08
+			p.RPRate += float32(r) * 0.06
 		},
 		Describe: func(r int) string {
-			return fmtT("+%.1f Satellite dmg, +%d Satellites", float32(r)*2, r/2)
+			return fmtT("+%.0f%% free upgrade, +%.0f%% RP", float32(r)*8, float32(r)*6)
 		},
 	})
 
-	// ── Tier 7 — pre-capstone synergies ──────────────────────────────────
+	// ── Tier 6 — deep synergies ──────────────────────────────────────────
 	registerNode(&TalentNode{
-		ID: "pas_annihilation", Tree: TreePassive, Tier: 7, Col: 1,
-		Name: "Annihilation Run", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"pas_sat_bombing"},
+		ID: "pas_saturation", Tree: TreePassive, Tier: 6, Col: 0,
+		Name: "Saturation", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"pas_bombload"},
 		Apply: func(p *Player, r int) {
 			p.BombardDmgMult += float32(r) * 0.5
-			p.BombardDuration += float32(r) * 0.3
+			p.BombardRadius *= 1.0 + float32(r)*0.10
 		},
 		Describe: func(r int) string {
-			return fmtT("+%.1fx Bombard, +%.1fs dur", float32(r)*0.5, float32(r)*0.3)
+			return fmtT("+%.1fx Bombard dmg, +%.0f%% blast radius", float32(r)*0.5, float32(r)*10)
 		},
 	})
 	registerNode(&TalentNode{
-		ID: "pas_minefield_tactics", Tree: TreePassive, Tier: 7, Col: 3,
-		Name: "Minefield Tactics", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"pas_field_mastery", "pas_resupply"},
+		ID: "pas_fire_support", Tree: TreePassive, Tier: 6, Col: 2,
+		Name: "Fire Support", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"pas_beacon"},
 		Apply: func(p *Player, r int) {
-			p.MineMaxCooldown *= (1.0 - float32(r)*0.05)
-			p.Damage *= 1.0 + float32(r)*0.03
+			p.SatelliteDmgPct += float32(r) * 0.15
+			p.Haste += float32(r) * 0.03
 		},
 		Describe: func(r int) string {
-			return fmtT("-%.0f%% Mine CD, +%.0f%% dmg", float32(r)*5, float32(r)*3)
+			return fmtT("orbs gain %.0f%% of your damage, +%.0f%% haste", float32(r)*15, float32(r)*3)
 		},
 	})
 	registerNode(&TalentNode{
-		ID: "pas_drone_swarm", Tree: TreePassive, Tier: 7, Col: 5,
-		Name: "Drone Swarm", MaxRank: 3, Kind: NodeSynergy,
-		Prereqs: []string{"pas_sentinel"},
+		ID: "pas_field_mastery", Tree: TreePassive, Tier: 6, Col: 3,
+		Name: "Field Mastery", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"pas_reclaim", "pas_salvage"},
 		Apply: func(p *Player, r int) {
-			p.SatelliteDamage += float32(r) * 3.0
-			p.SatelliteCount += (r / 2)
+			p.Damage *= 1.0 + float32(r)*0.04
+			p.Haste += float32(r) * 0.03
 		},
 		Describe: func(r int) string {
-			return fmtT("+%.1f Sat dmg, +%d Sats", float32(r)*3, r/2)
+			return fmtT("+%.0f%% damage, +%.0f%% haste", float32(r)*4, float32(r)*3)
 		},
 	})
 
-	// ── Tier 8 — capstones, SpendGate 25 ─────────────────────────────────
+	// ── Tier 7 — path-specific keystones ─────────────────────────────────
+	registerNode(&TalentNode{
+		ID: "pas_artillery_master", Tree: TreePassive, Tier: 7, Col: 1,
+		Name: "Artillery Master", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"pas_saturation"},
+		Apply: func(p *Player, r int) {
+			p.BombardDmgMult += float32(r) * 0.6
+			p.BombardDuration *= 1.0 + float32(r)*0.10
+		},
+		Describe: func(r int) string {
+			return fmtT("+%.1fx bombard damage, +%.0f%% duration", float32(r)*0.6, float32(r)*10)
+		},
+	})
+	registerNode(&TalentNode{
+		ID: "pas_surplus", Tree: TreePassive, Tier: 7, Col: 3,
+		Name: "Surplus", MaxRank: 2, Kind: NodeScaling,
+		Prereqs: []string{"pas_fire_support"},
+		Apply: func(p *Player, r int) {
+			p.FreeUpgradeChance += float32(r) * 0.05
+			p.CooldownRate += float32(r) * 0.05
+		},
+		Describe: func(r int) string {
+			return fmtT("+%.0f%% free upgrade, +%.0f%% CDR", float32(r)*5, float32(r)*5)
+		},
+	})
+	registerNode(&TalentNode{
+		ID: "pas_demolitions_expert", Tree: TreePassive, Tier: 7, Col: 5,
+		Name: "Demolitions Expert", MaxRank: 2, Kind: NodeSynergy,
+		Prereqs: []string{"pas_field_mastery"},
+		Apply: func(p *Player, r int) {
+			p.Damage *= 1.0 + float32(r)*0.05
+			p.MineCount += r
+		},
+		Describe: func(r int) string {
+			return fmtT("+%.0f%% damage, +%d mines per batch", float32(r)*5, r)
+		},
+	})
+
+	// ── Tier 8 — masterwork capstones, SpendGate 28 ───────────────────────
 	registerNode(&TalentNode{
 		ID: "pas_overwhelm", Tree: TreePassive, Tier: 8, Col: 1,
 		Name: "Overwhelming Force", MaxRank: 1, Kind: NodeKeystone,
-		SpendGate: 25,
+		Prereqs:   []string{"pas_artillery_master", "pas_surplus"},
+		SpendGate: 28,
 		Exclusive: []string{"pas_perpetual", "pas_fortune"},
 		Apply: func(p *Player, r int) {
 			p.BombardDmgMult += 1.5
-			p.SatelliteDamage += 4.0
+			p.SatelliteDmgPct += 0.30
 			p.MineLingerDamage += p.Damage * 0.25
 		},
 		Describe: func(r int) string { return "Massive buff to all passive abilities." },
@@ -2127,7 +1956,8 @@ func registerPassiveTree() {
 	registerNode(&TalentNode{
 		ID: "pas_perpetual", Tree: TreePassive, Tier: 8, Col: 3,
 		Name: "Perpetual Motion", MaxRank: 1, Kind: NodeKeystone,
-		SpendGate: 25,
+		Prereqs:   []string{"pas_surplus", "pas_demolitions_expert"},
+		SpendGate: 28,
 		Exclusive: []string{"pas_overwhelm", "pas_fortune"},
 		Apply: func(p *Player, r int) {
 			p.CooldownRate += 0.35
@@ -2138,7 +1968,8 @@ func registerPassiveTree() {
 	registerNode(&TalentNode{
 		ID: "pas_fortune", Tree: TreePassive, Tier: 8, Col: 5,
 		Name: "Fortune Favors", MaxRank: 1, Kind: NodeKeystone,
-		SpendGate: 25,
+		Prereqs:   []string{"pas_surplus", "pas_demolitions_expert"},
+		SpendGate: 28,
 		Exclusive: []string{"pas_overwhelm", "pas_perpetual"},
 		Apply: func(p *Player, r int) {
 			p.RPRate += 0.5
