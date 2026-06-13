@@ -1,0 +1,12 @@
+# Compiled binary
+*.exe
+
+# Agent / session working directory
+.claude/
+
+# Transient mid-run save (regenerated each run; meta.json is kept as a fixture)
+saveData/savegame.json
+
+# Generated diagrams / scratch artifacts
+spawn_graph.html
+talent_trees.svg

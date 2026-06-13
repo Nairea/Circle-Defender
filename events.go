@@ -65,8 +65,45 @@ func Dispatch(e GameEvent) {
 		// Bosses are ~3x+ larger than base enemies — size-based proxy is reliable enough for XP scoring.
 		if e.Enemy.Size >= 40 {
 			state.RunBossKills++
+			// Void Shards only drop from mega bosses (any roster type).
+			// Regular wave bosses keep the blueprint chance but no longer drop shards.
+			if isMegaBoss(e.Enemy.Type) {
+				if rand.Float32() < 0.15 {
+					meta.VoidShards++
+					spawnFloatingText(e.Enemy.X, e.Enemy.Y-30, "+1 Void Shard", rl.NewColor(200, 100, 255, 255))
+					SaveMetaProg()
+				}
+			}
+			// 4% chance: award a T4 blueprint (if any remain locked).
+			if rand.Float32() < 0.04 {
+				if name := awardBlueprint(); name != "" {
+					spawnFloatingText(e.Enemy.X, e.Enemy.Y-52, "Blueprint: "+name, rl.NewColor(255, 200, 50, 255))
+				}
+			}
+		}
+		// Mission: Swarm — count kills of the target enemy type.
+		if state.MissionState == MissionStateActive &&
+			state.MissionActiveKind == MissionKillCount &&
+			e.Enemy.Type == state.MissionKillType &&
+			!e.Enemy.IsBoss {
+			state.MissionKillCount++
 		}
 	}
+
+	// Mission: Critical Mass — count every crit that lands on an enemy.
+	if e.Type == EventOnCrit && e.Enemy != nil {
+		if state.MissionState == MissionStateActive && state.MissionActiveKind == MissionCriticalMass {
+			state.MissionCritCount++
+		}
+	}
+
+	// Mission: Untouchable — any player hit fails it instantly.
+	if e.Type == EventOnPlayerHit {
+		if state.MissionState == MissionStateActive && state.MissionActiveKind == MissionUntouchable {
+			failMission()
+		}
+	}
+
 	for _, h := range eventBus[e.Type] {
 		h(e)
 	}
@@ -169,7 +206,9 @@ func RebuildEventSubscriptions(p *Player) {
 					dy := e.Y - ev.Enemy.Y
 					if dx*dx+dy*dy < 200*200 {
 						if !isEnemyProtected(e) {
+							arcDmg *= enemyDamageMult(e)
 							e.HP -= arcDmg
+							recordDamage("Modifiers", arcDmg)
 							state.LightningArcs = append(state.LightningArcs, &LightningArc{
 								SourceX: ev.Enemy.X, SourceY: ev.Enemy.Y,
 								TargetX: e.X, TargetY: e.Y,
@@ -230,7 +269,9 @@ func RebuildEventSubscriptions(p *Player) {
 				if ev.Enemy.HP < ev.Enemy.MaxHP*0.30 {
 					bonus := ev.Damage * opportunistVal
 					if !isEnemyProtected(ev.Enemy) {
+						bonus *= enemyDamageMult(ev.Enemy)
 						ev.Enemy.HP -= bonus
+						recordDamage("Modifiers", bonus)
 						spawnDamageText(ev.Enemy.X, ev.Enemy.Y-ev.Enemy.Size, bonus, DmgPhysical, false)
 					}
 				}
@@ -255,7 +296,8 @@ func RebuildEventSubscriptions(p *Player) {
 					dx := e.X - ev.Enemy.X
 					dy := e.Y - ev.Enemy.Y
 					if dx*dx+dy*dy < 140*140 && !isEnemyProtected(e) {
-						e.HP -= splash
+						e.HP -= splash * enemyDamageMult(e)
+						recordDamage("Modifiers", splash)
 						spawnDamageText(e.X, e.Y-e.Size, splash, DmgFire, false)
 					}
 				}
@@ -300,7 +342,9 @@ func RebuildEventSubscriptions(p *Player) {
 					}
 				}
 				if nearest != nil {
+					sparkDmg *= enemyDamageMult(nearest)
 					nearest.HP -= sparkDmg
+					recordDamage("Modifiers", sparkDmg)
 					state.LightningArcs = append(state.LightningArcs, &LightningArc{
 						SourceX: ev.Player.X, SourceY: ev.Player.Y,
 						TargetX: nearest.X, TargetY: nearest.Y,
@@ -341,7 +385,9 @@ func RebuildEventSubscriptions(p *Player) {
 				}
 				bonus := ev.Player.ThornsDamage * echoVal
 				if !isEnemyProtected(ev.Enemy) {
+					bonus *= enemyDamageMult(ev.Enemy)
 					ev.Enemy.HP -= bonus
+					recordDamage("Modifiers", bonus)
 					spawnDamageText(ev.Enemy.X, ev.Enemy.Y-ev.Enemy.Size, bonus, DmgPhysical, false)
 				}
 			})

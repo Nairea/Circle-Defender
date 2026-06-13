@@ -79,10 +79,21 @@ func handleAbilityInput() {
 		rl.KeyFour, rl.KeyFive, rl.KeySix,
 	}
 	active := getActiveAbilities()
+	mousePos := inputGetPos()
+	mouseClicked := inputIsPressed()
 
 	for i, key := range keys {
+		if i >= len(active) {
+			break
+		}
 		if rl.IsKeyPressed(key) {
-			if i < len(active) {
+			triggerAbility(active[i])
+			continue
+		}
+		if mouseClicked {
+			iconX := float32(AbilityIconMargin + AbilityIconMargin + i*(AbilityIconSize+AbilityIconMargin))
+			iconRect := rl.Rectangle{X: iconX, Y: float32(ActionBarY), Width: AbilityIconSize, Height: AbilityIconSize}
+			if rl.CheckCollisionPointRec(mousePos, iconRect) {
 				triggerAbility(active[i])
 			}
 		}
@@ -91,17 +102,30 @@ func handleAbilityInput() {
 
 // activates the various equipped abilities.
 func triggerAbility(name string) {
+	// Mission: Iron Will — any ability trigger (manual or auto) fails the mission.
+	if state.MissionState == MissionStateActive && state.MissionActiveKind == MissionNoAbilities {
+		failMission()
+	}
+
 	p := &state.Player
 
 	switch name {
 	case AbilityRapidFire:
 		if !p.IsRapidFiring && p.RapidFireCooldown <= 0 {
 			p.IsRapidFiring = true
+			p.RapidFireAutoTriggered = false // manual trigger; auto loop overrides this after returning
 			p.RapidFireTimer = p.RapidFireDuration
-			// Overcharge: grant crit+multishot burst for the duration
-			if meta.RapidFireBranch == BranchRapidFireOvercharge {
-				p.CritChance += 0.25
-				p.MultishotChance += 0.5
+			// Apply branch burst bonuses for the duration of the window.
+			switch meta.RapidFireBranch {
+			case BranchRapidFireOvercharge:
+				// Spread damage identity: guaranteed extra target(s) during burst.
+				// +1.0 base multishot + upgrade bonus from Scatter ranks.
+				// Volley ranks add extra MultishotCount for the window.
+				p.MultishotChance += 0.25 + p.OverchargeMultiBonus
+				p.MultishotCount += p.OverchargeVolleyBonus
+			case BranchRapidFireBulletStorm:
+				// Precision identity: crit edge while firing at high speed.
+				p.CritChance += 0.20
 			}
 		}
 	case AbilityDeathRay:
@@ -276,7 +300,8 @@ func triggerStaticDischarge() {
 
 		// Apply damage and spawn staggered arcs
 		// Arc 0: player -> first enemy, no delay
-		chain[0].HP -= dmg
+		chain[0].HP -= dmg * enemyDamageMult(chain[0])
+		recordDamage("Static", dmg)
 		spawnDamageText(chain[0].X, chain[0].Y-chain[0].Size, dmg, DmgLightning, false)
 		Dispatch(GameEvent{
 			Type:     EventOnHit,
@@ -299,7 +324,8 @@ func triggerStaticDischarge() {
 		for i := 0; i < len(chain)-1; i++ {
 			src := chain[i]
 			dst := chain[i+1]
-			dst.HP -= dmg
+			dst.HP -= dmg * enemyDamageMult(dst)
+			recordDamage("Static", dmg)
 			spawnDamageText(dst.X, dst.Y-dst.Size, dmg, DmgLightning, false)
 			Dispatch(GameEvent{
 				Type:     EventOnHit,
@@ -333,7 +359,9 @@ func triggerStaticDischarge() {
 			if dist < 600 {
 				if !isEnemyProtected(e) {
 					dmg := p.Damage * dmgMult * mult
+					dmg *= enemyDamageMult(e)
 					e.HP -= dmg
+					recordDamage("Static", dmg)
 					spawnDamageText(e.X, e.Y-e.Size, dmg, DmgLightning, false)
 					Dispatch(GameEvent{
 						Type:     EventOnHit,
@@ -392,7 +420,9 @@ func triggerGravityEffect(dt float32) {
 					enemy.Y += (deltaY / dist) * pullStrength
 				}
 				dmg := p.MaxHP * p.GravityDmgPct * mult * dt
+				dmg *= enemyDamageMult(enemy)
 				enemy.HP -= dmg
+				recordDamage("Gravity", dmg)
 				accumulateDamage(enemy, "Gravity", dmg)
 			}
 		}
@@ -416,7 +446,8 @@ func triggerGravityEffect(dt float32) {
 				deltaX := centerX - enemy.X
 				deltaY := centerY - enemy.Y
 				if deltaX*deltaX+deltaY*deltaY < explodeRadius*explodeRadius {
-					enemy.HP -= explodeDmg
+					enemy.HP -= explodeDmg * enemyDamageMult(enemy)
+					recordDamage("Gravity", explodeDmg)
 					spawnDamageText(enemy.X, enemy.Y-enemy.Size, explodeDmg, DmgFire, false)
 					Dispatch(GameEvent{
 						Type:     EventOnHit,
@@ -478,7 +509,9 @@ func updateGravityZones(dt float32) {
 							enemy.Y += (dy / dist) * pull
 						}
 						damage := zone.Damage * mult * dt
+						damage *= enemyDamageMult(enemy)
 						enemy.HP -= damage
+						recordDamage("Gravity", damage)
 						accumulateDamage(enemy, "Gravity", damage)
 						Dispatch(GameEvent{
 							Type:     EventOnHit,
@@ -525,50 +558,158 @@ func triggerShockwave() {
 	if meta.ShockwaveBranch == BranchShockwaveRepulsor {
 		p.ShockwaveCooldown = ShockwaveBaseCD * 0.7 // shorter CD
 	}
-	p.ShockwaveVisualTimer = 0.5
+	// "Shockwave: Faster" level-ups permanently shave the recharge (floored at 2s).
+	p.ShockwaveCooldown -= p.ShockwaveCDReduction
+	if p.ShockwaveCooldown < 2.0 {
+		p.ShockwaveCooldown = 2.0
+	}
 
+	if p.SetThornsShockwave {
+		// Bulwark set: don't hit instantly. Start a ring anchored at the cast
+		// position; updateShockwaveRing applies damage to each enemy as the
+		// expanding wavefront reaches it.
+		p.ShockwaveVisualTimer = ShockwaveSetVisualDuration
+		p.ShockwaveOriginX = p.X
+		p.ShockwaveOriginY = p.Y
+		p.ShockwaveHitIDs = make(map[int]bool)
+		// Snapshot the enemies present right now; the wave only damages these so
+		// adds/fragments spawned as it travels aren't hit by the same pulse.
+		p.ShockwaveEligibleIDs = make(map[int]bool)
+		for _, e := range state.Enemies {
+			if e.HP > 0 {
+				p.ShockwaveEligibleIDs[e.ID] = true
+			}
+		}
+		// Kick the camera to sell the blast.
+		state.CameraShake = ShockwaveCamShake
+		return
+	}
+
+	// Normal shockwave: instant pulse over a fixed radius around the player.
+	p.ShockwaveVisualTimer = 0.5
+	// Smaller camera kick than the full-screen set wave (it's a tighter pulse).
+	state.CameraShake = ShockwaveCamShake * 0.6
+	radius := float32(ShockwaveBaseRadius) + p.ShockwaveBonusRadius
 	for _, enemy := range state.Enemies {
 		if !isEnemyProtected(enemy) {
 			deltaX := enemy.X - p.X
 			deltaY := enemy.Y - p.Y
 			dist := float32(math.Sqrt(float64(deltaX*deltaX + deltaY*deltaY)))
-
-			if dist < ShockwaveBaseRadius {
-				stunDur := float32(ShockwaveStunDuration)
-				knockForce := float32(ShockwaveBaseForce)
-
-				switch meta.ShockwaveBranch {
-				case BranchShockwaveRepulsor:
-					stunDur = ShockwaveStunDuration * 2.0
-					knockForce = ShockwaveBaseForce * 2.0
-				case BranchShockwaveShatter:
-					stunDur = ShockwaveStunDuration * 0.4
-					knockForce = ShockwaveBaseForce * 0.4
-					// Apply armor debuff — tracked per enemy ID on the player
-					if p.ShatterDebuffs == nil {
-						p.ShatterDebuffs = make(map[int]float32)
-					}
-					current := p.ShatterDebuffs[enemy.ID]
-					if current < ShatterMaxReduction {
-						p.ShatterDebuffs[enemy.ID] = current + ShatterArmorReduction
-						if p.ShatterDebuffs[enemy.ID] > ShatterMaxReduction {
-							p.ShatterDebuffs[enemy.ID] = ShatterMaxReduction
-						}
-					}
-				}
-
-				enemy.StunTimer = stunDur
-				enemy.KnockbackTimer = ShockwaveSlideDuration
-
-				if dist > 0 {
-					speed := knockForce / ShockwaveSlideDuration
-					enemy.KnockbackVelX = (deltaX / dist) * float32(speed)
-					enemy.KnockbackVelY = (deltaY / dist) * float32(speed)
-				} else {
-					enemy.KnockbackVelX = float32(knockForce / ShockwaveSlideDuration)
-					enemy.KnockbackVelY = 0
-				}
+			if dist < radius {
+				applyShockwaveHit(p, enemy, deltaX, deltaY)
 			}
+		}
+	}
+}
+
+// applyShockwaveHit applies one shockwave contact (stun + knockback + branch
+// effect + Bulwark thorns damage) to a single enemy. deltaX/deltaY point from
+// the shockwave origin to the enemy and set the knockback direction.
+func applyShockwaveHit(p *Player, enemy *Enemy, deltaX, deltaY float32) {
+	dist := float32(math.Sqrt(float64(deltaX*deltaX + deltaY*deltaY)))
+	stunDur := float32(ShockwaveStunDuration)
+	knockForce := float32(ShockwaveBaseForce)
+
+	switch meta.ShockwaveBranch {
+	case BranchShockwaveRepulsor:
+		stunDur = ShockwaveStunDuration * 2.0
+		knockForce = ShockwaveBaseForce * 2.0
+	case BranchShockwaveShatter:
+		stunDur = ShockwaveStunDuration * 0.4
+		knockForce = ShockwaveBaseForce * 0.4
+		// Apply armor debuff — tracked per enemy ID on the player. "Shatter:
+		// Fracture" level-ups raise both the per-hit strip and the cap.
+		if p.ShatterDebuffs == nil {
+			p.ShatterDebuffs = make(map[int]float32)
+		}
+		perHit := ShatterArmorReduction + p.ShockwaveShatterAdd
+		maxStrip := ShatterMaxReduction + p.ShockwaveShatterAdd
+		current := p.ShatterDebuffs[enemy.ID]
+		if current < maxStrip {
+			p.ShatterDebuffs[enemy.ID] = current + perHit
+			if p.ShatterDebuffs[enemy.ID] > maxStrip {
+				p.ShatterDebuffs[enemy.ID] = maxStrip
+			}
+		}
+	}
+
+	// "Repulsor: Concussive" level-ups extend the stun (0 on other branches).
+	stunDur += p.ShockwaveBonusStun
+
+	enemy.StunTimer = stunDur
+	enemy.KnockbackTimer = ShockwaveSlideDuration
+
+	if dist > 0 {
+		speed := knockForce / ShockwaveSlideDuration
+		enemy.KnockbackVelX = (deltaX / dist) * float32(speed)
+		enemy.KnockbackVelY = (deltaY / dist) * float32(speed)
+	} else {
+		enemy.KnockbackVelX = float32(knockForce / ShockwaveSlideDuration)
+		enemy.KnockbackVelY = 0
+	}
+
+	// Bulwark set: Shockwave deals 5x Thorns damage on every hit.
+	if p.SetThornsShockwave && p.ThornsDamage > 0 {
+		sdmg := p.ThornsDamage * 5.0 * enemyDamageMult(enemy)
+		enemy.HP -= sdmg
+		recordDamage("Shockwave", sdmg)
+		spawnDamageText(enemy.X, enemy.Y-enemy.Size, sdmg, DmgPhysical, false)
+	}
+
+	// Brief white flash as the wavefront crosses the enemy.
+	enemy.HitFlashTimer = ShockwaveHitFlashDuration
+}
+
+// shockwaveSetRingRadius returns the current world-space radius of the Bulwark
+// set's traveling ring, derived from the visual timer and camera zoom. Shared
+// by the damage sweep and the renderer so they stay perfectly in sync.
+func shockwaveSetRingRadius() float32 {
+	p := &state.Player
+	prog := 1.0 - (p.ShockwaveVisualTimer / ShockwaveSetVisualDuration)
+	if prog < 0 {
+		prog = 0
+	}
+	if prog > 1 {
+		prog = 1
+	}
+	zoom := state.Camera.Zoom
+	if zoom <= 0 {
+		zoom = 1
+	}
+	halfW := float32(ScreenWidth) / zoom / 2.0
+	halfH := float32(ScreenHeight) / zoom / 2.0
+	maxR := float32(math.Sqrt(float64(halfW*halfW+halfH*halfH))) * 1.15
+	return maxR * prog
+}
+
+// updateShockwaveRing applies the Bulwark set's shockwave damage to each enemy
+// as the expanding wavefront crosses it. Each enemy is hit at most once per cast.
+func updateShockwaveRing() {
+	p := &state.Player
+	if !p.SetThornsShockwave || p.ShockwaveVisualTimer <= 0 {
+		return
+	}
+	if p.ShockwaveHitIDs == nil {
+		p.ShockwaveHitIDs = make(map[int]bool)
+	}
+	r := shockwaveSetRingRadius()
+	r2 := r * r
+	for _, enemy := range state.Enemies {
+		if enemy.HP <= 0 || isEnemyProtected(enemy) {
+			continue
+		}
+		// Only sweep enemies that existed when the wave was cast.
+		if p.ShockwaveEligibleIDs != nil && !p.ShockwaveEligibleIDs[enemy.ID] {
+			continue
+		}
+		if p.ShockwaveHitIDs[enemy.ID] {
+			continue
+		}
+		dx := enemy.X - p.ShockwaveOriginX
+		dy := enemy.Y - p.ShockwaveOriginY
+		if dx*dx+dy*dy <= r2 {
+			applyShockwaveHit(p, enemy, dx, dy)
+			p.ShockwaveHitIDs[enemy.ID] = true
 		}
 	}
 }
@@ -586,7 +727,9 @@ func updateLingerZones(dt float32) {
 					dy := enemy.Y - zone.Y
 					if dx*dx+dy*dy < zone.Radius*zone.Radius {
 						dmg := zone.DPS * mult * dt
+						dmg *= enemyDamageMult(enemy)
 						enemy.HP -= dmg
+						recordDamage("Mines", dmg)
 						accumulateDamage(enemy, "Hellfire", dmg)
 						Dispatch(GameEvent{
 							Type:     EventOnHit,
@@ -609,17 +752,26 @@ func updateAbilityTimers(dt float32) {
 	p := &state.Player
 	mult := getAutoMult()
 
-	if p.RegenRate > 0 && p.HP < p.MaxHP {
-		p.HP += p.RegenRate * dt
-		if p.HP > p.MaxHP {
-			p.HP = p.MaxHP
+	// While the death animation is playing, the player is dead -- keep HP and
+	// overshield pinned at 0 instead of letting regen tick the bars back up.
+	if state.DeathTimer > 0 {
+		p.HP = 0
+		p.Overshield = 0
+	} else {
+		if regen := effectiveRegenRate(p); regen > 0 && p.HP < p.MaxHP {
+			p.HP += regen * dt
+			if p.HP > p.MaxHP {
+				p.HP = p.MaxHP
+			}
+		}
+		if p.Overshield < overshieldCap(p) {
+			p.Overshield += effectiveOSRate(p) * dt
 		}
 	}
-	if p.Overshield < p.MaxHP*MaxOvershieldRatio {
-		p.Overshield += p.OvershieldRate * dt
-	}
-	if p.StaticPassiveCDR > 0 && p.StaticCooldown <= 0 && isAbilityEquipped(AbilityStatic) {
-		//may need to adjust this passive CDR, but i like balance atm.
+	// Static "passive CDR" perk: while Static itself is ready (off cooldown), it
+	// bleeds energy into your OTHER actives, shaving their cooldowns. Never reduces
+	// Static's own cooldown; the bleed pauses once Static is cast until it recharges.
+	if p.StaticPassiveCDR > 0 && p.StaticCooldown <= 0 {
 		bonus := p.StaticPassiveCDR * dt
 		if p.RapidFireCooldown > 0 {
 			p.RapidFireCooldown -= bonus
@@ -632,9 +784,6 @@ func updateAbilityTimers(dt float32) {
 		}
 		if p.BombardmentCooldown > 0 {
 			p.BombardmentCooldown -= bonus
-		}
-		if p.StaticCooldown > 0 {
-			p.StaticCooldown -= bonus
 		}
 		if p.ChronoCooldown > 0 {
 			p.ChronoCooldown -= bonus
@@ -677,12 +826,13 @@ func updateAbilityTimers(dt float32) {
 						state.Projectiles = append(state.Projectiles, &Projectile{
 							X: satX, Y: satY,
 							VelX: vx, VelY: vy,
-							Radius:   3.0,
-							Damage:   p.SatelliteDamage,
-							IsCrit:   false,
-							IsEnemy:  false,
-							Hits:     0,
-							TargetID: target.ID,
+							Radius:      3.0,
+							Damage:      effectiveSatelliteDamage(p),
+							IsCrit:      false,
+							IsEnemy:     false,
+							Hits:        0,
+							TargetID:    target.ID,
+							IsSatellite: true,
 						})
 					}
 				}
@@ -696,6 +846,8 @@ func updateAbilityTimers(dt float32) {
 	if p.ShockwaveVisualTimer > 0 {
 		p.ShockwaveVisualTimer -= dt
 	}
+	// Bulwark set: deal damage as the expanding ring reaches each enemy.
+	updateShockwaveRing()
 
 	if p.PassiveRapidFireTimer > 0 {
 		p.PassiveRapidFireTimer -= dt
@@ -715,6 +867,7 @@ func updateAbilityTimers(dt float32) {
 			p.RapidFireTimer -= dt
 			if p.RapidFireTimer <= 0 {
 				p.IsRapidFiring = false
+				p.RapidFireAutoTriggered = false
 				p.RapidFireTimer = 0.0
 				// Bullet Storm gets a shorter cooldown — more frequent bursts is its identity.
 				baseCD := float32(RapidFireBaseCD)
@@ -725,15 +878,21 @@ func updateAbilityTimers(dt float32) {
 					}
 				}
 				p.RapidFireCooldown = baseCD / (1.0 + p.CooldownRate)
-				// Remove Overcharge bonuses
-				if meta.RapidFireBranch == BranchRapidFireOvercharge {
-					p.CritChance -= 0.25
-					if p.CritChance < 0 {
-						p.CritChance = 0
-					}
-					p.MultishotChance -= 0.5
+				// Remove branch burst bonuses.
+				switch meta.RapidFireBranch {
+				case BranchRapidFireOvercharge:
+					p.MultishotChance -= 0.25 + p.OverchargeMultiBonus
 					if p.MultishotChance < 0 {
 						p.MultishotChance = 0
+					}
+					p.MultishotCount -= p.OverchargeVolleyBonus
+					if p.MultishotCount < 0 {
+						p.MultishotCount = 0
+					}
+				case BranchRapidFireBulletStorm:
+					p.CritChance -= 0.20
+					if p.CritChance < 0 {
+						p.CritChance = 0
 					}
 				}
 			}
@@ -753,71 +912,87 @@ func updateAbilityTimers(dt float32) {
 		//angle path. super cool fun ability to make that didnt make
 		//me want to die at all.
 		if p.DeathRaySpinCount > 0 {
-			p.DeathRaySpinAngle += p.DeathRaySpinSpeed * dt
-			step := (2.0 * math.Pi) / float64(p.DeathRaySpinCount)
+			// Sub-step the spin so that fast game-speed frames can't skip narrow enemies.
+			// A single frame at 3x speed advances the beam up to ~0.2 rad, which is wider
+			// than the angular footprint of a small enemy at range.  Capping each sub-step
+			// to maxAngleStep ensures the beam always crosses every enemy it should hit.
+			const maxAngleStep = float32(0.04) // ≈ 2.3° per sub-step
+			totalAngle := p.DeathRaySpinSpeed * dt
+			numSubSteps := int(math.Ceil(float64(totalAngle / maxAngleStep)))
+			if numSubSteps < 1 {
+				numSubSteps = 1
+			}
+			subDt := dt / float32(numSubSteps)
+			beamStep := (2.0 * math.Pi) / float64(p.DeathRaySpinCount)
 
-			for beamIdx := 0; beamIdx < p.DeathRaySpinCount; beamIdx++ {
-				offset := float64(beamIdx) * step
-				angle := float64(p.DeathRaySpinAngle) + offset
-				lx, ly := math.Cos(angle), math.Sin(angle)
+			for substep := 0; substep < numSubSteps; substep++ {
+				p.DeathRaySpinAngle += p.DeathRaySpinSpeed * subDt
 
-				for i := len(state.Enemies) - 1; i >= 0; i-- {
-					e := state.Enemies[i]
-					if !isEnemyProtected(e) {
-						ex, ey := float64(e.X-p.X), float64(e.Y-p.Y)
-						dot := ex*lx + ey*ly
+				for beamIdx := 0; beamIdx < p.DeathRaySpinCount; beamIdx++ {
+					offset := float64(beamIdx) * beamStep
+					angle := float64(p.DeathRaySpinAngle) + offset
+					lx, ly := math.Cos(angle), math.Sin(angle)
 
-						hit := false
-						if dot > 0 && dot < 900 {
-							dist := math.Abs(ex*(-ly) + ey*lx)
-							if dist < float64(e.Size) {
-								hit = true
-							}
-						}
+					for i := len(state.Enemies) - 1; i >= 0; i-- {
+						e := state.Enemies[i]
+						if !isEnemyProtected(e) {
+							ex, ey := float64(e.X-p.X), float64(e.Y-p.Y)
+							dot := ex*lx + ey*ly
 
-						// hits if it DIDNT hit last frame. stops it from an "infinite" dmg loop.
-						if hit {
-							if !e.DeathRayHitStatus[beamIdx] {
-								// Each sweep contact deals 0.5x a normal hit at base level.
-								// DeathRayPrismHitMult keeps the scale correct relative to DeathRayDamageMult.
-								damage := p.Damage * p.DeathRayDamageMult * DeathRayPrismHitMult * mult
-								e.HP -= damage
-
-								// Mark as hit so it doesn't damage again until it leaves
-								// Draw floating dmg
-								e.DeathRayHitStatus[beamIdx] = true
-								spawnDamageText(e.X, e.Y-e.Size, damage, DmgEnergy, false)
-								Dispatch(GameEvent{
-									Type:     EventOnHit,
-									Player:   p,
-									Enemy:    e,
-									Damage:   damage,
-									DmgType:  DmgEnergy,
-									Position: rl.Vector2{X: e.X, Y: e.Y},
-								})
-
-								if e.HP <= 0 {
-									xp := e.XPGiven * p.XPRate
-									state.Player.XP += xp
-									spawnFloatingText(e.X, e.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
-									dropResearchPoint(e.X, e.Y, e.IsBoss)
-									Dispatch(GameEvent{
-										Type:     EventOnKill,
-										Player:   p,
-										Enemy:    e,
-										Position: rl.Vector2{X: e.X, Y: e.Y},
-									})
-									if e.Type == EnemyDivider {
-										spawnFragments(e.X, e.Y, state.RunTime)
-									}
-
-									state.Enemies = append(state.Enemies[:i], state.Enemies[i+1:]...)
-									state.EnemiesAlive--
+							hit := false
+							if dot > 0 && dot < 900 {
+								dist := math.Abs(ex*(-ly) + ey*lx)
+								if dist < float64(e.Size) {
+									hit = true
 								}
 							}
-						} else {
-							// Reset status when beam leaves enemy
-							e.DeathRayHitStatus[beamIdx] = false
+
+							// hits if it DIDNT hit last sub-step. stops it from an "infinite" dmg loop.
+							if hit {
+								if !e.DeathRayHitStatus[beamIdx] {
+									// Each sweep contact deals 0.5x a normal hit at base level.
+									// DeathRayPrismHitMult keeps the scale correct relative to DeathRayDamageMult.
+									damage := p.Damage * p.DeathRayDamageMult * DeathRayPrismHitMult * mult
+									damage *= enemyDamageMult(e)
+									e.HP -= damage
+									recordDamage("Death Ray", damage)
+
+									// Mark as hit so it doesn't damage again until it leaves
+									// Draw floating dmg
+									e.DeathRayHitStatus[beamIdx] = true
+									spawnDamageText(e.X, e.Y-e.Size, damage, DmgEnergy, false)
+									Dispatch(GameEvent{
+										Type:     EventOnHit,
+										Player:   p,
+										Enemy:    e,
+										Damage:   damage,
+										DmgType:  DmgEnergy,
+										Position: rl.Vector2{X: e.X, Y: e.Y},
+									})
+
+									if e.HP <= 0 {
+										xp := e.XPGiven * p.XPRate
+										state.Player.XP += xp
+										spawnFloatingText(e.X, e.Y, fmt.Sprintf("+%.0f XP", xp), rl.Violet)
+										dropResearchPoint(e.X, e.Y, e.IsBoss)
+										Dispatch(GameEvent{
+											Type:     EventOnKill,
+											Player:   p,
+											Enemy:    e,
+											Position: rl.Vector2{X: e.X, Y: e.Y},
+										})
+										if e.Type == EnemyDivider {
+											spawnFragments(e.X, e.Y, state.RunTime)
+										}
+
+										state.Enemies = append(state.Enemies[:i], state.Enemies[i+1:]...)
+										state.EnemiesAlive--
+									}
+								}
+							} else {
+								// Reset status when beam leaves enemy
+								e.DeathRayHitStatus[beamIdx] = false
+							}
 						}
 					}
 				}
@@ -879,6 +1054,19 @@ func updateAbilityTimers(dt float32) {
 		}
 		p.DeathRayTargetIDs = validTargets
 
+		// Per-target focus ramp: a beam's escalation builds the longer it stays
+		// locked on the SAME target and resets when it swaps. Rebuild the focus
+		// map from the current targets each frame, so any target that dropped
+		// out (died / left range) loses its accumulated ramp.
+		if p.DeathRayFocus == nil {
+			p.DeathRayFocus = make(map[int]float32)
+		}
+		newFocus := make(map[int]float32, len(p.DeathRayTargetIDs))
+		for _, id := range p.DeathRayTargetIDs {
+			newFocus[id] = p.DeathRayFocus[id] + dt
+		}
+		p.DeathRayFocus = newFocus
+
 		for _, id := range p.DeathRayTargetIDs {
 			var target *Enemy
 			for _, enm := range state.Enemies {
@@ -891,12 +1079,15 @@ func updateAbilityTimers(dt float32) {
 			if target != nil {
 				dps := (p.Damage * p.DeathRayDamageMult) / p.DeathRayDuration
 				if p.DeathRayScaling > 0 {
-					dps *= (1.0 + p.DeathRayScaling*(p.DeathRayDuration-p.DeathRayTimer))
+					// Escalation scales with time on THIS target, not since the cast began.
+					dps *= (1.0 + p.DeathRayScaling*p.DeathRayFocus[id])
 				}
 
 				if !isEnemyProtected(target) {
 					dmg := dps * mult * dt
+					dmg *= enemyDamageMult(target)
 					target.HP -= dmg
+					recordDamage("Death Ray", dmg)
 					accumulateDamage(target, "DeathRay", dmg)
 					Dispatch(GameEvent{
 						Type:     EventOnHit,
@@ -941,6 +1132,7 @@ func updateAbilityTimers(dt float32) {
 			p.IsDeathRayActive = false
 			p.DeathRayTimer = 0.0
 			p.DeathRayTargetIDs = []int{}
+			p.DeathRayFocus = nil // reset per-target ramp for the next cast
 			p.DeathRayCooldown = DeathRayBaseCD / (1.0 + p.CooldownRate)
 		}
 	}
@@ -961,7 +1153,7 @@ func updateAbilityTimers(dt float32) {
 	if p.IsBombardmentActive {
 		p.BombardmentTimer -= dt
 		p.BombardNextSpawn -= dt
-		// Carpet Bomb secretly forces a hit every 2 seconds. We tick the timer
+		// Carpet Bomb secretly forces a hit every 2 seconds. Tick the timer
 		// only for the Carpet branch so the other branches keep their
 		// fully-random behaviour. The actual override happens further down,
 		// right before we pick the bomb's target coordinates.
@@ -1023,7 +1215,8 @@ func updateAbilityTimers(dt float32) {
 					dy := enm.Y - targetY
 					distSq := dx*dx + dy*dy
 					if distSq < bombRadius*bombRadius {
-						enm.HP -= dmg
+						enm.HP -= dmg * enemyDamageMult(enm)
+						recordDamage("Bombardment", dmg)
 						spawnDamageText(enm.X, enm.Y-enm.Size, dmg, DmgFire, false)
 						Dispatch(GameEvent{
 							Type:     EventOnHit,

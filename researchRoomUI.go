@@ -3,11 +3,12 @@ package main
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
-// researchRoomUI.go — Talent Lab UI.
+// researchRoomUI.go -- Talent Lab UI.
 //
 // Layout (1500x1200):
 //   ┌────────────────────────────────────────────────────────────────┐
@@ -16,7 +17,7 @@ import (
 //   │ [DAMAGE 3] [CONTROL 0] [DEFENSE 0] [PASSIVE 0]   ← tabs        │
 //   ├────────────────────────────────────────────────────────────────┤
 //   │ ── Tier 1 ─────────────────────────────────────────────────    │
-//   │   ▢ Sharpshooter        ▢ Pyromaniac        ▢ Precision        │
+//   │   ▢ Pressure Fire       ▢ Ricochet          ▢ Precision        │
 //   │ ── Tier 2 ──── (need 5 in tree) ───────────────────────────    │
 //   │   ▢ Ext Magazine        ★ Rapid Fire        ▢ Marksman         │
 //   │   …                                                           │
@@ -45,13 +46,8 @@ import (
 var activeTreeIdx = 0
 var hoveredNodeID = ""
 
-// researchTabIdx is the special tab index for the RP-cost research panel.
-// It sits one past the real talent trees so the existing trees logic
-// doesn't need to care about it.
-var researchTabIdx = len(TreesInOrder)
-
-// researchScrollY tracks the vertical scroll offset of the research panel
-// so a long catalog can extend past the visible area.
+// researchScrollY tracks the vertical scroll offset of the standalone
+// research-upgrades panel so a long catalog can extend past the visible area.
 var researchScrollY float32 = 0
 
 // ── Research catalog ─────────────────────────────────────────────────────
@@ -80,11 +76,24 @@ type researchEntry struct {
 	flatCost int
 	isOwned  func() bool
 	setOwned func(on bool)
+	// Optional: if non-nil, an ON/OFF button appears after purchase so the
+	// player can enable or disable the perk without losing ownership.
+	isEnabled  func() bool
+	setEnabled func(on bool)
 }
 
 // researchCatalog defines the order and content of the RP-cost panel.
 // To add a new permanent upgrade, append an entry here.
 var researchCatalog = []researchEntry{
+	{
+		id:          "research_auto_aim",
+		name:        "Auto-Targeting",
+		description: "Enables automatic target selection. Without this, you must hold LMB (or tap) near an enemy to fire. Once purchased, your turret locks onto the nearest threat in range automatically.",
+		kind:        "toggle",
+		flatCost:    150,
+		isOwned:     func() bool { return meta.AutoAimUnlocked },
+		setOwned:    func(on bool) { meta.AutoAimUnlocked = on },
+	},
 	{
 		id:          "research_attack_speed",
 		name:        "Weapon Calibration",
@@ -99,11 +108,11 @@ var researchCatalog = []researchEntry{
 		// gameLogic.go so no per-run apply hook is needed here.
 	},
 	{
-		id:          "research_3x_spawn",
-		name:        "Quickstart Boot Sequence",
-		description: "Triples spawn-fade speed at the start of each run. Skip the slow intro.",
+		id:          "research_3x_spawn", // id kept stable for old saves
+		name:        "Speed Governor",
+		description: "Unlocks 2x and 3x game-speed controls during runs. Grind faster, die faster.",
 		kind:        "toggle",
-		flatCost:    200,
+		flatCost:    400,
 		isOwned:     func() bool { return meta.Speed3xUnlocked },
 		setOwned:    func(on bool) { meta.Speed3xUnlocked = on },
 	},
@@ -114,7 +123,54 @@ var researchCatalog = []researchEntry{
 		kind:        "toggle",
 		flatCost:    500,
 		isOwned:     func() bool { return meta.OpeningSprintUnlocked },
-		setOwned:    func(on bool) { meta.OpeningSprintUnlocked = on },
+		setOwned: func(on bool) {
+			meta.OpeningSprintUnlocked = on
+			if on {
+				meta.OpeningSprintEnabled = true
+			}
+		},
+		isEnabled:  func() bool { return meta.OpeningSprintEnabled },
+		setEnabled: func(on bool) { meta.OpeningSprintEnabled = on },
+	},
+	{
+		id:          "research_extended_range",
+		name:        "Extended Range Targeting",
+		description: "Allows manually targeting enemies outside your range circle.",
+		kind:        "toggle",
+		flatCost:    200,
+		isOwned:     func() bool { return meta.ExtendedRangeUnlocked },
+		setOwned:    func(on bool) { meta.ExtendedRangeUnlocked = on },
+	},
+	{
+		id:          "research_missions",
+		name:        "Mission Uplink",
+		description: "Activates the mission system. Every 90s a choice of two timed challenges appears -- complete one to earn bonus RP.",
+		kind:        "toggle",
+		flatCost:    400,
+		isOwned:     func() bool { return meta.MissionsUnlocked },
+		setOwned:    func(on bool) { meta.MissionsUnlocked = on },
+	},
+	{
+		id:          "research_rerolls",
+		name:        "Tactical Recalibration",
+		description: "Reroll all level-up choices once per rank, each run. Bad options at a key moment? Spin again.",
+		kind:        "rank",
+		baseCost:    400,
+		step:        300,
+		maxRank:     3,
+		getRank:     func() int { return meta.RerollLevel },
+		setRank:     func(r int) { meta.RerollLevel = r },
+	},
+	{
+		id:          "research_loadouts",
+		name:        "Loadout Memory",
+		description: "Adds a loadout slot per rank. Save your full gear + talent build and swap between saved builds with one click below.",
+		kind:        "rank",
+		baseCost:    500,
+		step:        500,
+		maxRank:     3,
+		getRank:     func() int { return meta.LoadoutSlots },
+		setRank:     func(r int) { meta.LoadoutSlots = r },
 	},
 }
 
@@ -124,6 +180,170 @@ func researchEntryRankCost(e researchEntry, currentRank int) int {
 	return e.baseCost + e.step*currentRank
 }
 
+// ── Loadout memory (save/load full gear + talent builds) ─────────────────
+
+// snapshotLoadout saves the current gear + talent build into slot idx.
+func snapshotLoadout(idx int) {
+	if idx < 0 || idx >= len(meta.Loadouts) {
+		return
+	}
+	SaveMetaProg() // sync meta.EquippedItemsByIndex + Inventory from live state
+	ranks := make(map[string]int, len(meta.TalentRanks))
+	for k, v := range meta.TalentRanks {
+		ranks[k] = v
+	}
+	meta.Loadouts[idx] = SavedLoadout{
+		Used:        true,
+		Name:        fmt.Sprintf("Loadout %d", idx+1),
+		ItemIdx:     meta.EquippedItemsByIndex,
+		TalentRanks: ranks,
+	}
+	SaveMetaProg()
+}
+
+// applyLoadout restores a saved loadout: full talent allocation + equipped
+// gear. Items that no longer exist (salvaged since the snapshot) load empty.
+// Blocked while a run is in progress.
+func applyLoadout(idx int) {
+	if idx < 0 || idx >= len(meta.Loadouts) || !meta.Loadouts[idx].Used || HasSaveFile() {
+		return
+	}
+	SaveMetaProg() // make meta.Inventory current before rebuilding from it
+	l := meta.Loadouts[idx]
+
+	// Restore the talent allocation.
+	ranks := make(map[string]int, len(l.TalentRanks))
+	for k, v := range l.TalentRanks {
+		ranks[k] = v
+	}
+	meta.TalentRanks = ranks
+
+	// Rebuild the lobby player from the restored ranks. initBasePlayer runs
+	// applyAllTalents, which also rewrites the legacy meta unlock/branch
+	// fields so every menu reflects the loaded build immediately.
+	p := initBasePlayer()
+	for i := range meta.Inventory {
+		item := meta.Inventory[i]
+		p.Inventory = append(p.Inventory, &item)
+	}
+	for slot := 0; slot < 4; slot++ {
+		invIdx := l.ItemIdx[slot]
+		if invIdx >= 0 && invIdx < len(p.Inventory) && p.Inventory[invIdx].Type == slot {
+			equipItem(&p, p.Inventory[invIdx])
+		}
+	}
+	state.Player = p
+	SaveMetaProg()
+}
+
+// loadoutChipRect returns the bounding rect of loadout chip i in the RP-shop
+// footer; save/load button rects are derived from it.
+func loadoutChipRect(i int) rl.Rectangle {
+	n := meta.LoadoutSlots
+	totalW := float32(n*loadoutChipW + (n-1)*loadoutChipGap)
+	startX := float32(ScreenWidth)/2 - totalW/2
+	return rl.Rectangle{
+		X:      startX + float32(i)*(loadoutChipW+loadoutChipGap),
+		Y:      float32(ScreenHeight) - 122,
+		Width:  loadoutChipW,
+		Height: loadoutChipH,
+	}
+}
+
+func loadoutSaveBtnRect(chip rl.Rectangle) rl.Rectangle {
+	return rl.Rectangle{X: chip.X + chip.Width - 146, Y: chip.Y + 14, Width: 64, Height: 24}
+}
+
+func loadoutLoadBtnRect(chip rl.Rectangle) rl.Rectangle {
+	return rl.Rectangle{X: chip.X + chip.Width - 74, Y: chip.Y + 14, Width: 64, Height: 24}
+}
+
+// handleLoadoutBarInput processes SAVE/LOAD clicks on the footer loadout chips.
+func handleLoadoutBarInput(mousePos rl.Vector2) {
+	if meta.LoadoutSlots <= 0 || !inputIsPressed() {
+		return
+	}
+	for i := 0; i < meta.LoadoutSlots && i < len(meta.Loadouts); i++ {
+		chip := loadoutChipRect(i)
+		if rl.CheckCollisionPointRec(mousePos, loadoutSaveBtnRect(chip)) {
+			snapshotLoadout(i)
+			playButtonSound()
+			return
+		}
+		if rl.CheckCollisionPointRec(mousePos, loadoutLoadBtnRect(chip)) {
+			if meta.Loadouts[i].Used && !HasSaveFile() {
+				applyLoadout(i)
+				playButtonSound()
+			}
+			return
+		}
+	}
+}
+
+// drawLoadoutBar renders the loadout chips in the RP-shop footer.
+func drawLoadoutBar(mousePos rl.Vector2) {
+	if meta.LoadoutSlots <= 0 {
+		return
+	}
+	label := "LOADOUTS"
+	rl.DrawText(label, ScreenWidth/2-rl.MeasureText(label, 14)/2, int32(ScreenHeight)-140, 14, rl.NewColor(220, 190, 100, 255))
+
+	for i := 0; i < meta.LoadoutSlots && i < len(meta.Loadouts); i++ {
+		chip := loadoutChipRect(i)
+		l := meta.Loadouts[i]
+
+		rl.DrawRectangleRec(chip, rl.NewColor(26, 24, 16, 255))
+		rl.DrawRectangleLinesEx(chip, 1, rl.NewColor(120, 100, 50, 255))
+
+		// Label: name + a tiny summary, or "Empty".
+		if l.Used {
+			rl.DrawText(l.Name, int32(chip.X)+10, int32(chip.Y)+8, 14, rl.White)
+			spent := 0
+			for _, r := range l.TalentRanks {
+				spent += r
+			}
+			gear := 0
+			for _, gi := range l.ItemIdx {
+				if gi >= 0 {
+					gear++
+				}
+			}
+			sum := fmt.Sprintf("%d TP, %d items", spent, gear)
+			rl.DrawText(sum, int32(chip.X)+10, int32(chip.Y)+28, 11, rl.NewColor(170, 170, 180, 255))
+		} else {
+			rl.DrawText(fmt.Sprintf("Slot %d - Empty", i+1), int32(chip.X)+10, int32(chip.Y)+17, 14, rl.DarkGray)
+		}
+
+		// SAVE button (always available -- snapshots the current build).
+		sBtn := loadoutSaveBtnRect(chip)
+		sCol := rl.NewColor(60, 50, 28, 255)
+		if rl.CheckCollisionPointRec(mousePos, sBtn) {
+			sCol = rl.NewColor(110, 95, 50, 255)
+		}
+		rl.DrawRectangleRec(sBtn, sCol)
+		rl.DrawRectangleLinesEx(sBtn, 1, rl.Gold)
+		sw := rl.MeasureText("SAVE", 12)
+		rl.DrawText("SAVE", int32(sBtn.X+sBtn.Width/2)-sw/2, int32(sBtn.Y)+6, 12, rl.White)
+
+		// LOAD button (needs a saved build + no run in progress).
+		lBtn := loadoutLoadBtnRect(chip)
+		canLoad := l.Used && !HasSaveFile()
+		lCol := rl.NewColor(35, 35, 40, 255)
+		lTxt := rl.NewColor(120, 120, 120, 255)
+		if canLoad {
+			lCol = rl.NewColor(35, 60, 35, 255)
+			lTxt = rl.NewColor(150, 230, 150, 255)
+			if rl.CheckCollisionPointRec(mousePos, lBtn) {
+				lCol = rl.NewColor(50, 90, 50, 255)
+			}
+		}
+		rl.DrawRectangleRec(lBtn, lCol)
+		rl.DrawRectangleLinesEx(lBtn, 1, rl.Gold)
+		lw := rl.MeasureText("LOAD", 12)
+		rl.DrawText("LOAD", int32(lBtn.X+lBtn.Width/2)-lw/2, int32(lBtn.Y)+6, 12, lTxt)
+	}
+}
+
 // ── Layout constants ─────────────────────────────────────────────────────
 
 const (
@@ -131,7 +351,16 @@ const (
 	treeTabH         = 38
 	talentLabFooterH = 70
 
-	// Card dimensions — 6 cols across the 1500px screen need narrower cards
+	// Standalone Research-upgrades screen (ScreenRPShop).
+	researchShopHeaderH = 100
+	researchShopFooterH = 130 // back button + loadout bar
+
+	// Loadout bar chip geometry (drawn in the RP-shop footer).
+	loadoutChipW   = 340
+	loadoutChipH   = 52
+	loadoutChipGap = 18
+
+	// Card dimensions -- 6 cols across the 1500px screen need narrower cards
 	// than the old 3-col layout. Math: 6×195 + 5×22 = 1280px, centered with
 	// 110px margins each side.
 	nodeW    = 195
@@ -155,7 +384,7 @@ const (
 
 // ── Input handling ───────────────────────────────────────────────────────
 
-func handleResearchInput() {
+func handleTalentsInput() {
 	if rl.IsKeyPressed(rl.KeyEscape) || rl.IsKeyPressed(rl.KeyB) {
 		playButtonSound()
 		state.CurrentScreen = ScreenStart
@@ -167,17 +396,17 @@ func handleResearchInput() {
 		SaveMetaProg()
 	}
 
-	mousePos := rl.GetMousePosition()
+	mousePos := inputGetPos()
 
-	// After Rapid Fire is invested the screen is locked down — only the Back
+	// After Rapid Fire is invested the screen is locked down -- only the Back
 	// button (handled below) remains interactive.
 	postRapidFire := meta.TutorialStep == TutorialBackFromResearch
 
-	// Tree tabs (real talent trees).
+	// Tree tabs.
 	// Blocked entirely while the talent-spend tutorial step is active so the
 	// player cannot wander off the Damage tab before finishing the objective.
 	tabsLocked := meta.TutorialStep == TutorialSpendTP || postRapidFire
-	if !tabsLocked && rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
+	if !tabsLocked && inputIsPressed() {
 		for i := range TreesInOrder {
 			r := treeTabRect(i)
 			if rl.CheckCollisionPointRec(mousePos, r) {
@@ -186,18 +415,10 @@ func handleResearchInput() {
 				return
 			}
 		}
-		// Research tab (one past the talent trees).
-		r := treeTabRect(researchTabIdx)
-		if rl.CheckCollisionPointRec(mousePos, r) {
-			playButtonSound()
-			activeTreeIdx = researchTabIdx
-			researchScrollY = 0
-			return
-		}
 	}
 
-	// Respec — disabled post-Rapid-Fire (only Back is live then).
-	if !postRapidFire && rl.IsMouseButtonPressed(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(mousePos, respecButtonRect()) {
+	// Respec -- disabled post-Rapid-Fire (only Back is live then).
+	if !postRapidFire && inputIsPressed() && rl.CheckCollisionPointRec(mousePos, respecButtonRect()) {
 		playButtonSound()
 		if !HasSaveFile() {
 			performRespec()
@@ -205,14 +426,7 @@ func handleResearchInput() {
 		return
 	}
 
-	// If we're on the Research tab, skip talent-tree input handling and
-	// run the catalog input flow instead.
-	if activeTreeIdx == researchTabIdx {
-		if !postRapidFire {
-			handleResearchPanelInput(mousePos)
-		}
-		// Back button at the bottom is handled below — don't return early.
-	} else if !postRapidFire {
+	if !postRapidFire {
 		// Talent-tree node click handling.
 		tree := TreesInOrder[activeTreeIdx]
 		for _, n := range TalentsByTree[tree] {
@@ -220,10 +434,10 @@ func handleResearchInput() {
 			if !rl.CheckCollisionPointRec(mousePos, r) {
 				continue
 			}
-			if rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
-				// During the tutorial TP step only Pyromaniac and Rapid Fire may be purchased.
+			if inputIsPressed() {
+				// During the tutorial TP step only Precision, Long Shot, and Rapid Fire may be purchased.
 				tutorialBlocked := meta.TutorialStep == TutorialSpendTP &&
-					n.ID != "dmg_pyro" && n.ID != "dmg_rapidfire_unlock"
+					n.ID != "dmg_precision" && n.ID != "dmg_long_shot" && n.ID != "dmg_rapidfire_unlock"
 				if !tutorialBlocked {
 					if AllocatePoint(n.ID) {
 						playButtonSound()
@@ -236,7 +450,7 @@ func handleResearchInput() {
 				}
 				return
 			}
-			if rl.IsMouseButtonPressed(rl.MouseButtonRight) && !HasSaveFile() {
+			if inputIsRMBPressed() && !HasSaveFile() {
 				if rankOf(n.ID) > 0 && canRefundRank(n.ID) {
 					playButtonSound()
 					meta.TalentRanks[n.ID]--
@@ -252,7 +466,7 @@ func handleResearchInput() {
 
 	// Back button.
 	back := backButtonRect()
-	if rl.IsMouseButtonReleased(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(mousePos, back) {
+	if inputIsReleased() && rl.CheckCollisionPointRec(mousePos, back) {
 		// Tutorial gate: spent TP step blocks Back.
 		if meta.TutorialStep == TutorialSpendTP {
 			return
@@ -272,7 +486,7 @@ func handleResearchInput() {
 // that no other allocated node would become invalid (orphaned by losing
 // its tier gate, spend gate, or only remaining fully-maxed prereq path).
 //
-// The "fully-maxed prereq" check mirrors arePrereqsMet — refunding a rank
+// The "fully-maxed prereq" check mirrors arePrereqsMet -- refunding a rank
 // that drops a parent below MaxRank invalidates downstream children that
 // depended on that parent (unless they have another fully-maxed parent).
 func canRefundRank(id string) bool {
@@ -293,7 +507,7 @@ func canRefundRank(id string) bool {
 		if n == nil {
 			continue
 		}
-		// OR semantics on prereqs — at least one parent must still be
+		// OR semantics on prereqs -- at least one parent must still be
 		// fully maxed. Mirrors arePrereqsMet so the refund check matches
 		// allocation rules.
 		if len(n.Prereqs) > 0 {
@@ -334,7 +548,7 @@ func backButtonRect() rl.Rectangle {
 // the special RP-cost Research tab.
 func treeTabRect(i int) rl.Rectangle {
 	tabW := float32(170)
-	totalTabs := len(TreesInOrder) + 1 // +1 for the Research tab
+	totalTabs := len(TreesInOrder)
 	totalW := tabW * float32(totalTabs)
 	startX := float32(ScreenWidth)/2 - totalW/2
 	return rl.Rectangle{X: startX + float32(i)*tabW, Y: talentLabHeaderH - treeTabH - 4, Width: tabW - 4, Height: treeTabH}
@@ -358,7 +572,7 @@ func nodeRect(n *TalentNode) rl.Rectangle {
 		halfW := (float32(nodeW) - orBadgeW) / 2
 		group := mutexGroupMembers(n.Tree, n.MutexGroupID)
 		// Determine if `n` is the left or right half (sorted by node ID
-		// for determinism — first ID alphabetically goes left).
+		// for determinism -- first ID alphabetically goes left).
 		left := group[0]
 		if len(group) >= 2 && n.ID == left.ID {
 			return rl.Rectangle{X: x, Y: y, Width: halfW, Height: nodeH}
@@ -405,20 +619,25 @@ func tierDividerY(tier int) float32 {
 func nodeKindColor(kind string) rl.Color {
 	switch kind {
 	case NodeUnlock:
-		return rl.NewColor(255, 200, 60, 255) // gold — ability unlock
+		return rl.NewColor(255, 200, 60, 255) // gold -- ability unlock
 	case NodeKeystone:
-		return rl.NewColor(80, 180, 255, 255) // sky-blue — branch/capstone
+		return rl.NewColor(80, 180, 255, 255) // sky-blue -- branch/capstone
 	case NodeSynergy:
-		return rl.NewColor(190, 130, 230, 255) // purple — cross-tree synergy
+		return rl.NewColor(190, 130, 230, 255) // purple -- cross-tree synergy
 	}
-	return rl.NewColor(180, 180, 200, 255) // neutral — scaling
+	return rl.NewColor(180, 180, 200, 255) // neutral -- scaling
 }
 
 // ── Draw ─────────────────────────────────────────────────────────────────
 
-func drawResearchMenu() {
+func drawTalentsMenu() {
+	// Guard: if activeTreeIdx is stale (e.g. from a removed tab), reset it.
+	if activeTreeIdx >= len(TreesInOrder) {
+		activeTreeIdx = 0
+	}
+
 	rl.ClearBackground(rl.NewColor(10, 10, 20, 255))
-	mousePos := rl.GetMousePosition()
+	mousePos := inputGetPos()
 	hoveredNodeID = ""
 
 	drawTalentHeader()
@@ -432,11 +651,7 @@ func drawResearchMenu() {
 	drawTreeTabs(mousePos)
 
 	rl.BeginScissorMode(0, int32(talentLabHeaderH), ScreenWidth, int32(ScreenHeight-talentLabHeaderH-talentLabFooterH))
-	if activeTreeIdx == researchTabIdx {
-		drawResearchPanel(mousePos)
-	} else {
-		drawActiveTreeGrid(mousePos)
-	}
+	drawActiveTreeGrid(mousePos)
 	rl.EndScissorMode()
 
 	drawBackButton(mousePos)
@@ -454,7 +669,7 @@ func drawTalentHeader() {
 
 	avail := availableTalentPoints()
 	total := meta.TalentPointsEarned
-	header := fmt.Sprintf("Meta Lv %d   ·   TP: %d / %d   ·   RP: %d",
+	header := fmt.Sprintf("Meta Lv %d   |   TP: %d / %d   |   RP: %d",
 		meta.MetaLevel, avail, total, meta.ResearchPoints)
 	rl.DrawText(header, ScreenWidth/2-rl.MeasureText(header, 18)/2, 54, 18, rl.Gold)
 
@@ -518,22 +733,6 @@ func drawTreeTabs(mousePos rl.Vector2) {
 		rl.DrawText(lbl, int32(r.X+r.Width/2)-lw/2, int32(r.Y)+10, 16, rl.White)
 	}
 
-	// Research tab — RP-cost shop, visually distinguished by gold accent.
-	r := treeTabRect(researchTabIdx)
-	gold := [4]uint8{220, 180, 60, 255}
-	fill := rl.NewColor(35, 32, 18, 255)
-	border := rl.NewColor(gold[0]/2, gold[1]/2, gold[2]/2, 255)
-	if activeTreeIdx == researchTabIdx {
-		fill = rl.NewColor(gold[0]/4, gold[1]/4, gold[2]/4, 255)
-		border = rl.NewColor(gold[0], gold[1], gold[2], gold[3])
-	} else if rl.CheckCollisionPointRec(mousePos, r) {
-		fill = rl.NewColor(60, 50, 30, 255)
-	}
-	rl.DrawRectangleRec(r, fill)
-	rl.DrawRectangleLinesEx(r, 2, border)
-	lbl := fmt.Sprintf("Research (%d RP)", meta.ResearchPoints)
-	lw := rl.MeasureText(lbl, 16)
-	rl.DrawText(lbl, int32(r.X+r.Width/2)-lw/2, int32(r.Y)+10, 16, rl.Gold)
 }
 
 func drawActiveTreeGrid(mousePos rl.Vector2) {
@@ -543,7 +742,7 @@ func drawActiveTreeGrid(mousePos rl.Vector2) {
 	// 1) Tier dividers (drawn first, behind everything).
 	drawTierDividers(tree)
 
-	// 2) Hover detection — find which node the mouse is over so we know
+	// 2) Hover detection -- find which node the mouse is over so we know
 	// which prereq chain to highlight.
 	hoverID := ""
 	for _, n := range nodes {
@@ -554,7 +753,7 @@ func drawActiveTreeGrid(mousePos rl.Vector2) {
 	}
 	prereqChain := buildPrereqChain(hoverID)
 
-	// 3) Prereq lines — straight verticals from parent to child slot.
+	// 3) Prereq lines -- straight verticals from parent to child slot.
 	drawPrereqLines(tree, prereqChain)
 
 	// 4) Nodes themselves.
@@ -562,7 +761,7 @@ func drawActiveTreeGrid(mousePos rl.Vector2) {
 		drawTalentNode(n, mousePos, prereqChain)
 	}
 
-	// 5) Mutex "OR" badges — drawn last so they sit on top of any line
+	// 5) Mutex "OR" badges -- drawn last so they sit on top of any line
 	// that might pass behind them between the two half-cards.
 	drawMutexBadges(tree)
 }
@@ -603,7 +802,7 @@ func drawTierDividers(tree string) {
 			label = fmt.Sprintf("  Tier %d  ", tier)
 		} else {
 			need := gate - spent
-			label = fmt.Sprintf("  Tier %d — need %d more in %s  ", tier, need, tree)
+			label = fmt.Sprintf("  Tier %d -- need %d more in %s  ", tier, need, tree)
 		}
 		lw := rl.MeasureText(label, 14)
 		labelX := ScreenWidth/2 - lw/2
@@ -615,7 +814,7 @@ func drawTierDividers(tree string) {
 
 // drawPrereqLines draws straight vertical lines from each node up to its
 // prereq slot in the row above. Because every prereq is now in the same
-// column one tier up, lines are purely vertical — no diagonals, no
+// column one tier up, lines are purely vertical -- no diagonals, no
 // cross-tier spans. For OR-prereqs (mutex parents), one line is drawn
 // from the mutex slot center down to the child.
 func drawPrereqLines(tree string, prereqChain map[string]bool) {
@@ -662,8 +861,8 @@ func drawPrereqLines(tree string, prereqChain map[string]bool) {
 			yBot := gridY + float32(n.Tier-1)*tierRowH + tierVGap
 
 			// Three-state coloring: untouched (dim gray), partially
-			// allocated (mid blue — parent has points but isn't yet
-			// maxed, so child is still locked), fully maxed (gold —
+			// allocated (mid blue -- parent has points but isn't yet
+			// maxed, so child is still locked), fully maxed (gold --
 			// parent is at MaxRank, child can be allocated or already
 			// is).
 			lineCol := rl.NewColor(70, 70, 90, 180)
@@ -671,7 +870,7 @@ func drawPrereqLines(tree string, prereqChain map[string]bool) {
 			parentRank := rankOf(reqID)
 			parentMaxed := req.MaxRank > 0 && parentRank >= req.MaxRank
 			parentPartial := parentRank > 0 && !parentMaxed
-			// Mutex peers share the slot — if any peer is fully maxed,
+			// Mutex peers share the slot -- if any peer is fully maxed,
 			// the line should reflect that (child is unlockable).
 			if !parentMaxed && req.MutexGroupID != "" {
 				for _, peer := range mutexGroupMembers(tree, req.MutexGroupID) {
@@ -720,11 +919,11 @@ func drawConnectionLine(ax, yTop, bx, yBot, thickness float32, col rl.Color) {
 	}
 	verticalSpan := yBot - yTop
 	if verticalSpan < tierRowH*1.5 {
-		// Adjacent tier hop — straight diagonal looks clean.
+		// Adjacent tier hop -- straight diagonal looks clean.
 		rl.DrawLineEx(rl.Vector2{X: ax, Y: yTop}, rl.Vector2{X: bx, Y: yBot}, thickness, col)
 		return
 	}
-	// Multi-tier span — L-bend so the line stays readable.
+	// Multi-tier span -- L-bend so the line stays readable.
 	midY := yTop + verticalSpan*0.45
 	rl.DrawLineEx(rl.Vector2{X: ax, Y: yTop}, rl.Vector2{X: ax, Y: midY}, thickness, col)
 	rl.DrawLineEx(rl.Vector2{X: ax, Y: midY}, rl.Vector2{X: bx, Y: midY}, thickness, col)
@@ -813,7 +1012,7 @@ func drawTalentNode(n *TalentNode, mousePos rl.Vector2, prereqChain map[string]b
 	// During the tutorial TP step, nodes outside the guided path are dimmed
 	// and uninteractable so the player isn't distracted by other choices.
 	tutorialDimmed := meta.TutorialStep == TutorialSpendTP &&
-		n.ID != "dmg_pyro" && n.ID != "dmg_rapidfire_unlock"
+		n.ID != "dmg_precision" && n.ID != "dmg_long_shot" && n.ID != "dmg_rapidfire_unlock"
 
 	// Card fill / border based on state.
 	var fill, border rl.Color
@@ -903,7 +1102,7 @@ func drawTalentNode(n *TalentNode, mousePos rl.Vector2, prereqChain map[string]b
 	}
 
 	// Footer: kind tag + small status. Skip footer kind label on mutex
-	// halves — the side-stripe + sky-blue color already implies KEYSTONE.
+	// halves -- the side-stripe + sky-blue color already implies KEYSTONE.
 	if !isMutexHalf {
 		kindLabel := ""
 		switch n.Kind {
@@ -926,7 +1125,7 @@ func drawTalentNode(n *TalentNode, mousePos rl.Vector2, prereqChain map[string]b
 
 	// Spend-gate badge: shown bottom-right when a per-node spend gate is
 	// the reason the node is locked (and it's the binding constraint).
-	// Format: "🔒 20" — small, gold, easy to glance at.
+	// Format: a small gold lock glyph + the gate number, easy to glance at.
 	if n.SpendGate > 0 && rank == 0 {
 		spent := pointsSpentInTree(n.Tree)
 		if spent < n.SpendGate {
@@ -1007,8 +1206,8 @@ func drawNodeTooltip(nodeID string, mouse rl.Vector2) {
 		lines = append(lines, fmt.Sprintf("Locked: need %d more in %s tree", need, n.Tree))
 	} else if !arePrereqsMet(n) {
 		// Try to give a specific message naming the unmet parent.
-		// Find the "most ready" parent — i.e. one with the fewest ranks
-		// remaining to max — and call that out.
+		// Find the "most ready" parent -- i.e. one with the fewest ranks
+		// remaining to max -- and call that out.
 		var best *TalentNode
 		bestNeed := 999
 		for _, reqID := range n.Prereqs {
@@ -1075,20 +1274,50 @@ func trimLabel(s string, maxLen int) string {
 	return s[:maxLen-1] + "~"
 }
 
+// wrapText splits text into lines no wider than maxWidth pixels at the given
+// raylib font size. Words that individually exceed maxWidth are placed on
+// their own line without mid-word splitting.
+func wrapText(text string, maxWidth int32, fontSize int32) []string {
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return nil
+	}
+	var lines []string
+	current := ""
+	for _, word := range words {
+		candidate := word
+		if current != "" {
+			candidate = current + " " + word
+		}
+		if rl.MeasureText(candidate, fontSize) <= maxWidth {
+			current = candidate
+		} else {
+			if current != "" {
+				lines = append(lines, current)
+			}
+			current = word
+		}
+	}
+	if current != "" {
+		lines = append(lines, current)
+	}
+	return lines
+}
+
 // ── Research panel (RP-cost permanent upgrades) ──────────────────────────
 
 // researchPanelLayoutY returns the Y position of the i'th research card.
 func researchPanelLayoutY(i int) float32 {
-	const cardH = 96
+	const cardH = 112
 	const cardGap = 14
-	startY := float32(talentLabHeaderH + 30)
+	startY := float32(researchShopHeaderH + 20)
 	return startY + float32(i)*(cardH+cardGap) - researchScrollY
 }
 
 // researchCardRect returns the screen rect for the i'th research card.
 func researchCardRect(i int) rl.Rectangle {
 	const cardW = 700
-	const cardH = 96
+	const cardH = 112
 	x := float32(ScreenWidth)/2 - cardW/2
 	return rl.Rectangle{X: x, Y: researchPanelLayoutY(i), Width: cardW, Height: cardH}
 }
@@ -1111,16 +1340,19 @@ func researchBuyButtonRect(i int) rl.Rectangle {
 func handleResearchPanelInput(mousePos rl.Vector2) {
 	// Mouse-wheel scroll. Capped so the catalog can't scroll off the top
 	// or far below its content.
-	wheel := rl.GetMouseWheelMove()
+	wheel := inputGetWheelMove()
 	if wheel != 0 {
 		researchScrollY -= wheel * 30
 		if researchScrollY < 0 {
 			researchScrollY = 0
 		}
-		const cardH = 96
+		const cardH = 112
 		const cardGap = 14
-		maxScroll := float32(len(researchCatalog))*float32(cardH+cardGap) -
-			float32(ScreenHeight-talentLabHeaderH-talentLabFooterH)
+		// Content height inside the scissor window: cards start 20px below the
+		// header (see researchPanelLayoutY) and we keep a matching 20px pad
+		// below the last card so it never kisses the footer at max scroll.
+		contentH := 20 + float32(len(researchCatalog))*float32(cardH+cardGap) - cardGap + 20
+		maxScroll := contentH - float32(ScreenHeight-researchShopHeaderH-researchShopFooterH)
 		if maxScroll < 0 {
 			maxScroll = 0
 		}
@@ -1129,18 +1361,25 @@ func handleResearchPanelInput(mousePos rl.Vector2) {
 		}
 	}
 
-	// BUY button clicks.
-	if !rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
-		return
-	}
-	if HasSaveFile() {
-		// Don't allow purchases mid-run.
+	// BUY / toggle button clicks.
+	if !inputIsPressed() {
 		return
 	}
 	for i, e := range researchCatalog {
 		btn := researchBuyButtonRect(i)
 		if !rl.CheckCollisionPointRec(mousePos, btn) {
 			continue
+		}
+		// ON/OFF toggle for owned perks -- allowed even mid-run.
+		if e.kind == "toggle" && e.isOwned() && e.isEnabled != nil {
+			e.setEnabled(!e.isEnabled())
+			playButtonSound()
+			SaveMetaProg()
+			return
+		}
+		// All purchases blocked mid-run.
+		if HasSaveFile() {
+			return
 		}
 		// Resolve cost + ownership for this entry.
 		switch e.kind {
@@ -1159,7 +1398,7 @@ func handleResearchPanelInput(mousePos rl.Vector2) {
 			SaveMetaProg()
 		case "toggle":
 			if e.isOwned() {
-				return // already owned
+				return // already owned, no toggle field means no further action
 			}
 			if meta.ResearchPoints < e.flatCost {
 				return
@@ -1194,10 +1433,18 @@ func drawResearchPanel(mousePos rl.Vector2) {
 		rl.DrawRectangleRec(stripeRect, rl.Gold)
 
 		textX := int32(card.X) + stripeW + 14
-		rl.DrawText(e.name, textX, int32(card.Y)+12, 18, rl.White)
-		rl.DrawText(e.description, textX, int32(card.Y)+38, 13, rl.NewColor(190, 190, 200, 255))
+		rl.DrawText(e.name, textX, int32(card.Y)+10, 18, rl.White)
 
-		// State indicator (rank progress or owned flag).
+		// Word-wrapped description. Available width = cardW(700) - leftPad(19) - rightReserved(btnW+gaps≈174).
+		const descFontSize = int32(13)
+		const descLineH = int32(16)
+		const descAvailW = int32(507) // 700 - 5 - 14 - 150 - 14 - 10
+		descLines := wrapText(e.description, descAvailW, descFontSize)
+		for j, line := range descLines {
+			rl.DrawText(line, textX, int32(card.Y)+34+int32(j)*descLineH, descFontSize, rl.NewColor(190, 190, 200, 255))
+		}
+
+		// State indicator (rank progress or owned flag) -- anchored to card bottom.
 		var statusText string
 		switch e.kind {
 		case "rank":
@@ -1214,9 +1461,9 @@ func drawResearchPanel(mousePos rl.Vector2) {
 				statusText = "Not yet owned"
 			}
 		}
-		rl.DrawText(statusText, textX, int32(card.Y)+62, 12, rl.NewColor(220, 200, 120, 255))
+		rl.DrawText(statusText, textX, int32(card.Y+card.Height)-22, 12, rl.NewColor(220, 200, 120, 255))
 
-		// BUY button — state and label depend on entry kind + state.
+		// BUY button -- state and label depend on entry kind + state.
 		btn := researchBuyButtonRect(i)
 		btnHovered := rl.CheckCollisionPointRec(mousePos, btn)
 		drawResearchBuyButton(e, btn, btnHovered)
@@ -1251,7 +1498,31 @@ func drawResearchBuyButton(e researchEntry, btn rl.Rectangle, hovered bool) {
 			enabled = !HasSaveFile() && meta.ResearchPoints >= cost
 		}
 	case "toggle":
-		if e.isOwned() {
+		if e.isOwned() && e.isEnabled != nil {
+			// Owned perk with a runtime toggle -- show ON/OFF button.
+			isOn := e.isEnabled()
+			var bg, textCol rl.Color
+			if isOn {
+				label = "ON"
+				bg = rl.NewColor(30, 80, 30, 255)
+				textCol = rl.NewColor(100, 230, 100, 255)
+				if hovered {
+					bg = rl.NewColor(45, 110, 45, 255)
+				}
+			} else {
+				label = "OFF"
+				bg = rl.NewColor(70, 40, 40, 255)
+				textCol = rl.NewColor(200, 110, 110, 255)
+				if hovered {
+					bg = rl.NewColor(100, 55, 55, 255)
+				}
+			}
+			rl.DrawRectangleRec(btn, bg)
+			bw := rl.MeasureText(label, 14)
+			rl.DrawText(label, int32(btn.X+btn.Width/2)-bw/2, int32(btn.Y)+11, 14, textCol)
+			rl.DrawRectangleLinesEx(btn, 1, rl.Gold)
+			return
+		} else if e.isOwned() {
 			owned = true
 			label = "OWNED"
 		} else {
@@ -1279,6 +1550,50 @@ func drawResearchBuyButton(e researchEntry, btn rl.Rectangle, hovered bool) {
 	rl.DrawRectangleLinesEx(btn, 1, rl.Gold)
 }
 
+// ── Standalone Research-upgrades screen (ScreenRPShop) ───────────────────
+
+// handleRPShopInput handles input for the standalone research-upgrades screen.
+func handleRPShopInput() {
+	if rl.IsKeyPressed(rl.KeyEscape) || rl.IsKeyPressed(rl.KeyB) {
+		playButtonSound()
+		state.CurrentScreen = ScreenStart
+		researchScrollY = 0
+		return
+	}
+	mousePos := inputGetPos()
+	handleResearchPanelInput(mousePos)
+	handleLoadoutBarInput(mousePos)
+	back := backButtonRect()
+	if inputIsReleased() && rl.CheckCollisionPointRec(mousePos, back) {
+		playButtonSound()
+		state.CurrentScreen = ScreenStart
+		researchScrollY = 0
+	}
+}
+
+// drawRPShopMenu renders the standalone Research-upgrades screen.
+func drawRPShopMenu() {
+	rl.ClearBackground(rl.NewColor(10, 10, 20, 255))
+	mousePos := inputGetPos()
+
+	// Header
+	title := "RESEARCH UPGRADES"
+	rl.DrawText(title, ScreenWidth/2-rl.MeasureText(title, 36)/2, 18, 36, rl.Gold)
+	sub := fmt.Sprintf("Meta Lv %d   |   RP: %d", meta.MetaLevel, meta.ResearchPoints)
+	rl.DrawText(sub, ScreenWidth/2-rl.MeasureText(sub, 18)/2, 62, 18, rl.NewColor(220, 190, 100, 255))
+
+	// Scrollable catalog
+	rl.BeginScissorMode(0, researchShopHeaderH, ScreenWidth, int32(ScreenHeight-researchShopHeaderH-researchShopFooterH))
+	drawResearchPanel(mousePos)
+	rl.EndScissorMode()
+
+	// Loadout chips (footer, above the back button)
+	drawLoadoutBar(mousePos)
+
+	// Back button (shared helper, same rect as the talent lab)
+	drawBackButton(mousePos)
+}
+
 // ── Tutorial overlay ─────────────────────────────────────────────────────
 
 func drawResearchTutorialOverlay() {
@@ -1289,12 +1604,12 @@ func drawResearchTutorialOverlay() {
 			dmgTab.X-20, dmgTab.Y+48,
 			"SPEND YOUR TALENT POINTS",
 			[]string{
-				"You have 4 Talent Points to spend.",
-				"Open the DAMAGE tab and put all 3",
-				"points into Pyromaniac first, then",
-				"spend the last point on Rapid Fire",
-				"to unlock your first ability.",
-				"Tip: right-click a node to refund.",
+				"You have 3 Talent Points to spend.",
+				"Open the DAMAGE tab and put 2",
+				"points into Precision, then spend",
+				"the last point on Rapid Fire to",
+				"unlock your first ability.",
+				"Long Shot is your next goal!",
 			}, rl.Purple)
 		if int(rl.GetTime()*4)%2 == 0 {
 			rl.DrawRectangleLinesEx(dmgTab, 3, rl.Yellow)
@@ -1344,15 +1659,6 @@ func performRespec() {
 	meta.MultishotCountLevel = 0
 	refund += calcRefund(meta.ChainCountLevel, 25, 25)
 	meta.ChainCountLevel = 0
-
-	if meta.Speed3xUnlocked {
-		refund += 200
-		meta.Speed3xUnlocked = false
-	}
-	if meta.OpeningSprintUnlocked {
-		refund += 500
-		meta.OpeningSprintUnlocked = false
-	}
 
 	meta.ResearchPoints += refund
 	SaveMetaProg()

@@ -37,6 +37,12 @@ const (
 // is imperceptible at 60 fps.
 var menuHoveredItem *Item
 
+// menuTooltipItem is the item whose card/tooltip should be drawn this frame.
+// It's set by drawEquippedRow / drawInventoryArea on hover and rendered LAST
+// (at the end of drawItemsMenu) so the tooltip always sits on top of every
+// other panel instead of being covered by content drawn afterward.
+var menuTooltipItem *Item
+
 // rarityColor returns the border/text colour for a given rarity tier.
 func rarityColor(rarity int) rl.Color {
 	switch rarity {
@@ -116,14 +122,14 @@ func handleItemsInput() {
 		state.ShopBidAmount = 100
 	}
 
-	mouse := rl.GetMousePosition()
+	mouse := inputGetPos()
 
 	// Fabricator input is always live (locked visually when run active, just does nothing)
 	handleFabricatorInput(mouse)
 
 	// Scroll -- only when hovering the inventory area
 	if mouse.X > InvAreaX {
-		scroll := rl.GetMouseWheelMove()
+		scroll := inputGetWheelMove()
 		if scroll != 0 {
 			state.InventoryScrollOffset += scroll * 40.0
 			if state.InventoryScrollOffset > 0 {
@@ -132,7 +138,7 @@ func handleItemsInput() {
 		}
 	}
 
-	if rl.IsMouseButtonReleased(rl.MouseButtonLeft) {
+	if inputIsReleased() {
 		// Back button
 		backRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight) - 70, Width: 200, Height: 45}
 		if rl.CheckCollisionPointRec(mouse, backRect) {
@@ -165,15 +171,23 @@ var fabInputActive = false
 var fabInputText = "100"
 
 func handleFabricatorInput(mouse rl.Vector2) {
+	// Toggle between FABRICATOR and FORGE -- always active (even during run).
+	handleForgeToggle(mouse)
+
+	if forgeMode {
+		handleForgeInput(mouse)
+		return
+	}
+
 	if HasSaveFile() {
 		return
 	}
 
 	cx := float32(FabPanelX + 14)
-	inputBoxRect := rl.Rectangle{X: cx, Y: fabPanelTop + 46, Width: FabPanelWidth - 28, Height: 32}
+	inputBoxRect := rl.Rectangle{X: cx, Y: fabPanelTop + 54, Width: FabPanelWidth - 28, Height: 32}
 
 	// Click to focus / unfocus.
-	if rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
+	if inputIsPressed() {
 		if rl.CheckCollisionPointRec(mouse, inputBoxRect) {
 			if !fabInputActive {
 				// First click: clear buffer so user can type their amount immediately.
@@ -221,7 +235,7 @@ func handleFabricatorInput(mouse rl.Vector2) {
 		}
 	}
 
-	if !rl.IsMouseButtonReleased(rl.MouseButtonLeft) {
+	if !inputIsReleased() {
 		return
 	}
 
@@ -343,7 +357,7 @@ func handleInventoryGrid(mouse rl.Vector2) {
 				return
 			}
 			// Block equipping until the tutorial explicitly reaches the
-			// equip step — prevents skipping straight to equip before
+			// equip step -- prevents skipping straight to equip before
 			// crafting/salvaging is complete.
 			if meta.TutorialStep == TutorialCraftFirst ||
 				meta.TutorialStep == TutorialCraftBad ||
@@ -368,6 +382,8 @@ func drawItemsMenu() {
 	rl.ClearBackground(rl.NewColor(20, 20, 25, 255))
 	rl.DrawText("GEAR & INVENTORY", ScreenWidth/2-rl.MeasureText("GEAR & INVENTORY", 36)/2, 16, 36, rl.Gold)
 
+	menuTooltipItem = nil // set by the draws below on hover; rendered last
+
 	drawEquippedRow()
 	drawFabricatorPanel()
 	drawInventoryArea()
@@ -375,7 +391,7 @@ func drawItemsMenu() {
 	// Footer
 	backRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight) - 70, Width: 200, Height: 45}
 	backCol := rl.Gray
-	if rl.CheckCollisionPointRec(rl.GetMousePosition(), backRect) {
+	if rl.CheckCollisionPointRec(inputGetPos(), backRect) {
 		backCol = rl.LightGray
 	}
 	if meta.TutorialStep == TutorialBackFromGear {
@@ -396,6 +412,11 @@ func drawItemsMenu() {
 		rl.DrawText(warn, ScreenWidth/2-rl.MeasureText(warn, 18)/2, int32(ScreenHeight)-98, 18, rl.Red)
 	}
 
+	// Hovered item card/tooltip is drawn last so it sits on top of every panel.
+	if menuTooltipItem != nil {
+		drawItemTooltip(menuTooltipItem)
+	}
+
 	// ── Tutorial overlays ─────────────────────────────────────────────────────
 	drawItemsMenuTutorialOverlay()
 }
@@ -412,8 +433,8 @@ func drawEquippedRow() {
 		item := state.Player.EquippedItems[i]
 		if item != nil {
 			drawItemCard(item, x, equipY, true)
-			if rl.CheckCollisionPointRec(rl.GetMousePosition(), rl.Rectangle{X: x, Y: equipY, Width: CardWidth, Height: CardHeight}) {
-				drawItemTooltip(item)
+			if rl.CheckCollisionPointRec(inputGetPos(), rl.Rectangle{X: x, Y: equipY, Width: CardWidth, Height: CardHeight}) {
+				menuTooltipItem = item
 			}
 		} else {
 			rect := rl.Rectangle{X: x, Y: equipY, Width: CardWidth, Height: CardHeight}
@@ -427,7 +448,7 @@ func drawEquippedRow() {
 func drawFabricatorPanel() {
 	panelH := float32(ScreenHeight) - fabPanelTop - 80
 	panelRect := rl.Rectangle{X: FabPanelX, Y: fabPanelTop, Width: FabPanelWidth, Height: panelH}
-	mouse := rl.GetMousePosition()
+	mouse := inputGetPos()
 
 	locked := HasSaveFile()
 	bgCol := rl.NewColor(25, 25, 38, 255)
@@ -440,24 +461,29 @@ func drawFabricatorPanel() {
 	rl.DrawRectangleLinesEx(panelRect, 1, borderCol)
 
 	cx := float32(FabPanelX + 14)
-	titleCol := rl.SkyBlue
-	if locked {
-		titleCol = rl.NewColor(70, 70, 90, 255)
-	}
-	rl.DrawText("FABRICATOR", int32(cx), int32(fabPanelTop+10), 18, titleCol)
 
+	// ── FABRICATOR | FORGE toggle (always drawn first) ────────────────────
+	drawForgeFabToggle(cx, float32(fabPanelTop+8))
+
+	// ── Forge branch ──────────────────────────────────────────────────────
+	if forgeMode {
+		drawForgeContent(cx, float32(fabPanelTop+38))
+		return
+	}
+
+	// ── Fabricator content ────────────────────────────────────────────────
 	if locked {
-		rl.DrawText("Locked during run", int32(cx), int32(fabPanelTop+38), 13, rl.NewColor(80, 80, 100, 255))
-		drawPlayerStatsPanel(cx, fabPanelTop+62)
+		rl.DrawText("Locked during run", int32(cx), int32(fabPanelTop+46), 13, rl.NewColor(80, 80, 100, 255))
+		drawPlayerStatsPanel(cx, fabPanelTop+70)
 		return
 	}
 
 	// ── Investment text input box ─────────────────────────────────────────
-	rl.DrawText("Investment (RP):", int32(cx), int32(fabPanelTop+32), 12, rl.NewColor(140, 140, 160, 255))
+	rl.DrawText("Investment (RP):", int32(cx), int32(fabPanelTop+40), 12, rl.NewColor(140, 140, 160, 255))
 	capLabel := fmt.Sprintf("Max: %d RP", MaxFabricatorInvestment)
-	rl.DrawText(capLabel, int32(float32(FabPanelX)+FabPanelWidth-14)-rl.MeasureText(capLabel, 11), int32(fabPanelTop+33), 11, rl.NewColor(100, 120, 100, 255))
+	rl.DrawText(capLabel, int32(float32(FabPanelX)+FabPanelWidth-14)-rl.MeasureText(capLabel, 11), int32(fabPanelTop+41), 11, rl.NewColor(100, 120, 100, 255))
 
-	inputBoxRect := rl.Rectangle{X: cx, Y: fabPanelTop + 46, Width: FabPanelWidth - 28, Height: 32}
+	inputBoxRect := rl.Rectangle{X: cx, Y: fabPanelTop + 54, Width: FabPanelWidth - 28, Height: 32}
 	// Pass fabInputActive for visual styling only -- input is handled entirely by our own code.
 	gui.SetStyle(gui.TEXTBOX, gui.TEXT_ALIGNMENT, gui.TEXT_ALIGN_CENTER)
 	gui.TextBox(inputBoxRect, &fabInputText, 7, false)
@@ -497,7 +523,7 @@ func drawFabricatorPanel() {
 		{"Rare    (3 stats)", rare, rarityColor(RarityRare)},
 		{"Epic    (3+bonus)", epic, rarityColor(RarityEpic)},
 		{"Legendary       ", leg, rarityColor(RarityLegendary)},
-		{" └ Set          ", set, rarityColor(RaritySet)},
+		{" > Set          ", set, rarityColor(RaritySet)},
 	}
 	rightEdge := int32(FabPanelX + FabPanelWidth - 14)
 	for _, row := range rows {
@@ -546,14 +572,14 @@ func computeSwapPlayer(hovered *Item) *Player {
 	if hovered == nil {
 		return nil
 	}
-	// Already equipped — no change to show.
+	// Already equipped -- no change to show.
 	for _, eq := range state.Player.EquippedItems {
 		if eq == hovered {
 			return nil
 		}
 	}
 	slotIdx := hovered.Type // ItemWeapon=0, ItemShield=1, ItemRing=2, ItemTrinket=3
-	sim := state.Player    // value copy
+	sim := state.Player     // value copy
 	// Unequip current occupant of that slot.
 	if cur := state.Player.EquippedItems[slotIdx]; cur != nil {
 		applyItemStats(&sim, cur, false)
@@ -632,7 +658,7 @@ func drawPlayerStatsPanel(cx, startY float32) {
 					dCol = negCol
 				}
 			} else {
-				dStr = "–"
+				dStr = "-"
 				dCol = dimCol
 			}
 			dw := rl.MeasureText(dStr, fs)
@@ -653,8 +679,8 @@ func drawPlayerStatsPanel(cx, startY float32) {
 		fmtDelta(d(sim.RegenRate, p.RegenRate), "%.1f/s"), d(sim.RegenRate, p.RegenRate))
 	drawStat("Crit", fmt.Sprintf("%.1f%%", p.CritChance*100),
 		fmtDeltaPct(d(sim.CritChance, p.CritChance), "%.1f%%"), d(sim.CritChance, p.CritChance))
-	drawStat("Crit×", fmt.Sprintf("%.2f×", p.CritMultiplier),
-		fmtDelta(d(sim.CritMultiplier, p.CritMultiplier), "%.2f×"), d(sim.CritMultiplier, p.CritMultiplier))
+	drawStat("Crit Mult", fmt.Sprintf("%.2fx", p.CritMultiplier),
+		fmtDelta(d(sim.CritMultiplier, p.CritMultiplier), "%.2fx"), d(sim.CritMultiplier, p.CritMultiplier))
 	drawStat("Haste", fmt.Sprintf("%.0f%%", p.Haste*100),
 		fmtDeltaPct(d(sim.Haste, p.Haste), "%.0f%%"), d(sim.Haste, p.Haste))
 	drawStat("Range", fmt.Sprintf("%.0f", p.Range),
@@ -667,12 +693,12 @@ func drawPlayerStatsPanel(cx, startY float32) {
 		fmtDelta(d(sim.ThornsDamage, p.ThornsDamage), "%.1f"), d(sim.ThornsDamage, p.ThornsDamage))
 	drawStat("Overshld", fmt.Sprintf("%.1f/s", p.OvershieldRate),
 		fmtDelta(d(sim.OvershieldRate, p.OvershieldRate), "%.1f/s"), d(sim.OvershieldRate, p.OvershieldRate))
-	drawStat("RP Gain", fmt.Sprintf("%.2f×", p.RPRate),
-		fmtDelta(d(sim.RPRate, p.RPRate), "%.2f×"), d(sim.RPRate, p.RPRate))
-	drawStat("XP Gain", fmt.Sprintf("%.2f×", p.XPRate),
-		fmtDelta(d(sim.XPRate, p.XPRate), "%.2f×"), d(sim.XPRate, p.XPRate))
+	drawStat("RP Gain", fmt.Sprintf("%.2fx", p.RPRate),
+		fmtDelta(d(sim.RPRate, p.RPRate), "%.2fx"), d(sim.RPRate, p.RPRate))
+	drawStat("XP Gain", fmt.Sprintf("%.2fx", p.XPRate),
+		fmtDelta(d(sim.XPRate, p.XPRate), "%.2fx"), d(sim.XPRate, p.XPRate))
 
-	// Optional stats — shown when the player has them OR the hovered item would grant them.
+	// Optional stats -- shown when the player has them OR the hovered item would grant them.
 	if p.ExplosiveShotChance > 0 || sim.ExplosiveShotChance > 0 {
 		drawStat("Explo Shot", fmt.Sprintf("%.1f%%", p.ExplosiveShotChance*100),
 			fmtDeltaPct(d(sim.ExplosiveShotChance, p.ExplosiveShotChance), "%.1f%%"),
@@ -685,9 +711,8 @@ func drawPlayerStatsPanel(cx, startY float32) {
 	}
 }
 
-
 func drawInventoryArea() {
-	mouse := rl.GetMousePosition()
+	mouse := inputGetPos()
 	var tooltipItem *Item
 	menuHoveredItem = nil // reset every frame; set below when cursor is over a card
 
@@ -813,7 +838,7 @@ func drawInventoryArea() {
 	}
 
 	if tooltipItem != nil {
-		drawItemTooltip(tooltipItem)
+		menuTooltipItem = tooltipItem // drawn last in drawItemsMenu, on top of all panels
 	}
 }
 
@@ -931,11 +956,11 @@ func uniqueModifierDescription(key string) string {
 		return "1% chance on kill to reset your longest active cooldown."
 	case "Clockwork":
 		return "Every kill shaves a small amount off all ability cooldowns."
-	// Deprecated — old saves may have these keys.
+	// Deprecated -- old saves may have these keys.
 	case "SwiftReload":
-		return "(Deprecated — no effect)"
+		return "(Deprecated -- no effect)"
 	case "Overclock":
-		return "(Deprecated — no effect)"
+		return "(Deprecated -- no effect)"
 	default:
 		return ""
 	}
@@ -969,7 +994,7 @@ func modifierValueLabel(mod string, val float32) string {
 	case "ThornsEcho":
 		return fmt.Sprintf("[%.0f%% of Thorns]", val*100)
 	case "PhaseBreaker":
-		return "" // binary — no value shown
+		return "" // binary -- no value shown
 	case "CrisisAura":
 		return fmt.Sprintf("[+%.0f%% speed]", val*100)
 	case "KillCharge":
@@ -992,7 +1017,7 @@ func drawItemCard(item *Item, x, y float32, isEquipped bool) {
 	bgColor := rl.NewColor(30, 30, 42, 255)
 	if isEquipped {
 		bgColor = rl.NewColor(18, 38, 18, 255)
-	} else if rl.CheckCollisionPointRec(rl.GetMousePosition(), rect) {
+	} else if rl.CheckCollisionPointRec(inputGetPos(), rect) {
 		bgColor = rl.NewColor(48, 48, 62, 255)
 	}
 	rl.DrawRectangleRec(rect, bgColor)
@@ -1064,13 +1089,19 @@ func drawItemCard(item *Item, x, y float32, isEquipped bool) {
 	if item.SetID != "" {
 		rl.DrawText("SET", int32(x+CardWidth-36), int32(y+8), 11, rarityColor(RaritySet))
 	}
+	if item.IsCrafted {
+		craftLabel := fmt.Sprintf("CRAFTED T%d", item.CraftTier)
+		cw := rl.MeasureText(craftLabel, 10)
+		rl.DrawText(craftLabel, int32(x+CardWidth)-cw-6, int32(y+CardHeight-18), 10,
+			rl.NewColor(255, 150, 60, 255))
+	}
 	if isEquipped {
 		rl.DrawText("E", int32(x+CardWidth-18), int32(y+CardHeight-22), 18, rl.Yellow)
 	}
 }
 
 func drawItemTooltip(item *Item) {
-	mouse := rl.GetMousePosition()
+	mouse := inputGetPos()
 	tipX := int32(mouse.X) + 15
 	tipY := int32(mouse.Y) + 15
 	tipWidth := int32(300)
@@ -1086,6 +1117,9 @@ func drawItemTooltip(item *Item) {
 	}
 	if item.SetID != "" {
 		contentLines++
+		if def, ok := SetRegistry[item.SetID]; ok && def.BonusDesc != "" {
+			contentLines += 3 // wrapped bonus description
+		}
 	}
 	if isSalvageMode {
 		contentLines++
@@ -1153,15 +1187,58 @@ func drawItemTooltip(item *Item) {
 
 	if item.SetID != "" {
 		setText := "SET: " + item.SetID
+		var bonus string
 		if def, ok := SetRegistry[item.SetID]; ok {
 			setText = "SET: " + def.Name
+			bonus = def.BonusDesc
 		}
 		rl.DrawText(setText, tipX+10, cy, 12, rarityColor(RaritySet))
-		cy += 20
+		cy += 18
+
+		// Word-wrap the set bonus description to the tooltip width.
+		if bonus != "" {
+			words := strings.Fields(bonus)
+			line := ""
+			for _, w := range words {
+				test := w
+				if line != "" {
+					test = line + " " + w
+				}
+				if rl.MeasureText(test, 10) > tipWidth-24 {
+					rl.DrawText(line, tipX+14, cy, 10, rl.NewColor(120, 220, 180, 255))
+					cy += 13
+					line = w
+				} else {
+					line = test
+				}
+			}
+			if line != "" {
+				rl.DrawText(line, tipX+14, cy, 10, rl.NewColor(120, 220, 180, 255))
+				cy += 13
+			}
+		}
+		cy += 4
 	}
 
 	if isSalvageMode {
-		rl.DrawText(fmt.Sprintf("Salvage: %d RP", item.SalvageValue), tipX+10, cy+3, 14, rl.Red)
+		if item.IsCrafted {
+			r := recipeForCraftedItem(item)
+			if r != nil {
+				rl.DrawText(fmt.Sprintf("Salvage: %d RP + 50%% parts", r.salvageRP()), tipX+10, cy+3, 13, rl.Red)
+			} else {
+				rl.DrawText(fmt.Sprintf("Salvage: %d RP", item.SalvageValue), tipX+10, cy+3, 14, rl.Red)
+			}
+		} else {
+			own, other, _, _ := salvagePartYield(item.Rarity)
+			partsLine := fmt.Sprintf("%d own + %d ea other type parts", own, other)
+			if own > 0 || other > 0 {
+				rl.DrawText(fmt.Sprintf("Salvage: %d RP", item.SalvageValue), tipX+10, cy+3, 14, rl.Red)
+				cy += 18
+				rl.DrawText(partsLine, tipX+10, cy+3, 11, rl.NewColor(200, 100, 55, 255))
+			} else {
+				rl.DrawText(fmt.Sprintf("Salvage: %d RP", item.SalvageValue), tipX+10, cy+3, 14, rl.Red)
+			}
+		}
 	}
 }
 
@@ -1252,7 +1329,8 @@ func drawItemsMenuTutorialOverlay() {
 
 	case TutorialBackFromGear:
 		// Item equipped -- guide them to click Back.
-		// Back button centre is ScreenWidth/2; anchor bubble so it sits centred over it.
+		// Back button centre is ScreenWidth
+		//2; anchor bubble so it sits centred over it.
 		drawTutorialBubble(float32(ScreenWidth)/2-160, backRect.Y-130,
 			"OK, LOOKING SHARP!",
 			[]string{

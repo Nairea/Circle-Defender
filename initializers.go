@@ -43,6 +43,7 @@ func initGame() {
 		}
 	}
 
+	negativeBlend = 0
 	state = GameState{
 		CurrentScreen:           ScreenStart,
 		GameSpeedMultiplier:     1.0,
@@ -60,6 +61,8 @@ func initGame() {
 		GravityZones:            make([]*GravityZone, 0),
 		LingerZones:             make([]*LingerZone, 0),
 		FloatingTexts:           make([]*FloatingText, 0),
+		Airdrops:                make([]*Airdrop, 0),
+		AirdropSpawnTimer:       airdropRollTimer(),
 	}
 }
 
@@ -125,7 +128,7 @@ func LoadMetaProgression() {
 		meta.TutorialStep = TutorialGoToResearch
 		// New talent system: seed ML 1 + enough TP for the tutorial unlock.
 		meta.MetaLevel = 1
-		meta.TalentPointsEarned = 4 // Pyromaniac (3 TP) + Rapid Fire (1 TP)
+		meta.TalentPointsEarned = 3 // Precision (2 TP) + Rapid Fire (1 TP)
 		meta.TalentRanks = make(map[string]int)
 		meta.AutoAbilitiesByName = make(map[string]bool)
 		meta.TalentsMigrated = true // nothing to migrate on a fresh save
@@ -189,6 +192,17 @@ func LoadGame() {
 		setupLevelUpOptions()
 	}
 
+	// Mission fields are json:"-" so they're zeroed by Unmarshal.
+	// Give the player a short grace window before the first alert fires.
+	state.MissionNextAlert = MissionAlertInterval
+	state.TutEnemySeen = make(map[int]bool)
+
+	// MegaBossNextSpawn is json:"-" so it loads as 0, which would otherwise
+	// fire a mega boss instantly on resume. Re-derive the countdown to the next
+	// 5-minute mark from the (persisted) RunTime so the schedule survives loads.
+	state.MegaBossNextSpawn = MegaBossSpawnInterval - float32(math.Mod(float64(state.RunTime), float64(MegaBossSpawnInterval)))
+
+	negativeBlend = 0
 	state.IsPaused = true
 	state.CurrentScreen = ScreenGame
 }
@@ -220,8 +234,8 @@ func injectTutorialGoodItem() *Item {
 		Rarity:      RarityUncommon,
 		Description: "High-energy cutting tool",
 		Stats: []ItemStat{
-			{StatType: "Damage", Value: 2.0, BaseValue: 2.0, Growth: 0.5},
-			{StatType: "Haste", Value: 0.01, BaseValue: 0.01, Growth: 0.005},
+			{StatType: "Damage", Value: 5.0, BaseValue: 5.0},
+			{StatType: "Haste", Value: 0.01, BaseValue: 0.01},
 		},
 		SalvageValue: 40,
 	}
@@ -236,7 +250,7 @@ func injectTutorialBadItem() *Item {
 		Rarity:      RarityNormal,
 		Description: "Faulty component -- good for spare parts",
 		Stats: []ItemStat{
-			{StatType: "RPGain", Value: 0.01, BaseValue: 0.01, Growth: 0.0},
+			{StatType: "RPGain", Value: 0.01, BaseValue: 0.01},
 		},
 		SalvageValue: 30,
 	}
@@ -251,7 +265,7 @@ func initBasePlayer() Player {
 		MaxHP:     100.0,
 		Level:     1,
 		XP:        0.0,
-		NextLvlXP: 200.0,
+		NextLvlXP: 1000.0, // 5x base: fewer, chunkier level-ups
 		Damage:    5.0,
 		Range:     BaseRange,
 
@@ -267,7 +281,7 @@ func initBasePlayer() Player {
 		Haste:          0.0,
 		DamagePerMeter: 0.0,
 		CritChance:     0.0,
-		CritMultiplier: 1.5,
+		CritMultiplier: BaseCritMultiplier,
 
 		ExplosiveShotChance: 0.0,
 		MultishotChance:     0.0,
@@ -291,7 +305,7 @@ func initBasePlayer() Player {
 		FrenzyDuration: 3.0,
 
 		RapidFireDuration:   6.0,
-		RapidFireMultiplier: 3.0,
+		RapidFireMultiplier: 2.0,
 		DeathRayPath:        0,
 		DeathRayDuration:    5.0,
 		DeathRayDamageMult:  10.0,
@@ -364,8 +378,23 @@ func initBasePlayer() Player {
 // The new system reads talent ranks (meta.TalentRanks) as the source of
 // truth and writes the legacy unlock/branch fields downstream code expects.
 
+// enemyHPScale returns the HP-scale multiplier applied to enemies at a given
+// run time: +10% per 15s tier, then a compounding 3% per tier past tier 18
+// (~4m30s). Single source of truth — used by enemy spawning AND the in-run
+// "Enemy Scaling" HUD readout so the two can never disagree.
+func enemyHPScale(runTime float32) float32 {
+	timeTier := int(runTime / 15)
+	scale := 1.0 + 0.1*float32(timeTier)
+	if timeTier > 18 {
+		scale *= float32(math.Pow(1.03, float64(timeTier-18)))
+	}
+	return scale
+}
+
 func initEnemy(runTime float32) *Enemy {
-	wave := int(runTime/15) + 1
+	// timeTier is the number of completed 15-second intervals (0 at run start).
+	// All enemy scaling is expressed in terms of time rather than a wave counter.
+	timeTier := int(runTime / 15)
 	nextEnemyID++
 
 	visibleWidth := float32(ScreenWidth) / state.Camera.Zoom
@@ -395,17 +424,14 @@ func initEnemy(runTime float32) *Enemy {
 		y = top + rand.Float32()*visibleHeight
 	}
 
-	hpScale := 1.0 + 0.1*float32(wave-1)
-	speedScale := 1.0 + 0.02*float32(wave-1)
-	dmgScale := 1.0 + 0.05*float32(wave-1)
+	hpScale := enemyHPScale(runTime)
+	speedScale := 1.0 + 0.02*float32(timeTier)
+	dmgScale := 1.0 + 0.05*float32(timeTier)
 
-	//scales enemies by 3% per wave (exponential) after wave 19.
-	//this should force the player to lose eventually but let min
-	//maxed builds go further.
-	if wave > 19 {
-		extraScale := float32(math.Pow(1.03, float64(wave-19)))
-		hpScale *= extraScale
-		dmgScale *= extraScale
+	// Damage gets the same exponential 3%/tier kicker past tier 18 as HP
+	// (HP's copy lives in enemyHPScale), forcing runs to end eventually.
+	if timeTier > 18 {
+		dmgScale *= float32(math.Pow(1.03, float64(timeTier-18)))
 	}
 
 	r := rand.Float32()
@@ -414,16 +440,16 @@ func initEnemy(runTime float32) *Enemy {
 	// isBoss may be deprecated var, or at least may need renaming.
 	isBoss := false
 
-	// Probability table
-	// Standard: 50%
-	// Dodger: 10%
-	// Ranger: 5%
-	// Shielder: 5% (Wave 4+)
-	// Phaser: 5% (Wave 6+)
-	// Reflector: 5% (Wave 8+)
-	// Divider: 5% (Wave 10+)
-	// Berserker: 5% (Wave 12+)
-	// Remainder: Standard or Boss (if rare roll)
+	// Probability table — new types unlock by elapsed run time:
+	// Standard: 60%  (always)
+	// Dodger:   10%  (20s+)
+	// Ranger:    5%  (40s+)
+	// Shielder:  5%  (60s+)
+	// Phaser:    2%  (80s+)
+	// Reflector: 5%  (100s+)
+	// Divider:   5%  (120s+)
+	// Berserker: 5%  (140s+)
+	// Boss:       3%  (160s+)
 
 	t := runTime
 	if r < 0.60 {
@@ -453,8 +479,8 @@ func initEnemy(runTime float32) *Enemy {
 	size := float32(20.0)
 	// Base HP raised 5x to compensate for speed being reduced to 1/5 --
 	// enemies take longer to reach the player so need more HP to maintain pressure.
-	baseHP := 25 * hpScale
-	xpGiven := int32(10 + (wave-1)/5)
+	baseHP := 7 * hpScale
+	xpGiven := int32(10 + timeTier/5)
 
 	switch enemyType {
 	case EnemyDodger:
@@ -493,7 +519,7 @@ func initEnemy(runTime float32) *Enemy {
 		Size:               size,
 		HP:                 baseHP,
 		MaxHP:              baseHP,
-		Speed:              baseSpeed * speedScale,
+		Speed:              baseSpeed * speedScale * EnemySpeedMult,
 		Damage:             5.0 * dmgScale,
 		XPGiven:            float32(xpGiven),
 		IsBoss:             isBoss,
@@ -513,4 +539,186 @@ func initEnemy(runTime float32) *Enemy {
 		IsPhased:           false,
 		RageStacks:         0,
 	}
+}
+
+// initEnemyOfType creates an enemy of a specific type with time-appropriate stats,
+// used by the swarm mission to inject targeted enemies alongside normal spawning.
+// Identical to initEnemy except the type is forced rather than randomly rolled.
+func initEnemyOfType(runTime float32, enemyType int) *Enemy {
+	timeTier := int(runTime / 15)
+	nextEnemyID++
+
+	visibleWidth := float32(ScreenWidth) / state.Camera.Zoom
+	visibleHeight := float32(ScreenHeight) / state.Camera.Zoom
+
+	left := state.Player.X - visibleWidth/2
+	right := state.Player.X + visibleWidth/2
+	top := state.Player.Y - visibleHeight/2
+	bottom := state.Player.Y + visibleHeight/2
+
+	padding := float32(50.0)
+
+	side := rand.Intn(4)
+	var x, y float32
+	switch side {
+	case 0:
+		x = left + rand.Float32()*visibleWidth
+		y = top - padding
+	case 1:
+		x = right + padding
+		y = top + rand.Float32()*visibleHeight
+	case 2:
+		x = left + rand.Float32()*visibleWidth
+		y = bottom + padding
+	case 3:
+		x = left - padding
+		y = top + rand.Float32()*visibleHeight
+	}
+
+	hpScale := enemyHPScale(runTime)
+	speedScale := 1.0 + 0.02*float32(timeTier)
+	dmgScale := 1.0 + 0.05*float32(timeTier)
+
+	if timeTier > 18 {
+		dmgScale *= float32(math.Pow(1.03, float64(timeTier-18)))
+	}
+
+	size := float32(20.0)
+	baseHP := 7 * hpScale
+	baseSpeed := float32(36.0)
+	xpGiven := int32(10 + timeTier/5)
+
+	switch enemyType {
+	case EnemyDodger:
+		baseSpeed = DodgerBaseSpeed
+		baseHP *= 0.7
+	case EnemyRanger:
+		baseSpeed = RangerBaseSpeed
+	case EnemyShielder:
+		baseSpeed = ShielderBaseSpeed
+		baseHP *= 6.0
+	case EnemyPhaser:
+		baseSpeed = PhaserBaseSpeed
+		baseHP *= 0.8
+	case EnemyReflector:
+		baseSpeed = ReflectorBaseSpeed
+		baseHP *= 1.5
+	case EnemyDivider:
+		baseSpeed = DividerBaseSpeed
+		baseHP *= 2.5
+		size = 30.0
+	case EnemyBerserker:
+		baseSpeed = BerserkerBaseSpeed
+		baseHP *= 5.0
+	}
+
+	return &Enemy{
+		ID:                 nextEnemyID,
+		Type:               enemyType,
+		X:                  x,
+		Y:                  y,
+		Size:               size,
+		HP:                 baseHP,
+		MaxHP:              baseHP,
+		Speed:              baseSpeed * speedScale * EnemySpeedMult,
+		Damage:             5.0 * dmgScale,
+		XPGiven:            float32(xpGiven),
+		IsBoss:             false,
+		AttackTimer:        0.0,
+		SatelliteHitTimers: make(map[int]float32),
+		DeathRayHitStatus:  make(map[int]bool),
+		DamageAccumulator:  make(map[string]float32),
+		DamageShowTimer:    0.1,
+	}
+}
+
+// MegaBossRoster is the pool the 5-minute spawn timer draws from. Each entry is
+// an enemy-type constant; add a boss's type here to put it in rotation. Equal
+// weight for now — duplicate an entry to weight it more heavily.
+var MegaBossRoster = []int{
+	EnemyMegaBossSpawner,
+	EnemyMegaBossOrbiter,
+	EnemyMegaBossBulwark,
+}
+
+// spawnMegaBoss picks a random boss from the roster and builds it.
+func spawnMegaBoss(runTime float32) *Enemy {
+	bossType := MegaBossRoster[rand.Intn(len(MegaBossRoster))]
+	return initMegaBoss(runTime, bossType)
+}
+
+// initMegaBoss builds a mega boss of the given type at the screen edge. All
+// mega bosses share a tanky, time-scaled chassis (size 55, ~60× normal HP,
+// IsBoss); the per-type switch applies each boss's distinct stats and behavior
+// fields. Behavior itself lives in moveEnemies / moveProjectiles, keyed on Type.
+func initMegaBoss(runTime float32, bossType int) *Enemy {
+	timeTier := int(runTime / 15)
+	nextEnemyID++
+
+	visibleWidth := float32(ScreenWidth) / state.Camera.Zoom
+	visibleHeight := float32(ScreenHeight) / state.Camera.Zoom
+
+	left := state.Player.X - visibleWidth/2
+	right := state.Player.X + visibleWidth/2
+	top := state.Player.Y - visibleHeight/2
+	bottom := state.Player.Y + visibleHeight/2
+
+	padding := float32(80.0)
+
+	side := rand.Intn(4)
+	var x, y float32
+	switch side {
+	case 0:
+		x = left + rand.Float32()*visibleWidth
+		y = top - padding
+	case 1:
+		x = right + padding
+		y = top + rand.Float32()*visibleHeight
+	case 2:
+		x = left + rand.Float32()*visibleWidth
+		y = bottom + padding
+	default:
+		x = left - padding
+		y = top + rand.Float32()*visibleHeight
+	}
+
+	hpScale := enemyHPScale(runTime)
+
+	baseHP := 7 * hpScale * 60 // 60× normal — very tanky
+
+	e := &Enemy{
+		ID:                 nextEnemyID,
+		Type:               bossType,
+		X:                  x,
+		Y:                  y,
+		Size:               55.0,
+		HP:                 baseHP,
+		MaxHP:              baseHP,
+		LastHP:             baseHP, // seed so the first frame's HP-delta check reads 0 damage
+		Speed:              float32(7),
+		Damage:             10.0,
+		XPGiven:            float32(200 + timeTier*10),
+		IsBoss:             true,
+		AttackTimer:        0.0,
+		SatelliteHitTimers: make(map[int]float32),
+		DeathRayHitStatus:  make(map[int]bool),
+		DamageAccumulator:  make(map[string]float32),
+		DamageShowTimer:    0.1,
+	}
+
+	switch bossType {
+	case EnemyMegaBossOrbiter:
+		// Glassier and faster than the others — it survives by kiting, not by
+		// soaking, so trim the chassis HP and let it actually circle.
+		e.HP *= 0.6
+		e.MaxHP = e.HP
+		e.LastHP = e.HP
+		e.Speed = MegaBossOrbiterSpeed
+		e.Damage = 16.0 // ranged shots sting
+	case EnemyMegaBossBulwark:
+		// Slow, heavily armored front. Random initial shield facing.
+		e.Speed = MegaBossBulwarkSpeed
+		e.ShieldAngle = rand.Float32() * 2 * math.Pi
+	}
+	return e
 }

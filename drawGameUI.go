@@ -3,10 +3,70 @@ package main
 import (
 	"fmt"
 	"math"
+	"math/rand"
+	"sort"
 	"strings"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
+
+// xpAnim holds state for the game-over XP bar fill animation.
+var xpAnim struct {
+	ready    bool
+	curXP    float32 // total XP currently displayed (same units as meta.MetaXP)
+	curLevel int     // level currently displayed
+	flash    float32 // countdown for level-up flash (seconds)
+	rate     float32 // XP per second fill speed
+}
+
+type xpParticle struct {
+	x, y        float32
+	vx, vy      float32
+	rotation    float32
+	rotSpeed    float32
+	lifetime    float32
+	maxLifetime float32
+	size        float32
+	shape       int // 0=circle 1=rect 2=triangle
+	col         rl.Color
+}
+
+var xpParticles []xpParticle
+
+func spawnXPLevelUpParticles() {
+	const barW = float32(300)
+	const barH = float32(10)
+	originX := float32(ScreenWidth)/2 + barW/2
+	originY := float32(ScreenHeight/2) + 52 + barH/2
+
+	palette := []rl.Color{
+		rl.Gold,
+		rl.Yellow,
+		rl.Orange,
+		rl.White,
+		rl.NewColor(255, 200, 50, 255),
+		rl.NewColor(255, 240, 130, 255),
+	}
+
+	for i := 0; i < 30; i++ {
+		angle := rand.Float32() * math.Pi * 2
+		speed := float32(90) + rand.Float32()*200
+		vx := float32(math.Cos(float64(angle)))*speed + 50 // slight rightward bias
+		vy := float32(math.Sin(float64(angle)))*speed - 30 // slight upward bias
+		lt := float32(0.55) + rand.Float32()*0.5
+		xpParticles = append(xpParticles, xpParticle{
+			x: originX, y: originY,
+			vx: vx, vy: vy,
+			rotation:    rand.Float32() * 360,
+			rotSpeed:    (rand.Float32()*2 - 1) * 360,
+			lifetime:    lt,
+			maxLifetime: lt,
+			size:        4 + rand.Float32()*9,
+			shape:       rand.Intn(3),
+			col:         palette[rand.Intn(len(palette))],
+		})
+	}
+}
 
 func playButtonSound() {
 	rl.SetSoundVolume(state.MenuClickSound, state.SFXVolume)
@@ -41,6 +101,32 @@ func brightenColor(c rl.Color, amount float32) rl.Color {
 	)
 }
 
+// lerpColor blends RGB from a→b by t (0..1), keeping full alpha. Used to fade
+// trail color along its length.
+func lerpColor(a, b rl.Color, t float32) rl.Color {
+	if t < 0 {
+		t = 0
+	}
+	if t > 1 {
+		t = 1
+	}
+	return rl.NewColor(
+		uint8(float32(a.R)+(float32(b.R)-float32(a.R))*t),
+		uint8(float32(a.G)+(float32(b.G)-float32(a.G))*t),
+		uint8(float32(a.B)+(float32(b.B)-float32(a.B))*t),
+		255,
+	)
+}
+
+// darkenColor scales a color's RGB toward black by `amount` (0..1).
+func darkenColor(c rl.Color, amount float32) rl.Color {
+	f := 1 - amount
+	if f < 0 {
+		f = 0
+	}
+	return rl.NewColor(uint8(float32(c.R)*f), uint8(float32(c.G)*f), uint8(float32(c.B)*f), c.A)
+}
+
 // scaleAlpha clamps a base alpha (0..255) by a 0..1 multiplier and returns
 // it as uint8.
 func scaleAlpha(base uint8, mul float32) uint8 {
@@ -60,7 +146,7 @@ const glowSteps = 8
 
 // glowReach is the maximum radius the outermost glow layer extends BEYOND
 // the body. Tightened from the original 12 to 8 for a more contained
-// neon-tube look — halo is small, sharp, and right against the body.
+// neon-tube look -- halo is small, sharp, and right against the body.
 const glowReach = 8.0
 
 // drawNeonGlow draws a circular bloom around (x, y). Stacks `glowSteps`
@@ -96,7 +182,7 @@ func drawNeonGlow(x, y, radius float32, col rl.Color, alpha float32) {
 }
 
 // drawNeonGlowPoly is the polygon equivalent. Used for triangles, hexagons,
-// pentagons, squares — anything drawn via DrawPoly. Same dense-stack
+// pentagons, squares -- anything drawn via DrawPoly. Same dense-stack
 // approach as drawNeonGlow but using DrawPoly so the halo matches the
 // body's silhouette.
 func drawNeonGlowPoly(x, y, radius float32, sides int32, rotation float32, col rl.Color, alpha float32) {
@@ -150,39 +236,123 @@ func drawNeonGlowRect(x, y, size, rotation float32, col rl.Color, alpha float32)
 	rl.DrawPoly(pos, sides, r+1, rot, rl.NewColor(hot.R, hot.G, hot.B, scaleAlpha(220, alpha)))
 }
 
-// drawBulletTrail renders a fading streak behind a projectile based on its
-// velocity. 8 segments going back ~0.12s of travel, with alpha fading
-// quadratically from ~85% to 0%. No per-bullet state needed — the trail
-// length naturally scales with bullet speed.
-func drawBulletTrail(p *Projectile, col rl.Color) {
-	const segments = 8
-	const trailTime = 0.12 // seconds of velocity-time to span
+// drawBulletHeadGlow stacks a couple of translucent circles behind the bullet
+// body so the projectile reads as a glowing orb rather than a flat dot. `col`
+// tints the outer halo; `hot` lights the bright inner ring.
+func drawBulletHeadGlow(p *Projectile, col, hot rl.Color) {
+	rl.DrawCircle(int32(p.X), int32(p.Y), p.Radius+3, rl.NewColor(col.R, col.G, col.B, 45))
+	rl.DrawCircle(int32(p.X), int32(p.Y), p.Radius+1.5, rl.NewColor(hot.R, hot.G, hot.B, 110))
+}
 
-	// Skip trails for nearly-stationary bullets to avoid weird specks.
-	speedSq := p.VelX*p.VelX + p.VelY*p.VelY
-	if speedSq < 1 {
-		return
+// bulletIsExplosive reports whether the player's current build makes basic
+// shots capable of exploding on impact (Volatile upgrade or ExplosiveShots
+// modifier). Such bullets get an ember palette so the build reads at a glance.
+func bulletIsExplosive(p *Projectile) bool {
+	return !p.IsEnemy && (state.Player.ExplosiveShotChance > 0 || state.Player.ExplosiveModChance > 0)
+}
+
+// drawBulletTrail renders a layered "comet" streak behind a projectile: a wide
+// soft glow underneath a thin hot core, with a gentle traveling wave so the
+// trail ripples like energy instead of sitting as a flat line. The streak's
+// color fades hot-at-the-front to dark-at-the-tail, and its style is derived
+// from the bullet kind so crits, chained/ricochet shots, piercing rounds, and
+// enemy fire all read differently. Explosive-capable bullets burn ember.
+// Trail length scales naturally with bullet speed -- no per-bullet state needed.
+func drawBulletTrail(p *Projectile, col rl.Color) {
+	// ── Per-kind shape + head color ──────────────────────────────────────────
+	segments := 10
+	trailTime := float32(0.14) // seconds of travel the streak spans
+	waveAmp := float32(1.4)    // perpendicular ripple amplitude (px)
+	jagged := false            // electric zigzag instead of a smooth wave
+	hotCol := brightenColor(col, 0.85)
+	switch {
+	case p.IsEnemy:
+		segments, trailTime, waveAmp = 7, 0.10, 0.7
+		hotCol = brightenColor(col, 0.5)
+	case p.IsCrit:
+		segments, trailTime, waveAmp = 13, 0.18, 1.8
+		hotCol = brightenColor(col, 0.95)
+	case p.Hits > 0: // chained / ricocheted -- crackling electric arc
+		segments, trailTime, waveAmp = 11, 0.15, 3.4
+		jagged = true
+		hotCol = brightenColor(col, 0.9)
+	case p.IsPiercing:
+		segments, trailTime = 14, 0.20
 	}
 
-	// Step backward from the current position by velocity * trailTime,
-	// drawing line segments in reverse and tapering thickness + alpha.
-	dx := p.VelX * trailTime / float32(segments)
-	dy := p.VelY * trailTime / float32(segments)
+	// Ember palette for explosive builds: orange streak, hot ember-white front.
+	outerBase := col
+	if bulletIsExplosive(p) {
+		outerBase = rl.NewColor(255, 120, 40, 255)
+		hotCol = rl.NewColor(255, 215, 135, 255)
+	}
+	tailCol := darkenColor(outerBase, 0.55) // darkened color the tail fades toward
+
+	speedSq := p.VelX*p.VelX + p.VelY*p.VelY
+	if speedSq < 1 {
+		// Nearly stationary: skip the streak but still glow so it isn't a bare dot.
+		drawBulletHeadGlow(p, outerBase, hotCol)
+		return
+	}
+	speed := float32(math.Sqrt(float64(speedSq)))
+	// Unit forward (ux,uy) → unit perpendicular (perpX,perpY).
+	ux, uy := p.VelX/speed, p.VelY/speed
+	perpX, perpY := -uy, ux
+
+	t0 := float32(rl.GetTime())
+	stepBack := trailTime / float32(segments)
 
 	prevX, prevY := p.X, p.Y
 	for i := 1; i <= segments; i++ {
-		curX := p.X - dx*float32(i)
-		curY := p.Y - dy*float32(i)
-		// Fade quadratically — feels more like a streak than a uniform line.
-		t := 1.0 - float32(i)/float32(segments)
-		alpha := uint8(220 * t * t)
-		thickness := p.Radius * (0.4 + 0.6*t)
-		segCol := rl.NewColor(col.R, col.G, col.B, alpha)
-		rl.DrawLineEx(
-			rl.Vector2{X: prevX, Y: prevY},
-			rl.Vector2{X: curX, Y: curY},
-			thickness, segCol)
-		prevX, prevY = curX, curY
+		back := float32(i) * stepBack
+		bx := p.X - p.VelX*back
+		by := p.Y - p.VelY*back
+
+		// Perpendicular offset, tapered to 0 at the head so the streak stays
+		// anchored to the bullet and only ripples further back.
+		taper := float32(i) / float32(segments)
+		var off float32
+		if jagged {
+			sign := float32(1)
+			if i%2 == 0 {
+				sign = -1
+			}
+			off = sign * waveAmp * (0.5 + 0.5*float32(math.Sin(float64(t0*32+float32(i)))))
+		} else {
+			off = waveAmp * float32(math.Sin(float64(float32(i)*0.9+t0*6)))
+		}
+		bx += perpX * off * taper
+		by += perpY * off * taper
+
+		frac := 1.0 - float32(i)/float32(segments) // 1 at head → 0 at tail
+		seg := rl.Vector2{X: bx, Y: by}
+		prev := rl.Vector2{X: prevX, Y: prevY}
+
+		// Wide soft outer glow -- fades from base color (front) to dark (tail).
+		glowCol := lerpColor(tailCol, outerBase, frac)
+		rl.DrawLineEx(prev, seg, p.Radius*(1.6*frac+0.3),
+			rl.NewColor(glowCol.R, glowCol.G, glowCol.B, uint8(110*frac*frac)))
+		// Thin inner core -- base color (tail) ramping to the hot color (front).
+		coreCol := lerpColor(outerBase, hotCol, frac)
+		rl.DrawLineEx(prev, seg, p.Radius*(0.5*frac+0.15),
+			rl.NewColor(coreCol.R, coreCol.G, coreCol.B, uint8(230*frac*frac)))
+
+		prevX, prevY = bx, by
+	}
+
+	drawBulletHeadGlow(p, outerBase, hotCol)
+
+	// Crits twinkle with a slowly rotating 4-point sparkle at the head.
+	if p.IsCrit {
+		ang := float64(t0) * 3.0
+		r := p.Radius + 4
+		for k := 0; k < 4; k++ {
+			a := ang + float64(k)*(math.Pi/2)
+			ex := p.X + float32(math.Cos(a))*r
+			ey := p.Y + float32(math.Sin(a))*r
+			rl.DrawLineEx(rl.Vector2{X: p.X, Y: p.Y}, rl.Vector2{X: ex, Y: ey}, 1.5,
+				rl.NewColor(hotCol.R, hotCol.G, hotCol.B, 210))
+		}
 	}
 }
 
@@ -194,7 +364,7 @@ func drawBulletTrail(p *Projectile, col rl.Color) {
 // Plus a few small radial debris fragments for extra crunch.
 //
 // Driven entirely by DyingEnemy.Elapsed / Duration. progress 0 → 1 over
-// the animation lifetime. No per-fragment state — fragments are derived
+// the animation lifetime. No per-fragment state -- fragments are derived
 // deterministically from the dying-enemy struct each frame.
 
 func drawDyingEnemies() {
@@ -235,7 +405,7 @@ func drawDyingEnemy(d *DyingEnemy) {
 		color = EnemyBerserkerColor
 	}
 
-	// 1) Shock ring — subtle backdrop only. Reads as a faint pulse behind
+	// 1) Shock ring -- subtle backdrop only. Reads as a faint pulse behind
 	// the fragments rather than competing with them. Tinted to the
 	// enemy's color (not warm white) so it blends instead of flashing.
 	ringR := d.Size * (0.5 + progress*1.4)
@@ -248,7 +418,7 @@ func drawDyingEnemy(d *DyingEnemy) {
 			rl.NewColor(color.R, color.G, color.B, ringAlpha))
 	}
 
-	// 2) Burst-apart fragments — the main visual flourish. The enemy's
+	// 2) Burst-apart fragments -- the main visual flourish. The enemy's
 	// silhouette ruptures into a shower of small shards that fly radially
 	// outward, tumble as they go, and fade out.
 	//
@@ -275,7 +445,7 @@ func drawDyingEnemy(d *DyingEnemy) {
 		// a uniform circle. Range ~0.65x to 1.35x of the base.
 		speedMult := 0.65 + float32((seed+i*7)%8)*0.1
 
-		// Linear distance vs progress — feels like "constant velocity"
+		// Linear distance vs progress -- feels like "constant velocity"
 		// rather than the previous quadratic which front-loaded the burst.
 		baseDist := d.Size * 2.6
 		dist := baseDist * speedMult * progress
@@ -330,9 +500,9 @@ func fragmentSidesForType(typeID int) int32 {
 
 // drawTutorialBubble renders a styled tip box anchored at (x, y).
 //
-//	title    — bold header text drawn in the accent colour
-//	lines    — body lines, each drawn on its own row
-//	accent   — border and title colour (e.g. rl.Gold, rl.SkyBlue)
+//	title    -- bold header text drawn in the accent colour
+//	lines    -- body lines, each drawn on its own row
+//	accent   -- border and title colour (e.g. rl.Gold, rl.SkyBlue)
 //
 // The box is sized to fit the longest line and automatically clamped to the
 // screen so it never gets clipped on any edge.
@@ -388,7 +558,7 @@ func drawTutorialBubble(x float32, y float32, title string, lines []string, acce
 
 // drawInRunTip renders the current in-run tutorial tip as a semi-transparent
 // banner near the top-centre of the HUD. Tips auto-dismiss when TutTipTimer
-// reaches zero — no click required.
+// reaches zero -- no click required.
 func drawInRunTip() {
 	if state.TutActiveTip == "" {
 		return
@@ -431,7 +601,7 @@ func drawTutAimOverlay() {
 	// Full-screen dim so the world reads as "paused".
 	rl.DrawRectangle(0, 0, ScreenWidth, int32(ScreenHeight), rl.NewColor(0, 0, 0, 140))
 
-	// Find the first alive dodger to highlight — that's what the player needs to target.
+	// Find the first alive dodger to highlight -- that's what the player needs to target.
 	var closest *Enemy
 	for _, e := range state.Enemies {
 		if e.HP > 0 && e.Type == EnemyDodger {
@@ -482,6 +652,58 @@ func drawTutAimOverlay() {
 	}
 }
 
+// drawTutAirdropOverlay renders the first-airdrop tutorial pause screen.
+// Dims the world, highlights the orbiting box, and explains what it is.
+// Any left-click dismisses it.
+func drawTutAirdropOverlay() {
+	rl.DrawRectangle(0, 0, ScreenWidth, int32(ScreenHeight), rl.NewColor(0, 0, 0, 140))
+
+	// Find and highlight the first live airdrop.
+	for _, a := range state.Airdrops {
+		if a.Claimed {
+			continue
+		}
+		wx := state.Player.X + float32(math.Cos(float64(a.Angle)))*a.OrbitRadius
+		wy := state.Player.Y + float32(math.Sin(float64(a.Angle)))*a.OrbitRadius
+		screenPos := rl.GetWorldToScreen2D(rl.Vector2{X: wx, Y: wy}, state.Camera)
+		pulse := float32(24) + float32(6)*(1+float32(math.Sin(float64(rl.GetTime())*4)))/2
+		rl.DrawCircleLinesV(screenPos, pulse+2, rl.NewColor(0, 0, 0, 120))
+		rl.DrawCircleLinesV(screenPos, pulse, rl.Gold)
+		arrowBase := rl.Vector2{X: screenPos.X, Y: screenPos.Y + pulse + 22}
+		rl.DrawTriangle(
+			rl.Vector2{X: screenPos.X, Y: screenPos.Y + pulse + 4},
+			rl.Vector2{X: arrowBase.X - 10, Y: arrowBase.Y},
+			rl.Vector2{X: arrowBase.X + 10, Y: arrowBase.Y},
+			rl.Gold,
+		)
+		break
+	}
+
+	lines := []string{
+		"An Air Drop has landed!",
+		"Sometimes a supply drop will orbit your position, carrying bonus resources.",
+		"Click the box to claim it before it disappears!",
+	}
+	const fs0 = int32(22)
+	const fs1 = int32(15)
+	bubbleW := int32(600)
+	bubbleH := int32(110)
+	bx := ScreenWidth/2 - bubbleW/2
+	by := int32(ScreenHeight)/2 - bubbleH/2 - 60
+	rl.DrawRectangle(bx, by, bubbleW, bubbleH, rl.NewColor(10, 10, 28, 235))
+	rl.DrawRectangleLinesEx(rl.Rectangle{X: float32(bx), Y: float32(by), Width: float32(bubbleW), Height: float32(bubbleH)}, 2, rl.Gold)
+	tw0 := rl.MeasureText(lines[0], fs0)
+	rl.DrawText(lines[0], bx+bubbleW/2-tw0/2, by+12, fs0, rl.Gold)
+	for i, l := range lines[1:] {
+		tw := rl.MeasureText(l, fs1)
+		rl.DrawText(l, bx+bubbleW/2-tw/2, by+44+int32(i)*20, fs1, rl.NewColor(210, 210, 230, 255))
+	}
+
+	prompt := "Click anywhere to continue"
+	tp := rl.MeasureText(prompt, 13)
+	rl.DrawText(prompt, ScreenWidth/2-tp/2, by+bubbleH+10, 13, rl.NewColor(160, 160, 180, 200))
+}
+
 // enemyIntroText returns a one-line flavour description for first encounters.
 func enemyIntroText(t int) string {
 	switch t {
@@ -492,7 +714,7 @@ func enemyIntroText(t int) string {
 	case EnemyRanger:
 		return "HEXAGON -- Ranger. Keeps its distance and shoots back!"
 	case EnemyShielder:
-		return "PENTAGON -- Shielder. Its zone phases enemies inside. Step in to hit them; everything outside becomes untouchable while you're in."
+		return "PENTAGON -- Shielder. Heavily armored (takes half damage). Enemies inside its zone take 90% reduced damage -- kill it to drop the shield."
 	case EnemyPhaser:
 		return "CIRCLE -- Phaser. Blinks intangible to dodge your shots."
 	case EnemyReflector:
@@ -501,24 +723,30 @@ func enemyIntroText(t int) string {
 		return "BIG HEXAGON -- Divider. Splits into fast fragments when killed!"
 	case EnemyBerserker:
 		return "STAR -- Berserker. Gets faster and hits harder as it takes damage."
+	case EnemyMegaBossSpawner:
+		return "MEGA BOSS -- Spawner. Every hit you land ejects a standard enemy. Slow, but extremely durable."
+	case EnemyMegaBossOrbiter:
+		return "MEGA BOSS -- Orbiter. Circles you from beyond your range and shells you. Chase it down or extend your reach."
+	case EnemyMegaBossBulwark:
+		return "MEGA BOSS -- Bulwark. Its rotating shield deflects bullets; only abilities or hits to the exposed rear arc land."
 	}
 	return ""
 }
 
 func handlePauseMenuInput() {
-	mousePos := rl.GetMousePosition()
+	mousePos := inputGetPos()
 
 	if state.InOptions {
 		// Options menu uses screen-centre coords (unchanged).
 		backRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight)/2 + 100, Width: 200, Height: 50}
-		if rl.IsMouseButtonReleased(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(mousePos, backRect) {
+		if inputIsReleased() && rl.CheckCollisionPointRec(mousePos, backRect) {
 			playButtonSound()
 			state.InOptions = false
 			return
 		}
 
 		musicBarRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight)/2 - 60, Width: 200, Height: 20}
-		if rl.IsMouseButtonDown(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: musicBarRect.X - 10, Y: musicBarRect.Y - 10, Width: musicBarRect.Width + 20, Height: musicBarRect.Height + 20}) {
+		if inputIsDown() && rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: musicBarRect.X - 10, Y: musicBarRect.Y - 10, Width: musicBarRect.Width + 20, Height: musicBarRect.Height + 20}) {
 			val := (mousePos.X - musicBarRect.X) / musicBarRect.Width
 			if val < 0 {
 				val = 0
@@ -531,7 +759,7 @@ func handlePauseMenuInput() {
 		}
 
 		sfxBarRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight)/2 + 20, Width: 200, Height: 20}
-		if rl.IsMouseButtonDown(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: sfxBarRect.X - 10, Y: sfxBarRect.Y - 10, Width: sfxBarRect.Width + 20, Height: sfxBarRect.Height + 20}) {
+		if inputIsDown() && rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: sfxBarRect.X - 10, Y: sfxBarRect.Y - 10, Width: sfxBarRect.Width + 20, Height: sfxBarRect.Height + 20}) {
 			val := (mousePos.X - sfxBarRect.X) / sfxBarRect.Width
 			if val < 0 {
 				val = 0
@@ -543,10 +771,10 @@ func handlePauseMenuInput() {
 			meta.SFXVolume = val
 		}
 
-		// FPS counter toggle — flip on release so the click doesn't retrigger
+		// FPS counter toggle -- flip on release so the click doesn't retrigger
 		// while the button is held.
 		fpsToggleRect := rl.Rectangle{X: float32(ScreenWidth)/2 + 70, Y: float32(ScreenHeight)/2 + 53, Width: 30, Height: 24}
-		if rl.IsMouseButtonReleased(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(mousePos, fpsToggleRect) {
+		if inputIsReleased() && rl.CheckCollisionPointRec(mousePos, fpsToggleRect) {
 			playButtonSound()
 			meta.ShowFPS = !meta.ShowFPS
 		}
@@ -561,20 +789,20 @@ func handlePauseMenuInput() {
 	baseY := float32(ScreenHeight)/2 - 130
 
 	// RESUME
-	if rl.IsMouseButtonReleased(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: panelX, Y: baseY, Width: btnW, Height: btnH}) {
+	if inputIsReleased() && rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: panelX, Y: baseY, Width: btnW, Height: btnH}) {
 		playButtonSound()
 		state.IsPaused = false
 		state.GameSpeedMultiplier = state.PreviousSpeedMultiplier
 		return
 	}
 	// OPTIONS
-	if rl.IsMouseButtonReleased(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: panelX, Y: baseY + btnH + btnMargin, Width: btnW, Height: btnH}) {
+	if inputIsReleased() && rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: panelX, Y: baseY + btnH + btnMargin, Width: btnW, Height: btnH}) {
 		playButtonSound()
 		state.InOptions = true
 		return
 	}
 	// SAVE & EXIT
-	if rl.IsMouseButtonReleased(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: panelX, Y: baseY + 2*(btnH+btnMargin), Width: btnW, Height: btnH}) {
+	if inputIsReleased() && rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: panelX, Y: baseY + 2*(btnH+btnMargin), Width: btnW, Height: btnH}) {
 		playButtonSound()
 		SaveGame()
 		SaveMetaProg()
@@ -583,7 +811,7 @@ func handlePauseMenuInput() {
 		return
 	}
 	// END RUN
-	if rl.IsMouseButtonReleased(rl.MouseButtonLeft) && rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: panelX, Y: baseY + 3*(btnH+btnMargin), Width: btnW, Height: btnH}) {
+	if inputIsReleased() && rl.CheckCollisionPointRec(mousePos, rl.Rectangle{X: panelX, Y: baseY + 3*(btnH+btnMargin), Width: btnW, Height: btnH}) {
 		playButtonSound()
 		state.Player.HP = 0
 		state.GameOver = true
@@ -635,10 +863,10 @@ func abilityUpgradeLines(abilityName string) []string {
 		case BranchRapidFireOvercharge:
 			addF("RapidFireSpeed", "Amplifier", n("RapidFireSpeed"),
 				fmt.Sprintf("+%.2fx fire rate", float32(n("RapidFireSpeed"))*0.25))
-			addF("RapidFireOCCrit", "Hot Shots", n("RapidFireOCCrit"),
-				fmt.Sprintf("+%d%% crit chance", n("RapidFireOCCrit")*5))
 			addF("RapidFireOCMulti", "Scatter", n("RapidFireOCMulti"),
-				fmt.Sprintf("+%d%% multishot chance", n("RapidFireOCMulti")*10))
+				fmt.Sprintf("+%d%% multishot chance", n("RapidFireOCMulti")*5))
+			addF("RapidFireOCVolley", "Volley", n("RapidFireOCVolley"),
+				fmt.Sprintf("+%d burst multishot count", n("RapidFireOCVolley")))
 		default:
 			addF("RapidFireSpeed", "Overclock", n("RapidFireSpeed"),
 				fmt.Sprintf("+%.1fx fire rate", float32(n("RapidFireSpeed"))*0.5))
@@ -878,7 +1106,14 @@ func itemModifierLines() []string {
 		modItems[item.UniqueModifier] = append(modItems[item.UniqueModifier], item.Name)
 	}
 
-	for mod, count := range modCount {
+	mods := make([]string, 0, len(modCount))
+	for mod := range modCount {
+		mods = append(mods, mod)
+	}
+	sort.Strings(mods)
+
+	for _, mod := range mods {
+		count := modCount[mod]
 		itemNames := modItems[mod]
 		// Build "ItemA / ItemB" source label
 		source := ""
@@ -926,7 +1161,7 @@ func drawPauseMenu() {
 		return
 	}
 
-	mousePos := rl.GetMousePosition()
+	mousePos := inputGetPos()
 
 	// ── Layout constants ──────────────────────────────────────────────────────
 	const panelPad = float32(40)    // outer margin from screen edge
@@ -1027,7 +1262,7 @@ func drawPauseMenu() {
 		})
 	}
 
-	// Passives block — only show if the player has at least one passive.
+	// Passives block -- only show if the player has at least one passive.
 	passiveLines := passiveUpgradeLines()
 	if len(passiveLines) > 0 {
 		cards = append(cards, card{
@@ -1037,7 +1272,7 @@ func drawPauseMenu() {
 		})
 	}
 
-	// Item-granted abilities block — unique modifiers from equipped gear.
+	// Item-granted abilities block -- unique modifiers from equipped gear.
 	itemLines := itemModifierLines()
 	if len(itemLines) > 0 {
 		cards = append(cards, card{
@@ -1083,7 +1318,7 @@ func drawPauseMenu() {
 			cardH = 70
 		}
 
-		// Stack rows — need to know height of previous rows in same column.
+		// Stack rows -- need to know height of previous rows in same column.
 		// Simple approach: uniform row height based on tallest card per row.
 		// We use a fixed estimated row height for layout simplicity.
 		const rowH = float32(160)
@@ -1153,7 +1388,7 @@ func drawOptionsMenu() {
 	rl.DrawRectangle(int32(sfxRect.X), int32(sfxRect.Y), int32(float32(sfxRect.Width)*state.SFXVolume), int32(sfxRect.Height), rl.Green)
 	rl.DrawRectangleLinesEx(sfxRect, 2, rl.White)
 
-	//FPS counter toggle — checkbox-style button on the right of the label.
+	//FPS counter toggle -- checkbox-style button on the right of the label.
 	fpsLabelX := float32(ScreenWidth)/2 - 100
 	fpsRowY := float32(ScreenHeight)/2 + 55
 	rl.DrawText("FPS Counter", int32(fpsLabelX), int32(fpsRowY), 20, rl.White)
@@ -1162,8 +1397,8 @@ func drawOptionsMenu() {
 	if meta.ShowFPS {
 		toggleFill = rl.NewColor(0, 140, 0, 255)
 	}
-	if rl.CheckCollisionPointRec(rl.GetMousePosition(), fpsToggleRect) {
-		// subtle hover lift — add 30 to each channel, capped at 255.
+	if rl.CheckCollisionPointRec(inputGetPos(), fpsToggleRect) {
+		// subtle hover lift -- add 30 to each channel, capped at 255.
 		bump := func(c uint8) uint8 {
 			v := int(c) + 30
 			if v > 255 {
@@ -1188,7 +1423,7 @@ func drawOptionsMenu() {
 	//back button
 	backRect := rl.Rectangle{X: float32(ScreenWidth)/2 - 100, Y: float32(ScreenHeight)/2 + 100, Width: 200, Height: 50}
 	col := rl.DarkGray
-	if rl.CheckCollisionPointRec(rl.GetMousePosition(), backRect) {
+	if rl.CheckCollisionPointRec(inputGetPos(), backRect) {
 		col = rl.Gray
 	}
 	rl.DrawRectangleRec(backRect, col)
@@ -1198,16 +1433,31 @@ func drawOptionsMenu() {
 
 // builds the options for the skill boosts you can choose on level up.
 func handleLevelUpInput() {
-	const buttonHeight = 60
+	// Geometry MUST stay in sync with drawLevelUpMenu() or clicks won't line up
+	// with the rendered buttons, leaving dead zones.
+	const menuH = 380
+	const menuY = ScreenHeight/2 - menuH/2
+	const buttonWidth = 440
+	const buttonHeight = 72
 	const margin = 10
-	const buttonWidth = 400
-	const startY = float32(ScreenHeight)/2 - 350/2 + 100
+	const startY = menuY + 100
 
-	if rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
-		mousePos := rl.GetMousePosition()
+	if inputIsPressed() {
+		mousePos := inputGetPos()
+
+		// Reroll button (geometry mirrors drawLevelUpMenu: below the panel).
+		if state.LevelUpRerollsLeft > 0 {
+			rerollBtn := rl.Rectangle{X: float32(ScreenWidth)/2 - 110, Y: float32(menuY + menuH + 12), Width: 220, Height: 34}
+			if rl.CheckCollisionPointRec(mousePos, rerollBtn) {
+				state.LevelUpRerollsLeft--
+				setupLevelUpOptions()
+				playButtonSound()
+				return
+			}
+		}
 
 		for i, opt := range state.LevelUpOptions {
-			rectY := startY + float32(i*(buttonHeight+margin))
+			rectY := float32(startY + i*(buttonHeight+margin))
 			rect := rl.Rectangle{
 				X:      float32(ScreenWidth)/2 - float32(buttonWidth)/2,
 				Y:      rectY,
@@ -1319,15 +1569,16 @@ func drawLockedIcon(index int, hudAlpha uint8) {
 func drawAndHandleSpeedButtons() {
 	speeds := []float32{1.0}
 	if meta.Speed3xUnlocked {
-		speeds = append(speeds, 3.0)
+		// Speed Governor: 2x midpoint + 3x cap.
+		speeds = append(speeds, 2.0, 3.0)
 	}
 
 	totalWidth := float32(len(speeds))*SpeedButtonWidth + float32(len(speeds)-1)*SpeedButtonMargin
 	startX := float32(ScreenWidth) - 10 - totalWidth
 	y := float32(10)
 
-	isMouseClicked := rl.IsMouseButtonPressed(rl.MouseButtonLeft)
-	mouseX, mouseY := rl.GetMousePosition().X, rl.GetMousePosition().Y
+	isMouseClicked := inputIsPressed()
+	mouseX, mouseY := inputGetPos().X, inputGetPos().Y
 
 	for i, speed := range speeds {
 		x := startX + float32(i)*(SpeedButtonWidth+SpeedButtonMargin)
@@ -1380,7 +1631,7 @@ func drawLevelUpMenu() {
 		rectY := float32(startY + i*(buttonHeight+margin))
 		rect := rl.Rectangle{X: float32(ScreenWidth)/2 - buttonWidth/2, Y: rectY, Width: float32(buttonWidth), Height: float32(buttonHeight)}
 		color := rl.DarkGray
-		if rl.CheckCollisionPointRec(rl.GetMousePosition(), rect) {
+		if rl.CheckCollisionPointRec(inputGetPos(), rect) {
 			color = rl.NewColor(50, 50, 80, 255)
 		}
 		rl.DrawRectangleRec(rect, color)
@@ -1422,13 +1673,29 @@ func drawLevelUpMenu() {
 			}
 		}
 	}
+
+	// Reroll button (Tactical Recalibration research): swaps out all the
+	// options. Drawn just below the menu panel so it can never overlap the
+	// option hitboxes.
+	if state.LevelUpRerollsLeft > 0 {
+		btn := rl.Rectangle{X: float32(ScreenWidth)/2 - 110, Y: float32(menuY + menuH + 12), Width: 220, Height: 34}
+		col := rl.NewColor(45, 40, 70, 255)
+		if rl.CheckCollisionPointRec(inputGetPos(), btn) {
+			col = rl.NewColor(70, 60, 110, 255)
+		}
+		rl.DrawRectangleRec(btn, col)
+		rl.DrawRectangleLinesEx(btn, 1, rl.Gold)
+		label := fmt.Sprintf("REROLL (%d left)", state.LevelUpRerollsLeft)
+		lw := rl.MeasureText(label, 16)
+		rl.DrawText(label, int32(btn.X+btn.Width/2)-lw/2, int32(btn.Y)+9, 16, rl.NewColor(220, 200, 120, 255))
+	}
 }
 
 // its dangerous to go alone, die about it i guess.
 
 // drawLoadScreen renders the pre-run load screen. The start menu is drawn
 // first and fades out beneath a siren-red overlay that itself transitions
-// smoothly into the game's background color — no jarring cuts anywhere.
+// smoothly into the game's background color -- no jarring cuts anywhere.
 func drawLoadScreen() {
 	// progress: 1.0 = just started, 0.0 = handing off to ScreenGame.
 	progress := state.LoadScreenTimer / LoadScreenDuration
@@ -1436,7 +1703,7 @@ func drawLoadScreen() {
 		progress = 1
 	}
 
-	// Siren color constants — used in both phases.
+	// Siren color constants -- used in both phases.
 	const bgR, bgG, bgB = float32(30), float32(30), float32(40)
 	const sirenR, sirenG, sirenB = float32(90), float32(12), float32(18)
 
@@ -1455,7 +1722,7 @@ func drawLoadScreen() {
 			curtainT = 1
 		}
 
-		// Siren starts as soon as the curtain begins rising — pulse the curtain
+		// Siren starts as soon as the curtain begins rising -- pulse the curtain
 		// color from dark-neutral to red so the flash bleeds in during the fade.
 		sirenPulse := float32(math.Sin(float64(state.LoadScreenTimer)*3.5))*0.5 + 0.5
 		curtainR := uint8((20.0 + (sirenR-20)*sirenPulse*curtainT) * curtainT)
@@ -1558,7 +1825,7 @@ func drawLoadScreen() {
 	}
 
 	// Draw player so there's a visible center point for enemies to converge on.
-	// worldFadeT drives the "fill" of the player circle — starts at 0 (empty outline)
+	// worldFadeT drives the "fill" of the player circle -- starts at 0 (empty outline)
 	// and reaches 1 (fully solid) by the time the game screen takes over.
 	worldFadeT := float32(0)
 	if progress < 0.4 {
@@ -1590,7 +1857,7 @@ func drawLoadScreen() {
 
 	rl.EndMode2D()
 
-	// Draw all HUD elements at the same alpha as the player fill — they all
+	// Draw all HUD elements at the same alpha as the player fill -- they all
 	// arrive together as the run gets underway.
 	if worldAlpha > 0 {
 		drawUI(worldAlpha)
@@ -1598,7 +1865,7 @@ func drawLoadScreen() {
 
 	// ── "GET READY" / "INCOMING" ───────────────────────────────────────────────
 	// Fades in at progress=0.5, holds through progress=0.1, then fades out by
-	// progress=0.0 — giving roughly a second of extra visibility compared to before.
+	// progress=0.0 -- giving roughly a second of extra visibility compared to before.
 	// The fade-out overlaps with the circle fill so both finish together.
 	var textAlpha float32
 	if progress <= 0.5 && progress >= 0.1 {
@@ -1632,7 +1899,142 @@ func drawGameOverScreen() {
 	text := "GAME OVER"
 	rl.DrawText(text, ScreenWidth/2-rl.MeasureText(text, 80)/2, ScreenHeight/2-140, 80, rl.Red)
 	score := fmt.Sprintf("Level %d  |  Survived %02d:%02d", state.Player.Level, int(state.RunTime)/60, int(state.RunTime)%60)
-	rl.DrawText(score, ScreenWidth/2-rl.MeasureText(score, 28)/2, ScreenHeight/2-35, 28, rl.White)
+	rl.DrawText(score, ScreenWidth/2-rl.MeasureText(score, 28)/2, ScreenHeight/2-55, 28, rl.White)
+
+	// Damage-by-source breakdown panel (side panel, won't collide with center).
+	drawDpsBreakdown()
+
+	// ── Personal best / new best indicator ───────────────────────────────────
+	if state.RunIsNewBest {
+		bestLine := "NEW BEST!"
+		rl.DrawText(bestLine, ScreenWidth/2-rl.MeasureText(bestLine, 20)/2, ScreenHeight/2-24, 20, rl.Gold)
+	} else if len(meta.RunRecords) > 0 {
+		best := meta.RunRecords[0]
+		bestLine := fmt.Sprintf("Personal Best: %02d:%02d  |  %d kills", int(best.RunTime)/60, int(best.RunTime)%60, best.Kills)
+		rl.DrawText(bestLine, ScreenWidth/2-rl.MeasureText(bestLine, 16)/2, ScreenHeight/2-24, 16, rl.LightGray)
+	}
+
+	// ── Meta XP animated summary ─────────────────────────────────────────────
+	if !state.MetaXPAwarded {
+		xpAnim.ready = false // reset for next game over
+		xpParticles = xpParticles[:0]
+	} else {
+		// Initialise once when the award first lands.
+		if !xpAnim.ready {
+			startXP := float32(meta.MetaXP - state.RunMetaXPGained)
+			xpAnim.curXP = startXP
+			// Derive the level at startXP.
+			xpAnim.curLevel = 0
+			for xpAnim.curLevel < MaxMetaLevel-1 &&
+				float32(metaXPForLevel(xpAnim.curLevel+1)) <= startXP {
+				xpAnim.curLevel++
+			}
+			gained := float32(state.RunMetaXPGained)
+			xpAnim.rate = gained / 3.0
+			if xpAnim.rate < 15 {
+				xpAnim.rate = 15
+			}
+			xpAnim.flash = 0
+			xpAnim.ready = true
+			xpParticles = xpParticles[:0]
+		}
+
+		// Tick.
+		dt := rl.GetFrameTime()
+		targetXP := float32(meta.MetaXP)
+		if xpAnim.flash > 0 {
+			xpAnim.flash -= dt
+		} else if xpAnim.curXP < targetXP {
+			xpAnim.curXP += xpAnim.rate * dt
+			// Level-up threshold crossed?
+			if xpAnim.curLevel < MaxMetaLevel {
+				nextThresh := float32(metaXPForLevel(xpAnim.curLevel + 1))
+				if xpAnim.curXP >= nextThresh {
+					xpAnim.curXP = nextThresh
+					xpAnim.curLevel++
+					xpAnim.flash = 0.7
+					spawnXPLevelUpParticles()
+				}
+			}
+			if xpAnim.curXP > targetXP {
+				xpAnim.curXP = targetXP
+			}
+		}
+
+		// Tick and draw particles.
+		live := xpParticles[:0]
+		for _, p := range xpParticles {
+			p.lifetime -= dt
+			if p.lifetime <= 0 {
+				continue
+			}
+			p.x += p.vx * dt
+			p.y += p.vy * dt
+			p.vy += 260 * dt // gravity pull
+			p.rotation += p.rotSpeed * dt
+			alpha := uint8(255 * (p.lifetime / p.maxLifetime))
+			col := rl.NewColor(p.col.R, p.col.G, p.col.B, alpha)
+			switch p.shape {
+			case 0:
+				rl.DrawCircle(int32(p.x), int32(p.y), p.size/2, col)
+			case 1:
+				rl.DrawRectanglePro(
+					rl.Rectangle{X: p.x, Y: p.y, Width: p.size, Height: p.size * 0.6},
+					rl.Vector2{X: p.size / 2, Y: p.size * 0.3},
+					p.rotation, col)
+			case 2:
+				rl.DrawPoly(rl.Vector2{X: p.x, Y: p.y}, 3, p.size/2, p.rotation, col)
+			}
+			live = append(live, p)
+		}
+		xpParticles = live
+
+		// Draw "+N XP" header.
+		xpLine := fmt.Sprintf("+ %d Meta XP", state.RunMetaXPGained)
+		rl.DrawText(xpLine, ScreenWidth/2-rl.MeasureText(xpLine, 22)/2, ScreenHeight/2, 22, rl.Gold)
+
+		const barW = int32(300)
+		const barH = int32(10)
+		barX := int32(ScreenWidth)/2 - barW/2
+		barY := int32(ScreenHeight/2) + 52
+
+		if xpAnim.curLevel >= MaxMetaLevel {
+			maxLine := "MAX LEVEL"
+			rl.DrawText(maxLine, ScreenWidth/2-rl.MeasureText(maxLine, 18)/2, ScreenHeight/2+28, 18, rl.Gold)
+		} else {
+			prev := metaXPForLevel(xpAnim.curLevel)
+			next := metaXPForLevel(xpAnim.curLevel + 1)
+			into := xpAnim.curXP - float32(prev)
+			span := float32(next - prev)
+			pct := into / span
+			if pct < 0 {
+				pct = 0
+			}
+			if pct > 1 {
+				pct = 1
+			}
+
+			if xpAnim.flash > 0 {
+				// Level-up flash: pulse the label gold → white.
+				pulse := xpAnim.flash / 0.7
+				r := uint8(255)
+				g := uint8(215 + float32(40)*pulse)
+				b := uint8(float32(255) * pulse)
+				flashCol := rl.NewColor(r, g, b, 255)
+				lvlUpText := fmt.Sprintf("LEVEL UP!  ML %d", xpAnim.curLevel)
+				rl.DrawText(lvlUpText, ScreenWidth/2-rl.MeasureText(lvlUpText, 22)/2, ScreenHeight/2+28, 22, flashCol)
+				// Bar flashes full then resets -- show an empty bar during flash.
+				rl.DrawRectangle(barX, barY, barW, barH, rl.NewColor(50, 50, 50, 255))
+				rl.DrawRectangleLines(barX, barY, barW, barH, rl.NewColor(180, 180, 180, 180))
+			} else {
+				lvlLine := fmt.Sprintf("ML %d  ->  %d / %d XP  ->  ML %d", xpAnim.curLevel, int(into), int(span), xpAnim.curLevel+1)
+				rl.DrawText(lvlLine, ScreenWidth/2-rl.MeasureText(lvlLine, 18)/2, ScreenHeight/2+28, 18, rl.LightGray)
+				rl.DrawRectangle(barX, barY, barW, barH, rl.NewColor(50, 50, 50, 255))
+				rl.DrawRectangle(barX, barY, int32(float32(barW)*pct), barH, rl.Gold)
+				rl.DrawRectangleLines(barX, barY, barW, barH, rl.NewColor(180, 180, 180, 180))
+			}
+		}
+	}
 
 	// ── First-death tutorial popup ────────────────────────────────────────────
 	// Shown exactly once; sets TutorialComplete so in-run tips no longer fire.
@@ -1642,7 +2044,7 @@ func drawGameOverScreen() {
 	}
 
 	if meta.TutorialStep != TutorialNone && meta.TutorialStep != TutorialReady {
-		// Player died mid-tutorial somehow — just show the normal restart hint.
+		// Player died mid-tutorial somehow -- just show the normal restart hint.
 	} else if !meta.TutorialDeathShown {
 		// Show the informational "polygons got you" panel exactly once.
 		meta.TutorialDeathShown = true
@@ -1670,7 +2072,7 @@ func drawGameOverScreen() {
 	}
 
 	restart := "Press SPACE to Return to the Main Menu"
-	rl.DrawText(restart, ScreenWidth/2-rl.MeasureText(restart, 24)/2, ScreenHeight/2+60, 24, rl.Green)
+	rl.DrawText(restart, ScreenWidth/2-rl.MeasureText(restart, 24)/2, ScreenHeight/2+90, 24, rl.Green)
 }
 
 func drawUI(hudAlpha uint8) {
@@ -1706,11 +2108,12 @@ func drawUI(hudAlpha uint8) {
 	rl.DrawText(fmt.Sprintf("Range: %.0f", state.Player.Range), int32(panelX), int32(panelY+190), 16, fa(rl.White))
 	rl.DrawText(fmt.Sprintf("Pure Defense: %.0f", state.Player.PureDefense), int32(panelX), int32(panelY+210), 16, fa(rl.White))
 	rl.DrawText(fmt.Sprintf("Thorns: %.0f", state.Player.ThornsDamage), int32(panelX), int32(panelY+230), 16, fa(rl.White))
+	rl.DrawText(fmt.Sprintf("DPS: %s", formatDPS(currentDPS())), int32(panelX), int32(panelY+252), 18, fa(rl.NewColor(255, 200, 60, 255)))
 
 	hpBarX, hpBarY := 20, ScreenHeight-30
 	hpBarWidth := ScreenWidth - 40
 	if state.Player.Overshield > 0 {
-		osPct := state.Player.Overshield / (state.Player.MaxHP * MaxOvershieldRatio)
+		osPct := state.Player.Overshield / overshieldCap(&state.Player)
 		osBarW := float32(hpBarWidth) * osPct
 		rl.DrawRectangle(int32(hpBarX), int32(hpBarY-8), int32(osBarW), 6, fa(rl.SkyBlue))
 		rl.DrawText(fmt.Sprintf("Overshield: %.0f", state.Player.Overshield), int32(hpBarX), int32(hpBarY-22), 10, fa(rl.SkyBlue))
@@ -1818,13 +2221,13 @@ func drawUI(hudAlpha uint8) {
 		if isAuto {
 			autoBg = rl.NewColor(25, 110, 25, 220)
 		}
-		if rl.CheckCollisionPointRec(rl.GetMousePosition(), autoRect) {
+		if rl.CheckCollisionPointRec(inputGetPos(), autoRect) {
 			if isAuto {
 				autoBg = rl.NewColor(35, 150, 35, 255)
 			} else {
 				autoBg = rl.NewColor(150, 35, 35, 255)
 			}
-			if rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
+			if inputIsPressed() {
 				setAbilityAuto(name, !isAuto)
 			}
 		}
@@ -1869,15 +2272,19 @@ func drawUI(hudAlpha uint8) {
 	timeText := fmt.Sprintf("%02d:%02d", minutes, seconds)
 	rl.DrawText(timeText, ScreenWidth/2-rl.MeasureText(timeText, 30)/2, 15, 30, fa(rl.White))
 
-	currentScale := 1.0 + 0.1*float32(int(state.RunTime/15))
-	const scalingThresholdTime = 570.0
-	if state.RunTime > scalingThresholdTime {
-		excessTime := state.RunTime - scalingThresholdTime
-		ticks := excessTime / 10.0
-		currentScale *= float32(math.Pow(1.03, float64(ticks)))
-	}
-	scalingText := fmt.Sprintf("Enemy Scaling: %.2fx", currentScale)
+	// Uses the same formula as enemy spawning so the readout always matches
+	// the real HP scale applied to enemies.
+	scalingText := fmt.Sprintf("Enemy Scaling: %.2fx", enemyHPScale(state.RunTime))
 	rl.DrawText(scalingText, ScreenWidth-rl.MeasureText(scalingText, 20)-10, 40, 20, fa(rl.Gold))
+
+	// Small readout of the current base Standard-enemy HP / damage at this time.
+	scTier := int(state.RunTime / 15)
+	dmgScale := 1.0 + 0.05*float32(scTier)
+	if scTier > 18 {
+		dmgScale *= float32(math.Pow(1.03, float64(scTier-18)))
+	}
+	baseStatsText := fmt.Sprintf("Base enemy: %.0f HP / %.0f dmg", 7*enemyHPScale(state.RunTime), 5*dmgScale)
+	rl.DrawText(baseStatsText, ScreenWidth-rl.MeasureText(baseStatsText, 15)-10, 63, 15, fa(rl.NewColor(235, 170, 170, 255)))
 
 	if state.IsPaused {
 		drawPauseMenu()
@@ -1903,7 +2310,7 @@ func drawUI(hudAlpha uint8) {
 
 // drawFPSCounter renders the current FPS in the bottom-right corner when
 // meta.ShowFPS is on. Called right before rl.EndDrawing on every screen so
-// the overlay stays visible everywhere — menus, run, game-over.
+// the overlay stays visible everywhere -- menus, run, game-over.
 func drawFPSCounter() {
 	if !meta.ShowFPS {
 		return
@@ -1927,6 +2334,387 @@ func drawFPSCounter() {
 	rl.DrawText(text, x, y, fontSize, col)
 }
 
+// ── Mission Alert system -- rect helpers & draw functions ──────────────────────
+
+// missionChoiceModalScreenRect returns the centered choice modal rect.
+func missionChoiceModalScreenRect() (x, y, w, h float32) {
+	w = 500
+	h = 240
+	x = (ScreenWidth - w) / 2
+	y = (ScreenHeight - h) / 2
+	return
+}
+
+// missionChoiceBtnScreenRect returns the rect of one choice button inside the modal.
+// idx 0 = left (choice A), idx 1 = right (choice B).
+func missionChoiceBtnScreenRect(idx int) (x, y, w, h float32) {
+	mx, my, mw, _ := missionChoiceModalScreenRect()
+	w = 220
+	h = 90
+	y = my + 105
+	padding := float32(20)
+	if idx == 0 {
+		x = mx + padding
+	} else {
+		x = mx + mw - w - padding
+	}
+	return
+}
+
+// drawMissionWorldEffects draws world-space visuals inside BeginMode2D for
+// any active mission that needs in-world feedback.
+func drawMissionWorldEffects() {
+	if state.MissionState != MissionStateActive {
+		return
+	}
+	switch state.MissionActiveKind {
+	case MissionNoEnemiesNear:
+		drawSafeZoneRing()
+	case MissionDeadZone:
+		drawDeadZoneCone()
+	}
+}
+
+func drawSafeZoneRing() {
+	t := float32(rl.GetTime())
+	pulse := float32(math.Sin(float64(t)*3.0)) * 6.0
+	r := MissionNoEnemyRadius + pulse
+	pct := state.MissionActiveTimer / MissionDuration
+
+	// Color shifts blue→orange as time runs out.
+	var ringR, ringG uint8
+	if pct > 0.5 {
+		ringR = 60
+		ringG = 120
+	} else {
+		f := pct / 0.5
+		ringR = uint8(60 + (220-60)*(1.0-f))
+		ringG = uint8(120 * f)
+	}
+	ringColor := rl.NewColor(ringR, ringG, 255-ringR/2, 180)
+
+	px, py := int32(state.Player.X), int32(state.Player.Y)
+	rl.DrawCircleGradient(px, py, r, rl.Fade(ringColor, 0.06), rl.Fade(ringColor, 0.0))
+	rl.DrawCircleLines(px, py, r, rl.Fade(ringColor, 0.55))
+	rl.DrawCircleLines(px, py, r-3, rl.Fade(ringColor, 0.25))
+}
+
+// drawDeadZoneCone draws the spinning "blind spot" cone in world space.
+// The cone is filled with a translucent red wash; the edges pulse to draw
+// the eye. Enemies inside are protected (isEnemyInDeadZone).
+func drawDeadZoneCone() {
+	const coneLength = float32(2600) // large enough to reach any screen edge
+
+	centerRad := float64(state.MissionDeadZoneDeg) * math.Pi / 180
+	leftRad := float64(state.MissionDeadZoneDeg-MissionDeadZoneHalfAngle) * math.Pi / 180
+	rightRad := float64(state.MissionDeadZoneDeg+MissionDeadZoneHalfAngle) * math.Pi / 180
+
+	px, py := state.Player.X, state.Player.Y
+	v0 := rl.NewVector2(px, py)
+	vLeft := rl.NewVector2(
+		px+coneLength*float32(math.Cos(leftRad)),
+		py+coneLength*float32(math.Sin(leftRad)),
+	)
+	vRight := rl.NewVector2(
+		px+coneLength*float32(math.Cos(rightRad)),
+		py+coneLength*float32(math.Sin(rightRad)),
+	)
+
+	// ── Cone fill: constant base layer + pulsing flash overlay ───────────────
+	pulse := float32(0.5 + 0.5*math.Sin(float64(rl.GetTime())*5))
+
+	// Dim constant base so the cone is always readable.
+	rl.DrawTriangle(v0, vLeft, vRight, rl.NewColor(180, 20, 20, 28))
+	// Bright pulsing overlay -- alpha swings 15→85 in sync with the edge lines.
+	flashAlpha := uint8(15 + 70*pulse)
+	rl.DrawTriangle(v0, vLeft, vRight, rl.NewColor(230, 45, 45, flashAlpha))
+
+	// Pulsing edge lines (same pulse variable keeps everything in sync).
+	edgeAlpha := uint8(100 + 120*pulse)
+	edgeCol := rl.NewColor(255, 55, 55, edgeAlpha)
+	rl.DrawLineEx(v0, vLeft, 2, edgeCol)
+	rl.DrawLineEx(v0, vRight, 2, edgeCol)
+
+	// Small arrow-head on the center ray hints at spin direction.
+	vCenter := rl.NewVector2(
+		px+float32(math.Cos(centerRad))*60,
+		py+float32(math.Sin(centerRad))*60,
+	)
+	rl.DrawCircleV(vCenter, 4, rl.NewColor(255, 80, 80, edgeAlpha))
+}
+
+// drawMissionChoiceButton draws one of the two mission choice buttons.
+// data is the pre-committed extra payload for this choice (e.g. kill enemy type).
+func drawMissionChoiceButton(kind int, idx int, data int) {
+	bx, by, bw, bh := missionChoiceBtnScreenRect(idx)
+	ibx, iby, ibw, ibh := int32(bx), int32(by), int32(bw), int32(bh)
+
+	mp := inputGetPos()
+	hovered := mp.X >= bx && mp.X <= bx+bw && mp.Y >= by && mp.Y <= by+bh
+
+	bgColor := rl.NewColor(30, 30, 55, 230)
+	if hovered {
+		bgColor = rl.NewColor(50, 50, 85, 245)
+	}
+	borderColor := rl.NewColor(100, 100, 160, 200)
+	if hovered {
+		borderColor = rl.NewColor(255, 200, 50, 220)
+	}
+	rl.DrawRectangle(ibx, iby, ibw, ibh, bgColor)
+	rl.DrawRectangleLinesEx(rl.Rectangle{X: bx, Y: by, Width: bw, Height: bh}, 2, borderColor)
+
+	label := missionLabel(kind, data)
+	lw := rl.MeasureText(label, 16)
+	rl.DrawText(label, ibx+ibw/2-lw/2, iby+10, 16, rl.White)
+
+	desc := missionDesc(kind, data)
+	for i, line := range desc {
+		lw2 := rl.MeasureText(line, 12)
+		rl.DrawText(line, ibx+ibw/2-lw2/2, iby+34+int32(i)*16, 12, rl.NewColor(180, 180, 180, 210))
+	}
+}
+
+// drawMissionChoice draws the centered choice modal with an auto-decline countdown.
+func drawMissionChoice() {
+	mx, my, mw, mh := missionChoiceModalScreenRect()
+	ix, iy, iw, ih := int32(mx), int32(my), int32(mw), int32(mh)
+
+	rl.DrawRectangle(0, 0, ScreenWidth, ScreenHeight, rl.NewColor(0, 0, 0, 130))
+	rl.DrawRectangle(ix, iy, iw, ih, rl.NewColor(18, 18, 35, 245))
+	rl.DrawRectangleLinesEx(rl.Rectangle{X: mx, Y: my, Width: mw, Height: mh}, 2, rl.NewColor(255, 200, 50, 200))
+
+	titleStr := "MISSION AVAILABLE"
+	tw := rl.MeasureText(titleStr, 20)
+	rl.DrawText(titleStr, ix+iw/2-tw/2, iy+12, 20, rl.NewColor(255, 200, 50, 255))
+
+	rewardStr := fmt.Sprintf("+%d RP on success", MissionReward)
+	rw := rl.MeasureText(rewardStr, 13)
+	rl.DrawText(rewardStr, ix+iw/2-rw/2, iy+36, 13, rl.NewColor(100, 220, 100, 200))
+
+	rl.DrawLine(ix+20, iy+54, ix+iw-20, iy+54, rl.NewColor(255, 200, 50, 60))
+
+	drawMissionChoiceButton(state.MissionChoiceA, 0, state.MissionChoiceAData)
+	drawMissionChoiceButton(state.MissionChoiceB, 1, state.MissionChoiceBData)
+
+	// Countdown bar -- drains gold→red over MissionChoiceWindow seconds.
+	pct := state.MissionChoiceTimer / MissionChoiceWindow
+	if pct < 0 {
+		pct = 0
+	}
+	barX := mx + 10
+	barY := my + mh - 18
+	barW := mw - 20
+	barG := uint8(180 * pct)
+	rl.DrawRectangle(int32(barX), int32(barY), int32(barW), 8, rl.NewColor(30, 30, 30, 220))
+	rl.DrawRectangle(int32(barX), int32(barY), int32(barW*pct), 8, rl.NewColor(255, barG, 30, 230))
+	rl.DrawRectangleLinesEx(rl.Rectangle{X: barX, Y: barY, Width: barW, Height: 8}, 1, rl.NewColor(80, 80, 80, 120))
+
+	// Countdown label above the bar.
+	secStr := fmt.Sprintf("Auto-declines in %.0fs", state.MissionChoiceTimer)
+	sw := rl.MeasureText(secStr, 11)
+	rl.DrawText(secStr, ix+iw/2-sw/2, int32(barY)-14, 11, rl.NewColor(160, 160, 160, 180))
+}
+
+// drawActiveMissionHUD draws the top-center progress bar during an active mission.
+func drawActiveMissionHUD() {
+	if state.MissionState != MissionStateActive {
+		return
+	}
+	const panelW = float32(320)
+	const panelH = float32(72)
+	panelX := float32(ScreenWidth)/2 - panelW/2
+	panelY := float32(50) // sits below the run timer (Y=15, size 30 → bottom ~Y=45)
+
+	rl.DrawRectangle(int32(panelX), int32(panelY), int32(panelW), int32(panelH), rl.NewColor(15, 15, 30, 220))
+	rl.DrawRectangleLinesEx(rl.Rectangle{X: panelX, Y: panelY, Width: panelW, Height: panelH}, 2, rl.NewColor(255, 200, 50, 160))
+
+	label := "MISSION: " + missionLabel(state.MissionActiveKind, state.MissionKillType)
+	lw := rl.MeasureText(label, 15)
+	rl.DrawText(label, int32(panelX)+int32(panelW)/2-lw/2, int32(panelY)+6, 15, rl.NewColor(255, 200, 50, 255))
+
+	barX := panelX + 10
+	barY := panelY + 33
+	barW := panelW - 20
+	const barH = float32(12)
+
+	rl.DrawRectangle(int32(barX), int32(barY), int32(barW), int32(barH), rl.NewColor(40, 40, 40, 200))
+
+	switch state.MissionActiveKind {
+
+	case MissionKillCount:
+		// ── Swarm: fill bar + kill count + spawn status ───────────────────────
+		pct := float32(0)
+		if state.MissionKillGoal > 0 {
+			pct = float32(state.MissionKillCount) / float32(state.MissionKillGoal)
+			if pct > 1 {
+				pct = 1
+			}
+		}
+		rl.DrawRectangle(int32(barX), int32(barY), int32(barW*pct), int32(barH), rl.NewColor(60, 200, 80, 230))
+		rl.DrawRectangleLinesEx(rl.Rectangle{X: barX, Y: barY, Width: barW, Height: barH}, 1, rl.NewColor(100, 100, 100, 120))
+		killStr := fmt.Sprintf("%d / %d", state.MissionKillCount, state.MissionKillGoal)
+		kw := rl.MeasureText(killStr, 12)
+		rl.DrawText(killStr, int32(barX)+int32(barW)/2-kw/2, int32(barY)+1, 12, rl.NewColor(255, 255, 255, 200))
+		var subStr string
+		if state.MissionSwarmRemaining > 0 {
+			subStr = fmt.Sprintf("%d still incoming...", state.MissionSwarmRemaining)
+		} else {
+			subStr = "All spawned -- finish them!"
+		}
+		sw2 := rl.MeasureText(subStr, 11)
+		rl.DrawText(subStr, int32(panelX)+int32(panelW)/2-sw2/2, int32(barY)+int32(barH)+4, 11, rl.NewColor(180, 180, 180, 180))
+
+	case MissionCriticalMass:
+		// ── Critical Mass: fill bar + crit count (no timer) ──────────────────
+		pct := float32(state.MissionCritCount) / float32(MissionCriticalMassGoal)
+		if pct > 1 {
+			pct = 1
+		}
+		rl.DrawRectangle(int32(barX), int32(barY), int32(barW*pct), int32(barH), rl.NewColor(220, 160, 30, 230))
+		rl.DrawRectangleLinesEx(rl.Rectangle{X: barX, Y: barY, Width: barW, Height: barH}, 1, rl.NewColor(100, 100, 100, 120))
+		critStr := fmt.Sprintf("%d / %d crits", state.MissionCritCount, MissionCriticalMassGoal)
+		crw := rl.MeasureText(critStr, 12)
+		rl.DrawText(critStr, int32(barX)+int32(barW)/2-crw/2, int32(barY)+1, 12, rl.NewColor(255, 255, 255, 200))
+		noTimerStr := "No time limit -- keep critting!"
+		ntw := rl.MeasureText(noTimerStr, 11)
+		rl.DrawText(noTimerStr, int32(panelX)+int32(panelW)/2-ntw/2, int32(barY)+int32(barH)+4, 11, rl.NewColor(180, 180, 180, 180))
+
+	case MissionDuel:
+		// ── Duel: boss HP bar + countdown ────────────────────────────────────
+		// Find the boss enemy to read its current HP.
+		var duelHP, duelMaxHP float32
+		for _, e := range state.Enemies {
+			if e.ID == state.MissionDuelID {
+				duelHP = e.HP
+				duelMaxHP = e.MaxHP
+				break
+			}
+		}
+		bossPct := float32(0)
+		if duelMaxHP > 0 {
+			bossPct = duelHP / duelMaxHP
+			if bossPct < 0 {
+				bossPct = 0
+			}
+		}
+		// Boss HP bar -- red fill drains right.
+		bossBarColor := rl.NewColor(200, 40, 40, 230)
+		rl.DrawRectangle(int32(barX), int32(barY), int32(barW*bossPct), int32(barH), bossBarColor)
+		rl.DrawRectangleLinesEx(rl.Rectangle{X: barX, Y: barY, Width: barW, Height: barH}, 1, rl.NewColor(100, 100, 100, 120))
+		bossHPStr := fmt.Sprintf("%.0f / %.0f HP", duelHP, duelMaxHP)
+		bhw := rl.MeasureText(bossHPStr, 12)
+		rl.DrawText(bossHPStr, int32(barX)+int32(barW)/2-bhw/2, int32(barY)+1, 12, rl.NewColor(255, 220, 220, 200))
+		// Countdown below.
+		timerStr := fmt.Sprintf("%.0fs remaining", state.MissionActiveTimer)
+		tw2 := rl.MeasureText(timerStr, 11)
+		urgentCol := rl.NewColor(180, 180, 180, 180)
+		if state.MissionActiveTimer < 10 {
+			pulse := uint8(160 + 80*math.Sin(float64(rl.GetTime())*8))
+			urgentCol = rl.NewColor(255, 80, 80, pulse)
+		}
+		rl.DrawText(timerStr, int32(panelX)+int32(panelW)/2-tw2/2, int32(barY)+int32(barH)+4, 11, urgentCol)
+
+	default:
+		// ── Timed drain bar (all remaining mission types) ─────────────────────
+		var duration float32
+		switch state.MissionActiveKind {
+		case MissionNoAbilities:
+			duration = MissionNoAbilitiesDuration
+		case MissionUntouchable:
+			duration = MissionUntouchableDuration
+		case MissionGlassWall:
+			duration = MissionGlassWallDuration
+		case MissionDeadZone:
+			duration = MissionDeadZoneDuration
+		default:
+			duration = MissionDuration
+		}
+		pct := state.MissionActiveTimer / duration
+		if pct < 0 {
+			pct = 0
+		}
+		var barR, barG uint8
+		if pct > 0.5 {
+			f := (pct - 0.5) / 0.5
+			barR = uint8(255 * (1.0 - f))
+			barG = 200
+		} else {
+			f := pct / 0.5
+			barR = 220
+			barG = uint8(180 * f)
+		}
+		rl.DrawRectangle(int32(barX), int32(barY), int32(barW*pct), int32(barH), rl.NewColor(barR, barG, 40, 230))
+		rl.DrawRectangleLinesEx(rl.Rectangle{X: barX, Y: barY, Width: barW, Height: barH}, 1, rl.NewColor(100, 100, 100, 120))
+		timeStr := fmt.Sprintf("%.0fs", state.MissionActiveTimer)
+		timeW := rl.MeasureText(timeStr, 12)
+		rl.DrawText(timeStr, int32(barX)+int32(barW)/2-timeW/2, int32(barY)+1, 12, rl.NewColor(255, 255, 255, 200))
+		desc := missionDesc(state.MissionActiveKind, 0)
+		objStr := ""
+		for i, line := range desc {
+			if i > 0 {
+				objStr += " "
+			}
+			objStr += line
+		}
+		ow := rl.MeasureText(objStr, 11)
+		rl.DrawText(objStr, int32(panelX)+int32(panelW)/2-ow/2, int32(barY)+int32(barH)+4, 11, rl.NewColor(180, 180, 180, 180))
+	}
+}
+
+// drawNoAimCursorWarning draws a red X at the cursor when LMB is held during
+// the NoAutoAim mission, giving the player an immediate spatial warning.
+func drawNoAimCursorWarning() {
+	if state.MissionState != MissionStateActive || state.MissionActiveKind != MissionNoAutoAim {
+		return
+	}
+	if !inputIsDown() {
+		return
+	}
+	mp := inputGetPos()
+	cx, cy := mp.X, mp.Y
+	pulse := float32(0.6 + 0.4*math.Sin(float64(rl.GetTime())*14))
+	col := rl.NewColor(255, 50, 50, uint8(220*pulse))
+
+	const arm = float32(12)
+	rl.DrawLineEx(rl.NewVector2(cx-arm, cy-arm), rl.NewVector2(cx+arm, cy+arm), 3, col)
+	rl.DrawLineEx(rl.NewVector2(cx+arm, cy-arm), rl.NewVector2(cx-arm, cy+arm), 3, col)
+	rl.DrawCircleLines(int32(cx), int32(cy), arm+4, rl.Fade(col, 0.6))
+}
+
+// drawMissionSuccessFlash draws the fading "MISSION COMPLETE" overlay.
+func drawMissionSuccessFlash() {
+	if state.MissionState != MissionStateComplete {
+		return
+	}
+	alpha := state.MissionSuccessTimer / MissionSuccessDuration
+	if alpha > 1 {
+		alpha = 1
+	}
+	rl.DrawRectangle(0, 0, ScreenWidth, ScreenHeight, rl.NewColor(0, 20, 0, uint8(160*alpha)))
+
+	textAlpha := uint8(255 * alpha)
+	mainStr := "MISSION COMPLETE!"
+	mw := rl.MeasureText(mainStr, 48)
+	rl.DrawText(mainStr, ScreenWidth/2-mw/2, ScreenHeight/2-40, 48, rl.NewColor(100, 255, 100, textAlpha))
+
+	subStr := fmt.Sprintf("+%d RP", MissionReward)
+	sw := rl.MeasureText(subStr, 28)
+	rl.DrawText(subStr, ScreenWidth/2-sw/2, ScreenHeight/2+24, 28, rl.NewColor(180, 255, 100, textAlpha))
+}
+
+// drawMissionUI is the screen-space entry point for all mission-related UI.
+func drawMissionUI() {
+	switch state.MissionState {
+	case MissionStateChoice:
+		drawMissionChoice()
+	case MissionStateActive:
+		drawActiveMissionHUD()
+		drawNoAimCursorWarning()
+	case MissionStateComplete:
+		drawMissionSuccessFlash()
+	}
+}
+
 // the meat of drawing...WHEEE.
 func drawGame() {
 	rl.BeginDrawing()
@@ -1943,12 +2731,22 @@ func drawGame() {
 		rl.EndDrawing()
 		return
 	} else if state.CurrentScreen == ScreenResearch {
-		drawResearchMenu()
+		drawTalentsMenu()
+		drawFPSCounter()
+		rl.EndDrawing()
+		return
+	} else if state.CurrentScreen == ScreenRPShop {
+		drawRPShopMenu()
 		drawFPSCounter()
 		rl.EndDrawing()
 		return
 	} else if state.CurrentScreen == ScreenItems {
 		drawItemsMenu()
+		drawFPSCounter()
+		rl.EndDrawing()
+		return
+	} else if state.CurrentScreen == ScreenEncyclopedia {
+		drawEncyclopedia()
 		drawFPSCounter()
 		rl.EndDrawing()
 		return
@@ -1995,7 +2793,7 @@ func drawGame() {
 			pct := zone.Duration / 3.0
 			rl.DrawCircleLines(int32(zone.X), int32(zone.Y), zone.Radius*pct, rl.NewColor(255, 255, 255, 50))
 		}
-		// Hellfire mine linger zones — pulsing fire rings that fade as they expire
+		// Hellfire mine linger zones -- pulsing fire rings that fade as they expire
 		for _, zone := range state.LingerZones {
 			// Fade alpha based on remaining duration (zones last 5s)
 			lifePct := zone.Duration / 5.0
@@ -2008,7 +2806,7 @@ func drawGame() {
 			// Slow inward pulse so the zone feels "breathing"
 			pulse := float32(math.Sin(float64(rl.GetTime())*4.0)) * (zone.Radius * 0.06)
 
-			// Filled gradient — hot centre fades to transparent edge
+			// Filled gradient -- hot centre fades to transparent edge
 			rl.DrawCircleGradient(
 				int32(zone.X), int32(zone.Y),
 				zone.Radius+pulse,
@@ -2026,7 +2824,7 @@ func drawGame() {
 		//just sit all clunky and weird on screen with no real way to do it. or maybe i can keep it and
 		//update positioning on finger slides? who knows.
 		if state.Player.IsGravityTargeting {
-			mouseWorld := rl.GetScreenToWorld2D(rl.GetMousePosition(), state.Camera)
+			mouseWorld := rl.GetScreenToWorld2D(inputGetPos(), state.Camera)
 			rl.DrawCircleLines(int32(mouseWorld.X), int32(mouseWorld.Y), state.Player.GravityRadius, rl.Fade(rl.Violet, 0.8))
 			rl.DrawCircle(int32(mouseWorld.X), int32(mouseWorld.Y), 5, rl.Violet)
 			rl.DrawLineEx(rl.NewVector2(state.Player.X, state.Player.Y), mouseWorld, 1.0, rl.Fade(rl.Violet, 0.3))
@@ -2068,14 +2866,19 @@ func drawGame() {
 				continue
 			}
 			alpha := float32(arc.VisualTimer / 2.0)
+			if arc.Bright {
+				// Guard arcs use a short lifetime, so they reach full opacity
+				// quickly and fade only over the final fraction of a second.
+				alpha = arc.VisualTimer / 0.2
+			}
 			if alpha > 1.0 {
 				alpha = 1.0
 			}
 
 			if arc.IsChain {
-				// Jagged segmented lightning between two points.
-				// Uses the arc's Seed for stable per-frame jitter so it
-				// crackles without flickering randomly every pixel.
+				// Jagged segmented lightning between two points, drawn identically to
+				// Static Discharge's chain arcs. Guard arcs (Bright) additionally
+				// animate the bolt extending from the player out to the target.
 				const segments = 8
 				dx := arc.TargetX - arc.SourceX
 				dy := arc.TargetY - arc.SourceY
@@ -2083,12 +2886,10 @@ func drawGame() {
 				if length < 1 {
 					continue
 				}
-				// Perpendicular unit vector for jitter
 				perpX := -dy / length
 				perpY := dx / length
 				maxJitter := length * 0.06
 
-				// Build segment points
 				pts := make([]rl.Vector2, segments+1)
 				pts[0] = rl.NewVector2(arc.SourceX, arc.SourceY)
 				pts[segments] = rl.NewVector2(arc.TargetX, arc.TargetY)
@@ -2098,22 +2899,45 @@ func drawGame() {
 					t := float32(s) / float32(segments)
 					midX := arc.SourceX + dx*t
 					midY := arc.SourceY + dy*t
-					// Deterministic jitter from seed + segment index
 					seed = seed*1664525 + 1013904223
 					jitter := (float32(seed%10000)/5000.0 - 1.0) * maxJitter
 					pts[s] = rl.NewVector2(midX+perpX*jitter, midY+perpY*jitter)
 				}
 
-				// Draw bright core and softer glow for each segment
-				for s := 0; s < segments; s++ {
-					// Outer glow
-					rl.DrawLineEx(pts[s], pts[s+1], 4.0*alpha, rl.NewColor(100, 200, 255, uint8(120*alpha)))
-					// Bright core
-					rl.DrawLineEx(pts[s], pts[s+1], 1.5*alpha, rl.NewColor(220, 240, 255, uint8(255*alpha)))
+				// Growth fraction: guard arcs fire out over a short window; every
+				// other chain arc is fully extended immediately (grow == 1).
+				grow := float32(1.0)
+				if arc.Bright {
+					const growDur = float32(0.16)
+					grow = arc.Age / growDur
+					if grow > 1.0 {
+						grow = 1.0
+					}
+				}
+				litF := grow * float32(segments)
+				fullSeg := int(litF)
+				frac := litF - float32(fullSeg)
+
+				drawSeg := func(a, b rl.Vector2) {
+					rl.DrawLineEx(a, b, 4.0*alpha, rl.NewColor(100, 200, 255, uint8(120*alpha)))
+					rl.DrawLineEx(a, b, 1.5*alpha, rl.NewColor(220, 240, 255, uint8(255*alpha)))
 				}
 
-				// Small spark circle at the target end
-				rl.DrawCircle(int32(arc.TargetX), int32(arc.TargetY), 3.0*alpha, rl.NewColor(180, 220, 255, uint8(200*alpha)))
+				tip := pts[0]
+				for s := 0; s < fullSeg && s < segments; s++ {
+					drawSeg(pts[s], pts[s+1])
+					tip = pts[s+1]
+				}
+				if fullSeg < segments && frac > 0 {
+					a := pts[fullSeg]
+					b := pts[fullSeg+1]
+					tip = rl.NewVector2(a.X+(b.X-a.X)*frac, a.Y+(b.Y-a.Y)*frac)
+					drawSeg(a, tip)
+				}
+
+				// Spark rides the leading tip while the bolt extends, settling on
+				// the target once fully grown.
+				rl.DrawCircle(int32(tip.X), int32(tip.Y), 3.0*alpha, rl.NewColor(180, 220, 255, uint8(200*alpha)))
 			} else {
 				// Plain straight arc for non-chain discharges
 				rl.DrawLineEx(rl.NewVector2(arc.SourceX, arc.SourceY), rl.NewVector2(arc.TargetX, arc.TargetY), 3.0*alpha, rl.SkyBlue)
@@ -2164,10 +2988,14 @@ func drawGame() {
 			} else if p.Hits > 0 {
 				color = rl.Green
 			}
-			// Trail behind the bullet — drawn first so the bullet body
+			// Trail behind the bullet -- drawn first so the bullet body
 			// sits cleanly on top of its own streak.
 			drawBulletTrail(p, color)
-			rl.DrawCircle(int32(p.X), int32(p.Y), p.Radius, color)
+			bodyCol := color
+			if bulletIsExplosive(p) {
+				bodyCol = rl.NewColor(255, 225, 150, 255) // ember-white core to match the trail
+			}
+			rl.DrawCircle(int32(p.X), int32(p.Y), p.Radius, bodyCol)
 		}
 
 		for _, enm := range state.Enemies {
@@ -2188,8 +3016,29 @@ func drawGame() {
 
 		for _, enm := range state.Enemies {
 			if enm.HP > 0 {
+				// Melee lunge: jab the whole enemy toward the player on a hit,
+				// easing back as the timer decays. Position is restored at the
+				// end of this block so game logic is unaffected.
+				lungeOrigX, lungeOrigY := enm.X, enm.Y
+				if enm.AttackLungeTimer > 0 {
+					ldx := state.Player.X - enm.X
+					ldy := state.Player.Y - enm.Y
+					ld := float32(math.Sqrt(float64(ldx*ldx + ldy*ldy)))
+					if ld > 0 {
+						jab := MeleeLungeDist * (enm.AttackLungeTimer / MeleeLungeDuration)
+						enm.X += (ldx / ld) * jab
+						enm.Y += (ldy / ld) * jab
+					}
+				}
+
 				color := EnemyColor
-				if enm.IsBoss {
+				if enm.Type == EnemyMegaBossSpawner {
+					color = EnemyMegaBossColor // mega bosses keep their own color regardless of IsBoss
+				} else if enm.Type == EnemyMegaBossOrbiter {
+					color = EnemyMegaBossOrbiterColor
+				} else if enm.Type == EnemyMegaBossBulwark {
+					color = EnemyMegaBossBulwarkColor
+				} else if enm.IsBoss {
 					color = rl.Purple
 				} else if enm.Type == EnemyDodger {
 					color = EnemyDodgerColor
@@ -2255,15 +3104,67 @@ func drawGame() {
 					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 6, enm.Size/2.0, angleDeg, color)
 					rl.DrawPolyLinesEx(rl.NewVector2(enm.X, enm.Y), 6, enm.Size/2.0, angleDeg, 2.0, rl.White)
 				} else if enm.Type == EnemyBerserker {
-					// Two stacked diamonds — glow only the larger silhouette.
+					// Two stacked diamonds -- glow only the larger silhouette.
 					drawNeonGlowPoly(enm.X, enm.Y, enm.Size/2.0*1.5, 4, angleDeg, color, 1.0)
 					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 4, enm.Size/2.0*1.5, angleDeg, color)
 					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 4, enm.Size/2.0*1.5, angleDeg+45, color)
+				} else if enm.Type == EnemyMegaBossSpawner {
+					// Two 8-sided polygons offset by 22.5° -- looks like a spiky nest / spawner core.
+					// Outer glow is extra thick to convey the mega boss scale.
+					drawNeonGlowPoly(enm.X, enm.Y, enm.Size/2.0, 8, angleDeg, color, 1.5)
+					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 8, enm.Size/2.0, angleDeg, color)
+					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 8, enm.Size/2.0*0.7, angleDeg+22.5, color)
+					rl.DrawPolyLinesEx(rl.NewVector2(enm.X, enm.Y), 8, enm.Size/2.0, angleDeg, 2.5, rl.White)
+				} else if enm.Type == EnemyMegaBossOrbiter {
+					// Pentagon core + a "barrel" line pointing at the player to telegraph its aim.
+					drawNeonGlowPoly(enm.X, enm.Y, enm.Size/2.0, 5, angleDeg, color, 1.5)
+					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 5, enm.Size/2.0, angleDeg, color)
+					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 5, enm.Size/2.0*0.55, angleDeg+36, rl.NewColor(255, 255, 255, 120))
+					rl.DrawPolyLinesEx(rl.NewVector2(enm.X, enm.Y), 5, enm.Size/2.0, angleDeg, 2.5, rl.White)
+					barrelLen := enm.Size/2.0 + 14
+					bx := enm.X + float32(math.Cos(angleRad))*barrelLen
+					by := enm.Y + float32(math.Sin(angleRad))*barrelLen
+					rl.DrawLineEx(rl.NewVector2(enm.X, enm.Y), rl.NewVector2(bx, by), 3, rl.NewColor(255, 255, 255, 200))
+					// Charge telegraph: a ring swells as it nears a firing peak
+					// (where it halts to shoot). Indicator ring only -- no aim line.
+					if s := math.Sin(float64(state.RunTime) * 0.5); math.Abs(s) > float64(MegaBossOrbiterAimThreshold) {
+						chargeFrac := float32((math.Abs(s) - float64(MegaBossOrbiterAimThreshold)) / (1 - float64(MegaBossOrbiterAimThreshold)))
+						rl.DrawCircleLines(int32(enm.X), int32(enm.Y), enm.Size/2.0+6+6*chargeFrac, rl.NewColor(255, 110, 110, 210))
+					}
+				} else if enm.Type == EnemyMegaBossBulwark {
+					// Hexagonal fortress core + a thick bright shield band on the rotating
+					// shielded arc. The exposed (unshielded) rear arc is where shots land.
+					drawNeonGlowPoly(enm.X, enm.Y, enm.Size/2.0, 6, angleDeg, color, 1.5)
+					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 6, enm.Size/2.0, angleDeg, color)
+					rl.DrawPolyLinesEx(rl.NewVector2(enm.X, enm.Y), 6, enm.Size/2.0, angleDeg, 2.5, rl.White)
+					halfDeg := MegaBossBulwarkHalfArc * 180.0 / math.Pi
+					centerDeg := enm.ShieldAngle * 180.0 / math.Pi
+					inner := enm.Size/2.0 + 4
+					outer := enm.Size/2.0 + 13
+					rl.DrawRing(rl.NewVector2(enm.X, enm.Y), inner, outer, centerDeg-halfDeg, centerDeg+halfDeg, 48, rl.NewColor(120, 200, 255, 180))
+					rl.DrawRing(rl.NewVector2(enm.X, enm.Y), outer-2, outer, centerDeg-halfDeg, centerDeg+halfDeg, 48, rl.NewColor(220, 245, 255, 230))
 				} else {
 					polyRadius := (enm.Size / 2.0) * float32(math.Sqrt(2))
+					// Spit-out spawn animation: grow from 30% to full size.
+					if enm.SpawnAnimTimer > 0 {
+						progress := 1.0 - enm.SpawnAnimTimer/MegaBossSpitAnimDuration
+						if progress < 0 {
+							progress = 0
+						}
+						polyRadius *= 0.3 + 0.7*progress
+					}
 					drawNeonGlowPoly(enm.X, enm.Y, polyRadius, 4, angleDeg-45, color, 1.0)
 					rl.DrawPoly(rl.NewVector2(enm.X, enm.Y), 4, polyRadius, angleDeg-45, color)
 					rl.DrawPolyLinesEx(rl.NewVector2(enm.X, enm.Y), 4, polyRadius, angleDeg-45, 2.0, rl.White)
+				}
+
+				// Shockwave hit flash: a quick white wash over the body, fading out.
+				if enm.HitFlashTimer > 0 {
+					ff := enm.HitFlashTimer / ShockwaveHitFlashDuration
+					if ff > 1 {
+						ff = 1
+					}
+					rl.DrawCircle(int32(enm.X), int32(enm.Y), enm.Size/2.0*1.6, rl.NewColor(255, 255, 255, uint8(200*ff)))
 				}
 
 				if enm.HP < enm.MaxHP {
@@ -2291,11 +3192,14 @@ func drawGame() {
 					fgRec := rl.Rectangle{X: barCenterX, Y: barCenterY, Width: barWidth * hpPct, Height: barHeight}
 					rl.DrawRectanglePro(fgRec, rl.NewVector2(barWidth*hpPct/2, barHeight/2), barRotation, rl.Green)
 				}
+
+				// Restore the real position after drawing the lunge offset.
+				enm.X, enm.Y = lungeOrigX, lungeOrigY
 			}
 		}
 
 		if state.DeathTimer > 0 {
-			// Death animation — the player circle shatters into mixed debris shapes
+			// Death animation -- the player circle shatters into mixed debris shapes
 			// (triangles, squares, small circles) that all launch from the player's
 			// origin and fly outward while spinning, plus the original expanding ring.
 			//
@@ -2315,7 +3219,7 @@ func drawGame() {
 			// and a spin direction. All start at the player origin (dist=0 at progress=0).
 			//
 			// Shape types: 0 = triangle, 1 = square, 2 = small circle
-			// Triangles are the "shards" — they fly fastest and spin hardest.
+			// Triangles are the "shards" -- they fly fastest and spin hardest.
 			// Squares and circles are slower debris.
 			type debrisPiece struct {
 				angle     float64 // radial launch direction (radians)
@@ -2327,20 +3231,20 @@ func drawGame() {
 			}
 
 			pieces := []debrisPiece{
-				// Triangles — fast, hard spin
+				// Triangles -- fast, hard spin
 				{angle: 0.0, shapeType: 0, speedMult: 2.2, spinDir: 1, spinRate: 6.0, size: 9},
 				{angle: 0.9, shapeType: 0, speedMult: 2.4, spinDir: -1, spinRate: 7.5, size: 7},
 				{angle: 2.1, shapeType: 0, speedMult: 2.0, spinDir: 1, spinRate: 8.0, size: 8},
 				{angle: 3.4, shapeType: 0, speedMult: 2.5, spinDir: -1, spinRate: 6.5, size: 9},
 				{angle: 4.7, shapeType: 0, speedMult: 2.3, spinDir: 1, spinRate: 7.0, size: 7},
 				{angle: 5.6, shapeType: 0, speedMult: 2.1, spinDir: -1, spinRate: 9.0, size: 8},
-				// Squares — medium speed, moderate spin
+				// Squares -- medium speed, moderate spin
 				{angle: 0.5, shapeType: 1, speedMult: 1.4, spinDir: 1, spinRate: 3.5, size: 7},
 				{angle: 1.6, shapeType: 1, speedMult: 1.3, spinDir: -1, spinRate: 4.0, size: 6},
 				{angle: 2.8, shapeType: 1, speedMult: 1.5, spinDir: 1, spinRate: 3.0, size: 8},
 				{angle: 4.1, shapeType: 1, speedMult: 1.2, spinDir: -1, spinRate: 4.5, size: 6},
 				{angle: 5.2, shapeType: 1, speedMult: 1.4, spinDir: 1, spinRate: 3.8, size: 7},
-				// Small circles — slowest, no spin needed
+				// Small circles -- slowest, no spin needed
 				{angle: 1.1, shapeType: 2, speedMult: 0.9, spinDir: 1, spinRate: 0, size: 5},
 				{angle: 2.4, shapeType: 2, speedMult: 1.0, spinDir: 1, spinRate: 0, size: 4},
 				{angle: 3.8, shapeType: 2, speedMult: 0.85, spinDir: -1, spinRate: 0, size: 5},
@@ -2363,20 +3267,34 @@ func drawGame() {
 				spinAngleDeg := float32(p.spinDir) * p.spinRate * progress * 360.0
 
 				switch p.shapeType {
-				case 0: // Triangle — filled blue, white outline
+				case 0: // Triangle -- filled blue, white outline
 					rl.DrawPoly(rl.NewVector2(px, py), 3, p.size, spinAngleDeg, rl.NewColor(DefenderColor.R, DefenderColor.G, DefenderColor.B, alpha))
 					rl.DrawPolyLinesEx(rl.NewVector2(px, py), 3, p.size, spinAngleDeg, 1.5, rl.NewColor(255, 255, 255, alpha/2))
-				case 1: // Square — filled blue, white outline
+				case 1: // Square -- filled blue, white outline
 					rl.DrawPoly(rl.NewVector2(px, py), 4, p.size, spinAngleDeg+45, rl.NewColor(DefenderColor.R, DefenderColor.G, DefenderColor.B, alpha))
 					rl.DrawPolyLinesEx(rl.NewVector2(px, py), 4, p.size, spinAngleDeg+45, 1.5, rl.NewColor(255, 255, 255, alpha/2))
-				case 2: // Small circle — outline only, orange tint for contrast
+				case 2: // Small circle -- outline only, orange tint for contrast
 					rl.DrawCircle(int32(px), int32(py), p.size, rl.NewColor(180, 220, 255, alpha))
 					rl.DrawCircleLines(int32(px), int32(py), p.size, rl.NewColor(255, 255, 255, alpha/2))
 				}
 			}
 		} else {
+			bodyCol := DefenderColor
+			if state.PlayerHurtFlash > 0 {
+				// Blend toward red on a melee hit; fades over PlayerHurtFlashDuration.
+				t := state.PlayerHurtFlash / PlayerHurtFlashDuration
+				if t > 1 {
+					t = 1
+				}
+				bodyCol = rl.NewColor(
+					uint8(float32(DefenderColor.R)+(255-float32(DefenderColor.R))*t),
+					uint8(float32(DefenderColor.G)*(1-t)),
+					uint8(float32(DefenderColor.B)*(1-t)),
+					255,
+				)
+			}
 			drawNeonGlow(state.Player.X, state.Player.Y, state.Player.Radius, DefenderColor, 1.0)
-			rl.DrawCircle(int32(state.Player.X), int32(state.Player.Y), state.Player.Radius, DefenderColor)
+			rl.DrawCircle(int32(state.Player.X), int32(state.Player.Y), state.Player.Radius, bodyCol)
 			rl.DrawCircleLines(int32(state.Player.X), int32(state.Player.Y), state.Player.Radius, rl.White)
 			if state.Player.Overshield > 0 {
 				rl.DrawCircleLines(int32(state.Player.X), int32(state.Player.Y), state.Player.Radius+5, rl.SkyBlue)
@@ -2394,10 +3312,52 @@ func drawGame() {
 		}
 
 		if state.Player.ShockwaveVisualTimer > 0 {
-			alpha := uint8(255 * (state.Player.ShockwaveVisualTimer / 0.5))
-			radius := ShockwaveBaseRadius * (1.0 - (state.Player.ShockwaveVisualTimer / 0.5))
-			rl.DrawCircleLines(int32(state.Player.X), int32(state.Player.Y), radius, rl.NewColor(255, 255, 255, alpha))
-			rl.DrawCircleLines(int32(state.Player.X), int32(state.Player.Y), radius-5, rl.NewColor(255, 255, 255, alpha/2))
+			if state.Player.SetThornsShockwave {
+				// Bulwark set: same ring as the normal shockwave, but anchored at
+				// the cast position and expanding past the screen edge. Damage is
+				// applied by updateShockwaveRing as this wavefront reaches enemies,
+				// so the radius here is the single shared source (helper).
+				prog := 1.0 - (state.Player.ShockwaveVisualTimer / ShockwaveSetVisualDuration)
+				radius := shockwaveSetRingRadius()
+				// Hold full brightness while travelling; fade out over the last 20%.
+				a := float32(1.0)
+				if prog > 0.8 {
+					a = (1.0 - prog) / 0.2
+				}
+				ox := state.Player.ShockwaveOriginX
+				oy := state.Player.ShockwaveOriginY
+				center := rl.NewVector2(ox, oy)
+
+				// Trailing echo: a few concentric bands behind the front, each
+				// dimmer and bluer, so the wave reads as a thick pressure pulse.
+				const echoes = 4
+				const echoGap = float32(34)
+				for i := echoes; i >= 1; i-- {
+					er := radius - float32(i)*echoGap
+					if er < 6 {
+						continue
+					}
+					ea := a * (1.0 - float32(i)/float32(echoes+1))
+					col := rl.NewColor(120, 195, 255, uint8(110*ea))
+					rl.DrawRing(center, er-echoGap*0.45, er, 0, 360, 48, col)
+				}
+
+				// Wavefront body: a bright filled band at the leading edge with a
+				// crisp white outer line riding on top.
+				const frontThick = float32(26)
+				inner := radius - frontThick
+				if inner < 0 {
+					inner = 0
+				}
+				rl.DrawRing(center, inner, radius, 0, 360, 64, rl.NewColor(220, 240, 255, uint8(140*a)))
+				rl.DrawCircleLines(int32(ox), int32(oy), radius, rl.NewColor(255, 255, 255, uint8(255*a)))
+				rl.DrawCircleLines(int32(ox), int32(oy), radius-2, rl.NewColor(255, 255, 255, uint8(180*a)))
+			} else {
+				alpha := uint8(255 * (state.Player.ShockwaveVisualTimer / 0.5))
+				radius := ShockwaveBaseRadius * (1.0 - (state.Player.ShockwaveVisualTimer / 0.5))
+				rl.DrawCircleLines(int32(state.Player.X), int32(state.Player.Y), radius, rl.NewColor(255, 255, 255, alpha))
+				rl.DrawCircleLines(int32(state.Player.X), int32(state.Player.Y), radius-5, rl.NewColor(255, 255, 255, alpha/2))
+			}
 		}
 
 		for _, ft := range state.FloatingTexts {
@@ -2471,7 +3431,7 @@ func drawGame() {
 
 			// Resolve scale into an effective font size. raylib's DrawText only
 			// accepts integer sizes, so the scaling is stepped (e.g. 16→18→20)
-			// rather than perfectly smooth — fine for a brief pop animation.
+			// rather than perfectly smooth -- fine for a brief pop animation.
 			effFontSize := fontSize
 			if scale != 1.0 {
 				effFontSize = int32(float32(fontSize) * scale)
@@ -2513,7 +3473,7 @@ func drawGame() {
 				pulse := float32(math.Sin(float64(rl.GetTime())*8.0)) * 3.0
 				reticleRadius += pulse
 
-				// Spin angle — slow constant rotation.
+				// Spin angle -- slow constant rotation.
 				angle := float32(rl.GetTime()) * 1.5
 
 				// Four corner brackets, 90 degrees apart.
@@ -2543,9 +3503,12 @@ func drawGame() {
 		}
 
 		// Death animations for enemies that just died this frame or recently.
-		// Drawn last so they sit on top of remaining live enemies — gives the
+		// Drawn last so they sit on top of remaining live enemies -- gives the
 		// kill-feedback proper visual emphasis.
 		drawDyingEnemies()
+
+		drawAirdrops()
+		drawMissionWorldEffects()
 
 		rl.EndMode2D()
 
@@ -2557,15 +3520,20 @@ func drawGame() {
 			drawLevelUpMenu()
 		}
 
-		// Aim tutorial overlay — drawn above the world but below the pause menu.
+		// Aim tutorial overlay -- drawn above the world but below the pause menu.
 		if state.TutAimActive {
 			drawTutAimOverlay()
+		}
+		if state.TutAirdropActive {
+			drawTutAirdropOverlay()
 		}
 
 		// Tutorial tip drawn last so it always sits above the level-up menu.
 		if !meta.TutorialComplete {
 			drawInRunTip()
 		}
+
+		drawMissionUI()
 
 		//keep this at the end ya dingus. kept drawing it before other stuff and breaking
 		//everything like an IDIOT.

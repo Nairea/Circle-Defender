@@ -11,11 +11,13 @@ const (
 	WindowName   = "Circle Defender: Polygon Peril"
 
 	//Screen state flags (rooms in gamemaker)
-	ScreenStart    = 0
-	ScreenGame     = 1
-	ScreenResearch = 2
-	ScreenItems    = 3
-	ScreenLoading  = 4
+	ScreenStart        = 0
+	ScreenGame         = 1
+	ScreenResearch     = 2 // talent-tree lab (kept as-is for tutorial compat)
+	ScreenItems        = 3
+	ScreenLoading      = 4
+	ScreenRPShop       = 5 // standalone RP-cost research upgrades panel
+	ScreenEncyclopedia = 6 // info screen: enemies, missions, stats
 
 	// How long the pre-run load screen shows (seconds).
 	// Enemies spawn and move during this window so they're already
@@ -62,7 +64,7 @@ const (
 	// RP cost thresholds — kept for minimum-investment enforcement in buyItem.
 	// Rarity distribution is now a continuous bell curve; these are no longer
 	// used to gate individual tiers.
-	FabCostMinimum         = 100
+	FabCostMinimum          = 100
 	MaxFabricatorInvestment = 50000 // hard cap on RP that can be put into a single item
 
 	//Inventory tab flags.
@@ -79,15 +81,21 @@ const (
 	SortRarity  = 3
 
 	//Enemy type flag.
-	EnemyStandard  = 0
-	EnemyDodger    = 1
-	EnemyRanger    = 2
-	EnemyShielder  = 3
-	EnemyPhaser    = 4
-	EnemyReflector = 5
-	EnemyDivider   = 6
-	EnemyBerserker = 7
-	EnemyFragment  = 8
+	EnemyStandard        = 0
+	EnemyDodger          = 1
+	EnemyRanger          = 2
+	EnemyShielder        = 3
+	EnemyPhaser          = 4
+	EnemyReflector       = 5
+	EnemyDivider         = 6
+	EnemyBerserker       = 7
+	EnemyFragment        = 8
+	EnemyMegaBossSpawner = 9  // mega boss: very slow, ejects a standard enemy on every player hit
+	EnemyMegaBossOrbiter = 10 // mega boss: kites at a standoff ring, fires at the player periodically
+	EnemyMegaBossBulwark = 11 // mega boss: rotating shielded front arc blocks projectiles
+	// MegaBossFirst/Last bound the contiguous mega-boss type range (used by isMegaBoss).
+	MegaBossFirst = EnemyMegaBossSpawner
+	MegaBossLast  = EnemyMegaBossBulwark
 
 	//Bullet info.
 	BulletSpeed      = 480
@@ -106,11 +114,34 @@ const (
 	RangerStopDist  = 250
 	RangerShootCD   = 2.5
 	//Shielder
-	ShielderBaseSpeed = 15
-	ShielderRadius    = 260.0
+	ShielderBaseSpeed      = 20
+	ShielderRadius         = 260.0
+	ShielderSelfDamageMult = float32(0.5) // Shielder itself takes 50% damage
+	ShielderZoneDamageMult = float32(0.1) // enemies inside a Shielder zone take 10% (90% reduction)
 	//Boss enemy things.
 	BossScaling = 10
 	BossSize    = 30
+
+	// Combat caps / bases (single source of truth — also surfaced in the Encyclopedia).
+	ArmorCap           = float32(0.90) // maximum % damage reduction from armor
+	BaseCritMultiplier = float32(1.5)  // starting crit multiplier
+	ExecuteThreshold   = float32(0.30) // enemies below this HP fraction count as "executable"
+
+	// Mega boss timing.
+	MegaBossSpawnInterval    = float32(300)  // one mega boss every 5 minutes of game time
+	MegaBossSpitCooldown     = float32(0.3)  // min game-seconds between offspring ejections (rate-limits the any-damage trigger)
+	MegaBossSpitAnimDuration = float32(0.35) // game-seconds for the "spit out" launch + scale-up animation
+
+	// Orbiter mega boss: orbits the edge of the player's range; fires only at the
+	// peaks of its in/out oscillation, halting to charge as it nears each peak.
+	MegaBossOrbiterStandoff     = float32(70)   // orbit-radius swing amplitude around the range edge
+	MegaBossOrbiterSpeed        = float32(55)   // orbit speed (slow but enough to circle)
+	MegaBossOrbiterAimThreshold = float32(0.96) // |sin| past this = at an oscillation peak: halt, charge, fire
+
+	// Bulwark mega boss: a rotating shielded front arc that blocks projectiles.
+	MegaBossBulwarkHalfArc = float32(2.0) // radians either side of the shield facing (~115°)
+	MegaBossBulwarkSpin    = float32(0.6) // shield rotation speed, radians/sec
+	MegaBossBulwarkSpeed   = float32(6)   // very slow advance toward the player
 	//Phaser
 	PhaserBaseSpeed = 33
 	PhaserPhaseCD   = 3.0
@@ -123,9 +154,17 @@ const (
 	//Berserker
 	BerserkerBaseSpeed = 14
 
+	// Global slow on spawned wave enemies (Standard, Dodger, swarm, offspring,
+	// fragments). 0.4 = 60% slower, for a constantly-swarmed feel. Mega bosses
+	// keep their own hand-tuned speeds.
+	EnemySpeedMult = float32(0.4)
+
+	// Hard cap on concurrent live enemies.
+	MaxEnemiesAlive = 500
+
 	//Some ability constants. Mostly CD's. but also gravity pull rate and the bombardment rate.
-	RapidFireBaseCD      = 15
-	RapidFireBSBaseCD    = 10 // Bullet Storm branch: shorter cooldown, more frequent bursts
+	RapidFireBaseCD      = 30
+	RapidFireBSBaseCD    = 30 // Bullet Storm branch (CDR shave + bonuses differentiate it now)
 	DeathRayBaseCD       = 20
 	DeathRayPrismHitMult = 0.05 // Prism spin-beam damage factor: keeps hit ~0.5x base damage at DeathRayDamageMult=10
 	GravityForce         = 300
@@ -216,8 +255,20 @@ const (
 	ShockwaveBaseRadius    = 200
 	ShockwaveBaseForce     = 100
 	ShockwaveSlideDuration = 0.2
-	ShockwaveBaseCD        = 10
-	ShockwaveStunDuration  = 1.5
+	ShockwaveBaseCD        = 15
+	// Bulwark set: the ring travels outward over this many game-seconds before
+	// despawning once it has cleared the screen edge. (Slow, rolling wavefront.)
+	ShockwaveSetVisualDuration = float32(5.4)
+	// Shockwave juice: brief white flash on struck enemies, plus the camera kick
+	// magnitude (px) and how fast it decays (px/sec) on each set-shockwave cast.
+	ShockwaveHitFlashDuration = float32(0.15)
+	// Melee attack feedback: enemy lunge jab + player hurt flash.
+	MeleeLungeDuration      = float32(0.18) // enemy out-and-back jab time
+	MeleeLungeDist          = float32(9.0)  // px the enemy jabs toward the player at peak
+	PlayerHurtFlashDuration = float32(0.16) // player red-flash time after taking a melee hit
+	ShockwaveCamShake       = float32(11.0)
+	ShockwaveCamShakeDecay  = float32(34.0)
+	ShockwaveStunDuration   = 1.5
 
 	//max amount of max HP you can gather up as an overshield.
 	//may need to adjust this up or down or just make it a flat
@@ -264,24 +315,82 @@ const (
 	MaxDmgPerMeter = 0.10
 )
 
+// Mission Alert system constants.
+const (
+	MissionNone          = 0
+	MissionNoEnemiesNear = 1 // no enemy within MissionNoEnemyRadius for the duration
+	MissionNoAutoAim     = 2 // no auto-targeted basic shots for the duration
+	MissionNoAbilities   = 3 // don't trigger any ability for 20 real seconds
+	MissionKillCount     = 4 // kill MissionKillGoal enemies of a chosen type (swarm spawn)
+	MissionUntouchable   = 5 // don't take any HP damage for the duration
+	MissionGlassWall     = 6 // survive with armor forced to 0 for the duration
+	MissionCriticalMass  = 7 // land MissionCriticalMassGoal critical hits (no time limit)
+	MissionDuel          = 8 // kill a single heavily-scaled boss within the time limit
+	MissionDeadZone      = 9 // a 30° spinning cone — enemies inside it can't be hurt
+
+	MissionStateNone     = 0 // no mission active, trigger timer counting down
+	MissionStateChoice   = 1 // choice modal open, world paused
+	MissionStateActive   = 2 // mission running
+	MissionStateComplete = 3 // success flash playing
+
+	MissionAlertInterval       = float32(90)  // choice modal fires every 90 game-seconds
+	MissionChoiceWindow        = float32(8)   // real seconds the choice modal stays open
+	MissionDuration            = float32(15)  // active window for NoEnemiesNear, NoAutoAim
+	MissionNoAbilitiesDuration = float32(20)  // active window for MissionNoAbilities
+	MissionKillCountDuration   = float32(20)  // internal timer for MissionKillCount (never decremented)
+	MissionUntouchableDuration = float32(20)  // active window for MissionUntouchable
+	MissionGlassWallDuration   = float32(20)  // active window for MissionGlassWall
+	MissionCriticalMassGoal    = 75           // crits required for MissionCriticalMass
+	MissionDuelDuration        = float32(30)  // time limit to kill the duel boss
+	MissionDeadZoneDuration    = float32(20)  // active window for MissionDeadZone
+	MissionDeadZoneHalfAngle   = float32(30)  // degrees either side of center (60° total cone)
+	MissionDeadZoneSpinSpeed   = float32(72)  // degrees/second — full rotation every 5s
+	MissionSuccessDuration     = float32(3)   // success flash duration
+	MissionReward              = 150          // RP awarded on completion
+	MissionNoEnemyRadius       = float32(200) // safe-zone radius for NoEnemiesNear
+)
+
 // enemy color globals
 var (
-	DefenderColor       = rl.Blue
-	EnemyColor          = rl.Red
-	EnemyDodgerColor    = rl.Orange
-	EnemyRangerColor    = rl.Green
-	EnemyShielderColor  = rl.NewColor(0, 228, 255, 255)
-	EnemyPhaserColor    = rl.Purple
-	EnemyReflectorColor = rl.LightGray
-	EnemyDividerColor   = rl.Magenta
-	EnemyBerserkerColor = rl.Maroon
-	ShieldZoneColor     = rl.NewColor(0, 228, 255, 40)
-	BulletColor         = rl.SkyBlue
-	EnemyBulletColor    = rl.Pink
-	SatelliteColor      = rl.DarkBlue
+	DefenderColor             = rl.Blue
+	EnemyColor                = rl.Red
+	EnemyDodgerColor          = rl.Orange
+	EnemyRangerColor          = rl.Green
+	EnemyShielderColor        = rl.NewColor(0, 228, 255, 255)
+	EnemyPhaserColor          = rl.Purple
+	EnemyReflectorColor       = rl.LightGray
+	EnemyDividerColor         = rl.Magenta
+	EnemyBerserkerColor       = rl.Maroon
+	EnemyMegaBossColor        = rl.NewColor(255, 90, 0, 255)    // Spawner — deep orange
+	EnemyMegaBossOrbiterColor = rl.NewColor(0, 220, 200, 255)   // Orbiter — teal
+	EnemyMegaBossBulwarkColor = rl.NewColor(150, 175, 215, 255) // Bulwark — steel blue
+	ShieldZoneColor           = rl.NewColor(0, 228, 255, 40)
+	BulletColor               = rl.SkyBlue
+	EnemyBulletColor          = rl.Pink
+	SatelliteColor            = rl.DarkBlue
 )
 
 // Buncha structs time. LETS GO.
+
+// RunRecord captures the key stats for one completed run, persisted in meta.json.
+type RunRecord struct {
+	RunTime   float32 `json:"runTime"`
+	Kills     int     `json:"kills"`
+	BossKills int     `json:"bossKills"`
+	MetaLevel int     `json:"metaLevel"`
+	Date      string  `json:"date"`
+}
+
+// SavedLoadout is a snapshot of a full build: equipped gear (by inventory
+// index) plus the complete talent allocation. Saved/loaded from the research
+// page; loading is blocked while a run is in progress.
+type SavedLoadout struct {
+	Used        bool           // false = empty slot
+	Name        string         // display label
+	ItemIdx     [4]int         // inventory index per gear slot (-1 = empty)
+	TalentRanks map[string]int // node ID → rank at snapshot time
+}
+
 // Meta progression state.
 type MetaProgression struct {
 	//at time of comment spamming i legit cant recall if i fully removed these for now or not...
@@ -304,6 +413,7 @@ type MetaProgression struct {
 	TutorialStep       int
 	TutorialComplete   bool // set true after the player dies for the first time
 	TutorialDeathShown bool // set true after the "polygons got you" popup is shown once
+	TutAirdropSeen     bool // set true after the first airdrop tutorial overlay is shown
 
 	//Ability unlock states.
 	RapidFireUnlocked       bool
@@ -330,6 +440,16 @@ type MetaProgression struct {
 	//Speed Unlocks.
 	Speed3xUnlocked       bool
 	OpeningSprintUnlocked bool
+	OpeningSprintEnabled  bool // runtime toggle; set true on purchase, player can flip it
+
+	// Targeting unlocks.
+	ExtendedRangeUnlocked bool // allows cursor-targeting enemies outside the range circle
+
+	// Auto-aim unlock. Without this the player must hold LMB near enemies to fire.
+	AutoAimUnlocked bool
+
+	// Mission system unlock.
+	MissionsUnlocked bool // enables the mission alert system during runs
 
 	// Active loadout — DEPRECATED. Kept on the struct so old saves still
 	// unmarshal cleanly, but the runtime no longer consults these. Active
@@ -348,12 +468,30 @@ type MetaProgression struct {
 
 	// ── Talent tree system (Mini Healer-style) ───────────────────────────
 	// MetaLevel is the persistent meta-progression level, distinct from the
-	// in-run player Level. Earned from kills + waves survived at end of run.
+	// in-run player Level. Earned from kills + time survived at end of run.
 	MetaLevel          int
 	MetaXP             int
 	TalentPointsEarned int            // total TP ever granted (TPPerMetaLevel per ML)
 	TalentRanks        map[string]int // node ID → current rank
 	TalentsMigrated    bool           // legacy branch/unlock fields converted?
+
+	// Run history — top 10 runs sorted by time survived, descending.
+	RunRecords []RunRecord `json:"runRecords"`
+
+	// ── RP-shop QoL purchases ─────────────────────────────────────────────
+	RerollLevel  int             // level-up reroll charges per run (research rank)
+	LoadoutSlots int             // owned loadout save slots (research rank, max 3)
+	Loadouts     [3]SavedLoadout // gear + talent snapshots
+
+	// ── Crafting system ───────────────────────────────────────────────────
+	// Parts are awarded by salvaging items; type of item gives more of its own part type.
+	// Void Shards drop from boss kills in-run and gate higher-tier recipes.
+	WeaponParts     int             `json:"WeaponParts,omitempty"`
+	ShieldParts     int             `json:"ShieldParts,omitempty"`
+	RingParts       int             `json:"RingParts,omitempty"`
+	TrinketParts    int             `json:"TrinketParts,omitempty"`
+	VoidShards      int             `json:"VoidShards,omitempty"`
+	UnlockedRecipes map[string]bool `json:"UnlockedRecipes,omitempty"`
 }
 
 // Item stats struct, helps keep a clean way to build items.
@@ -361,49 +499,54 @@ type ItemStat struct {
 	StatType  string
 	Value     float32
 	BaseValue float32
-	Growth    float32
 }
 
 // The actual item. pretty self explanatory.
 // gave it a description line for possible
 // fun flavor text later.
 type Item struct {
-	Name           string
-	Type           int
-	Rarity         int // RarityNormal … RaritySet
-	Stats          []ItemStat
-	Description    string
-	SalvageValue   int
+	Name                 string
+	Type                 int
+	Rarity               int // RarityNormal … RaritySet
+	Stats                []ItemStat
+	Description          string
+	SalvageValue         int
 	UniqueModifier       string  // non-empty on epic/legendary rolls
 	UniqueModifierValue  float32 // rolled power value for the modifier; 0 if no modifier
 	UniqueModifier2      string  // legendary-only: very rare second modifier slot
 	UniqueModifierValue2 float32
 	SetID                string // non-empty for set items; matches a key in SetRegistry
+	IsCrafted            bool   `json:"IsCrafted,omitempty"` // produced by the Forge
+	CraftTier            int    `json:"CraftTier,omitempty"` // 1-4; used for part refund on salvage
 }
 
-// SetDefinition describes a named gear set and its bonus thresholds.
-// Bonuses are applied in CheckSetBonuses whenever equipped items change.
-// The actual Effect funcs are left as stubs for now — fill them in once
-// you have concrete ideas for what each set should do.
+// SetDefinition describes a named gear set. The full-set bonus is an EFFECT
+// (not just a stat sum) toggled via player flags in CheckSetBonuses when the
+// required number of pieces are equipped. Per-piece stats live on the items.
 type SetDefinition struct {
-	Name    string
-	Items   []string        // item Names that belong to this set
-	Bonus2  func(p *Player) `json:"-"` // bonus when 2 set pieces are equipped
-	Bonus4  func(p *Player) `json:"-"` // bonus when all 4 set pieces are equipped
-	Active2 bool            // runtime: is the 2-piece bonus currently applied?
-	Active4 bool            // runtime: is the 4-piece bonus currently applied?
+	Name      string
+	Items     []string // item Names that belong to this set
+	Pieces    int      // pieces required for the full-set bonus
+	BonusDesc string   // human-readable bonus, shown in tooltips
 }
 
 // SetRegistry holds all defined gear sets keyed by SetID.
 // Add new sets here; the equip/unequip logic reads from this map.
 var SetRegistry = map[string]*SetDefinition{
-	// ── Example set (stub) ────────────────────────────────────────────────
-	// "PhantomProtocol": {
-	//     Name:  "Phantom Protocol",
-	//     Items: []string{"Phantom Blade", "Phantom Veil", "Phantom Band", "Phantom Core"},
-	//     Bonus2: func(p *Player) { /* +15% crit chance */ },
-	//     Bonus4: func(p *Player) { /* shots phase through enemies */ },
-	// },
+	// Bulwark of Reprisal — weapon + shield + ring. Tanky thorns build.
+	"bulwark_thorns": {
+		Name:      "Bulwark of Reprisal",
+		Items:     []string{"Reprisal Spike Cannon", "Reprisal Aegis Plate", "Reprisal Thorn Band"},
+		Pieces:    3,
+		BonusDesc: "(3) Shockwave covers the whole screen and deals 5x Thorns damage on hit.",
+	},
+	// Aegis of the Tempest — shield + ring + trinket. Regen / overshield build.
+	"aegis_storm": {
+		Name:      "Aegis of the Tempest",
+		Items:     []string{"Tempest Barrier Plate", "Tempest Conduit Band", "Tempest Capacitor Core"},
+		Pieces:    3,
+		BonusDesc: "(3) At full HP & overshield, strike enemies in range with lightning for 200% of your HP + overshield regen.",
+	},
 }
 
 type GravityZone struct {
@@ -435,10 +578,35 @@ type Player struct {
 	Points        int
 	AutoAbilities map[string]bool // per ability NAME; true = fires automatically when off cooldown
 	//houses number of times upgrades taken.
-	UpgradeCounts       map[string]int
-	Damage              float32
-	Range               float32
-	DamagePerMeter      float32
+	UpgradeCounts  map[string]int
+	Damage         float32
+	Range          float32
+	DamagePerMeter float32
+
+	// Talent conditional-damage hooks. Applied to basic-shot (and satellite)
+	// damage in the bullet-hit path via shotConditionalMult().
+	OpenerBonus  float32 // +dmg fraction vs full-HP enemies ("first strike")
+	ExecuteBonus float32 // +dmg fraction vs enemies below ExecuteThreshold HP
+	SlowAmpBonus float32 // +dmg fraction vs crowd-controlled (stunned/knocked) enemies
+	// Defensive retaliation: a fraction of damage taken is dealt back to nearby
+	// enemies as a thorns-type nova (applied in retaliateOnDamage()).
+	ReflectPct float32
+
+	// Talent percentage accumulators. The first group multiplies final stats
+	// (base + gear) once at run start via finalizePlayerStats; the second
+	// group is consumed live at its usage site so it tracks stats that change
+	// mid-run (Damage from level-ups, MaxHP growth, etc).
+	MaxHPPct  float32 // +% Max HP, applied after gear
+	RangePct  float32 // +% Range, applied after gear
+	ThornsPct float32 // +% Thorns damage, applied after gear
+
+	RegenPctHP         float32 // HP regen: % of Max HP per second
+	OSRegenPctHP       float32 // overshield regen: % of Max HP per second
+	OvershieldCapPct   float32 // raises the overshield cap (fraction of MaxHP above MaxOvershieldRatio)
+	DamageReductionPct float32 // multiplicative damage reduction after armor (capped 0.40)
+	ChronoDoTPct       float32 // Chrono field DoT: % of Damage per second
+	SatelliteDmgPct    float32 // satellites add this % of Damage to their hits
+
 	ASDelay             float32
 	ASCooldown          float32
 	BaseASDelay         float32
@@ -472,9 +640,27 @@ type Player struct {
 	ShockwaveUnlocked    bool
 	ShockwaveCooldown    float32
 	ShockwaveVisualTimer float32
+	// Level-up upgrade accumulators (persist for the run):
+	ShockwaveCDReduction float32 // seconds shaved off the base recharge
+	ShockwaveBonusRadius float32 // extra blast radius (Repulsor)
+	ShockwaveBonusStun   float32 // extra stun duration (Repulsor)
+	ShockwaveShatterAdd  float32 // extra armor stripped per hit (Shatter)
+	// Bulwark set traveling-ring state: damage lands as the wavefront reaches
+	// each enemy, so we track the fixed origin and which enemies it has hit.
+	ShockwaveOriginX float32
+	ShockwaveOriginY float32
+	ShockwaveHitIDs  map[int]bool `json:"-"` // enemies this wave has already damaged
+	// Enemies that existed when the wave was cast. The wave only damages these,
+	// so offspring/fragments spawned mid-wave aren't swept up by the same pulse.
+	ShockwaveEligibleIDs map[int]bool `json:"-"`
 
 	// Shatter branch: tracks armor reduction applied to each enemy (by ID)
 	ShatterDebuffs map[int]float32
+
+	// Gear-set effect flags, recomputed in CheckSetBonuses on equip changes.
+	SetThornsShockwave bool    // Bulwark set (3pc): Shockwave covers the screen + 5x Thorns on hit
+	SetLightningGuard  bool    // Aegis set (3pc): at full HP+overshield, strike enemies with lightning
+	SetLightningTimer  float32 // pacing for the lightning-guard pulses
 
 	MinesUnlocked        bool
 	MinePlacementCounter int
@@ -517,10 +703,12 @@ type Player struct {
 	Inventory     []*Item
 	EquippedItems [4]*Item
 
-	RapidFireDuration   float32
-	RapidFireMultiplier float32
-	BulletStormDmgBonus float32 // cumulative per-shot damage bonus from Sustained upgrades
-	BulletStormCDR      float32 // flat cooldown reduction (seconds) from Overclock upgrades
+	RapidFireDuration     float32
+	RapidFireMultiplier   float32
+	BulletStormDmgBonus   float32 // cumulative per-shot damage bonus from Sustained upgrades
+	BulletStormCDR        float32 // flat cooldown reduction (seconds) from Overclock upgrades
+	OverchargeMultiBonus  float32 // extra multishot chance added/removed on Overcharge activate/deactivate
+	OverchargeVolleyBonus int     // extra MultishotCount added/removed on Overcharge activate/deactivate
 
 	DeathRayPath       int
 	DeathRayDuration   float32
@@ -550,17 +738,23 @@ type Player struct {
 	ChronoBossSlow    float32
 	ChronoDoT         float32
 	ChronoPassiveSlow float32
+	PassiveEnemySlow  float32 // unconditional fraction subtracted from every enemy speedMult
 
-	RapidFireUnlocked bool
-	IsRapidFiring     bool
-	RapidFireTimer    float32
-	RapidFireCooldown float32
+	RapidFireUnlocked      bool
+	IsRapidFiring          bool
+	RapidFireAutoTriggered bool
+	RapidFireTimer         float32
+	RapidFireCooldown      float32
 
 	DeathRayUnlocked  bool
 	IsDeathRayActive  bool
 	DeathRayTimer     float32
 	DeathRayCooldown  float32
 	DeathRayTargetIDs []int
+	// DeathRayFocus tracks, per locked target ID, how long (game-seconds) the
+	// beam has stayed on it. Drives the Annihilator escalation per target and
+	// resets when a beam swaps targets. Runtime-only.
+	DeathRayFocus map[int]float32 `json:"-"`
 
 	GravityFieldUnlocked   bool
 	GravityAnomalyUnlocked bool
@@ -623,6 +817,28 @@ type Enemy struct {
 	RageStacks         int
 	DamageAccumulator  map[string]float32
 	DamageShowTimer    float32
+
+	// Spawn animation: while > 0 the enemy is drawn scaling up from small to
+	// full size (used for mega-boss "spit out" offspring).
+	SpawnAnimTimer float32
+
+	// Mega-boss spit tracking. LastHP is the boss's HP at the end of the
+	// previous frame; a drop since then means it took damage from some source.
+	// SpitCooldown rate-limits offspring ejection.
+	LastHP       float32
+	SpitCooldown float32
+
+	// ShieldAngle is the facing (radians) of the Bulwark mega boss's rotating
+	// shield arc; projectiles striking within MegaBossBulwarkHalfArc of it are blocked.
+	ShieldAngle float32
+
+	// HitFlashTimer drives a brief white flash overlay when the shockwave
+	// wavefront passes over the enemy. Counts down to 0.
+	HitFlashTimer float32
+
+	// AttackLungeTimer drives the melee "lunge" tell: when the enemy lands a
+	// melee hit it briefly jabs toward the player then eases back. Counts to 0.
+	AttackLungeTimer float32
 }
 
 // DyingEnemy is a lightweight visual-only copy of an enemy at the moment
@@ -657,6 +873,7 @@ type Projectile struct {
 	TargetID    int
 	BouncesLeft int
 	SourceID    int
+	IsSatellite bool // fired by a Sentry satellite — attribute DPS to "Satellites", not "Basic Shots"
 }
 
 type Mine struct {
@@ -676,6 +893,26 @@ type Explosion struct {
 	IsDud       bool // true = mine timed out (fizzle), false = triggered explosion
 }
 
+type AirdropParticle struct {
+	X, Y          float32
+	VX, VY        float32
+	Life, MaxLife float32
+	Size          float32
+	Col           rl.Color
+}
+
+type Airdrop struct {
+	Angle       float32
+	OrbitRadius float32
+	AngularVel  float32
+	TrailTimer  float32
+	Age         float32
+	Claimed     bool
+	ClaimX      float32
+	ClaimY      float32
+	Particles   []AirdropParticle
+}
+
 type LightningArc struct {
 	SourceX, SourceY float32
 	TargetX, TargetY float32
@@ -683,6 +920,8 @@ type LightningArc struct {
 	Delay            float32 // seconds before this arc becomes visible
 	IsChain          bool    // true = chain arc drawn with jagged segments
 	Seed             int32   // per-arc random seed for stable jitter
+	Bright           bool    // true = animated "fire out" guard arc (Tempest set)
+	Age              float32 // seconds since this arc became active (drives grow anim)
 }
 
 type LevelOption struct {
@@ -690,7 +929,6 @@ type LevelOption struct {
 	Description string
 	Effect      func(*Player) `json:"-"`
 }
-
 
 // DamageType categorizes where damage came from. It drives floating number
 // color and is the hook that future skills/items will branch on (e.g. "leech
@@ -756,19 +994,21 @@ type FloatingText struct {
 }
 
 type GameState struct {
-	CurrentScreen int
-	Player        Player
-	Enemies       []*Enemy
-	DyingEnemies  []*DyingEnemy // visual-only death anim; ticks down + renders, no logic
-	Projectiles   []*Projectile
-	Mines         []*Mine
-	Explosions    []*Explosion
-	LightningArcs []*LightningArc
-	GravityZones  []*GravityZone
-	LingerZones   []*LingerZone
-	FloatingTexts []*FloatingText
-	SpawnTimer    float32
-	SpawnInterval float32
+	CurrentScreen     int
+	Player            Player
+	Enemies           []*Enemy
+	DyingEnemies      []*DyingEnemy // visual-only death anim; ticks down + renders, no logic
+	Projectiles       []*Projectile
+	Mines             []*Mine
+	Explosions        []*Explosion
+	LightningArcs     []*LightningArc
+	GravityZones      []*GravityZone
+	LingerZones       []*LingerZone
+	FloatingTexts     []*FloatingText
+	Airdrops          []*Airdrop
+	AirdropSpawnTimer float32
+	SpawnTimer        float32
+	SpawnInterval     float32
 
 	//track runtime in seconds
 	RunTime float32
@@ -782,11 +1022,16 @@ type GameState struct {
 	RunBossKills int
 	// Set true the first time we award MetaXP for this run so we don't
 	// double-grant if the game-over screen hangs around for a second loop.
-	MetaXPAwarded bool
+	MetaXPAwarded   bool
+	RunMetaXPGained int  // XP earned this run, stored for the game-over display
+	RunIsNewBest    bool // true if this run is the new #1 in RunRecords
 
 	EnemiesAlive            int
 	Camera                  rl.Camera2D
+	CameraShake             float32 `json:"-"` // current screen-shake magnitude (px), decays to 0
 	IsLeveling              bool
+	LevelUpRerollsLeft      int     // remaining level-up rerolls this run (from meta.RerollLevel)
+	PlayerHurtFlash         float32 // brief red flash on the player when taking damage (decays to 0)
 	GameOver                bool
 	DeathTimer              float32 // counts down after death before showing game over
 	LevelUpOptions          []LevelOption
@@ -819,15 +1064,63 @@ type GameState struct {
 	// Active only while meta.TutorialComplete == false.
 	// These fields do NOT need to survive a save/load (they live for one run only),
 	// so they are excluded from JSON marshalling.
-	TutActiveTip    string       `json:"-"` // tip text currently shown; "" = none (driven by tutTipQueue in gameLogic)
-	TutTipTimer     float32      `json:"-"` // seconds until current tip auto-dismisses
-	TutIntroShown   bool         `json:"-"` // opening "here's your ability" reminder
-	TutEnemySeen    map[int]bool `json:"-"` // which enemy types have been introduced
-	TutRPDropShown  bool         `json:"-"` // "you earned RP!" tip
-	TutLevelUpShown bool         `json:"-"` // "level up: pick an upgrade" tip
-	TutScalingShown bool         `json:"-"` // "enemies are getting stronger" warning
-	TutAimShown     bool         `json:"-"` // click-to-aim tutorial has been triggered
-	TutAimActive    bool         `json:"-"` // currently pseudo-pausing for aim tutorial
+	TutActiveTip     string       `json:"-"` // tip text currently shown; "" = none (driven by tutTipQueue in gameLogic)
+	TutTipTimer      float32      `json:"-"` // seconds until current tip auto-dismisses
+	TutIntroShown    bool         `json:"-"` // opening "here's your ability" reminder
+	TutEnemySeen     map[int]bool `json:"-"` // which enemy types have been introduced
+	TutRPDropShown   bool         `json:"-"` // "you earned RP!" tip
+	TutLevelUpShown  bool         `json:"-"` // "level up: pick an upgrade" tip
+	TutScalingShown  bool         `json:"-"` // "enemies are getting stronger" warning
+	TutAimShown      bool         `json:"-"` // click-to-aim tutorial has been triggered
+	TutAimActive     bool         `json:"-"` // currently pseudo-pausing for aim tutorial
+	TutAirdropActive bool         `json:"-"` // currently pseudo-pausing for airdrop tutorial
+
+	// ── Mission Alert system ─────────────────────────────────────────────────────
+	MissionNextAlert    float32 `json:"-"` // game-time countdown until next choice modal
+	MissionState        int     `json:"-"` // MissionStateNone/Choice/Active/Complete
+	MissionChoiceTimer  float32 `json:"-"` // real seconds remaining in the choice window
+	MissionChoiceA      int     `json:"-"` // first offered mission type
+	MissionChoiceB      int     `json:"-"` // second offered mission type
+	MissionActiveKind   int     `json:"-"` // which mission type is currently running
+	MissionActiveTimer  float32 `json:"-"` // seconds remaining for the active mission
+	MissionSuccessTimer float32 `json:"-"` // success flash countdown
+
+	// Per-choice extra data (used by MissionKillCount to pre-commit the target type).
+	MissionChoiceAData int `json:"-"`
+	MissionChoiceBData int `json:"-"`
+
+	// Kill-count / swarm mission tracking.
+	MissionKillType  int `json:"-"` // target enemy type
+	MissionKillCount int `json:"-"` // kills accumulated so far
+	MissionKillGoal  int `json:"-"` // kills needed to complete
+
+	// Swarm spawn pacing.
+	MissionSwarmRemaining  int     `json:"-"` // enemies still to be injected
+	MissionSwarmSpawnTimer float32 `json:"-"` // accumulator for inter-spawn delay
+	MissionSwarmInterval   float32 `json:"-"` // seconds between each swarm spawn
+
+	// Untouchable — no extra fields; fail on EventOnPlayerHit.
+
+	// Glass Wall — save/restore armor so it can be zeroed for the mission window.
+	MissionArmorSaved float32 `json:"-"`
+
+	// Critical Mass — crit counter (no timer; completes when goal reached).
+	MissionCritCount int `json:"-"`
+
+	// Duel — tracks the specific boss enemy the player must kill.
+	MissionDuelID int `json:"-"` // enemy ID; -1 if boss already dead
+
+	// Dead Zone — spinning cone state.
+	MissionDeadZoneDeg float32 `json:"-"` // current cone center angle in degrees (0 = right)
+
+	// Mega boss spawn timer — counts down; when it reaches 0 a mega boss spawns.
+	MegaBossNextSpawn float32 `json:"-"`
+
+	// ── DPS tracking (runtime only) ──────────────────────────────────────────
+	DamageBySource  map[string]float32  `json:"-"` // cumulative damage dealt per source this run
+	DamageBuckets   [dpsBuckets]float32 `json:"-"` // rolling-window buckets feeding the live DPS meter
+	DamageBucketIdx int                 `json:"-"` // current bucket being written to
+	DamageBucketAcc float32             `json:"-"` // game-time accumulator for advancing buckets
 }
 
 // global vars.
@@ -852,4 +1145,5 @@ var meta = MetaProgression{
 	Inventory:               make([]Item, 0),
 	TalentRanks:             make(map[string]int),
 	AutoAbilitiesByName:     make(map[string]bool),
+	UnlockedRecipes:         make(map[string]bool),
 }

@@ -1,5 +1,5 @@
 {
-  "ResearchPoints": 95660,
+  "ResearchPoints": 10768,
   "DmgLevel": 0,
   "ASLevel": 0,
   "RegenLevel": 0,
@@ -8,193 +8,666 @@
   "ThornsLevel": 0,
   "MultishotCountLevel": 0,
   "ChainCountLevel": 0,
-  "MusicVolume": 0.015,
+  "MusicVolume": 0,
   "SFXVolume": 0,
-  "ShowFPS": true,
+  "ShowFPS": false,
   "TutorialStep": 12,
   "TutorialComplete": true,
   "TutorialDeathShown": true,
+  "TutAirdropSeen": true,
   "RapidFireUnlocked": false,
   "DeathRayUnlocked": false,
-  "GravityFieldUnlocked": false,
+  "GravityFieldUnlocked": true,
   "BombardmentUnlocked": false,
-  "StaticDischargeUnlocked": true,
+  "StaticDischargeUnlocked": false,
   "ChronoFieldUnlocked": false,
   "MinesUnlocked": false,
-  "SatellitesUnlocked": true,
-  "ShockwaveUnlocked": false,
+  "SatellitesUnlocked": false,
+  "ShockwaveUnlocked": true,
   "RapidFireBranch": "",
   "DeathRayBranch": "",
-  "GravityBranch": "",
+  "GravityBranch": "Anomaly",
   "BombardBranch": "",
   "StaticBranch": "",
   "ChronoBranch": "",
   "MinesBranch": "",
-  "SatellitesBranch": "Overdrive",
-  "ShockwaveBranch": "",
+  "SatellitesBranch": "",
+  "ShockwaveBranch": "Repulsor",
   "Speed3xUnlocked": true,
-  "OpeningSprintUnlocked": false,
+  "OpeningSprintUnlocked": true,
+  "OpeningSprintEnabled": true,
+  "ExtendedRangeUnlocked": true,
+  "AutoAimUnlocked": true,
+  "MissionsUnlocked": true,
   "EquippedAbilities": [
-    "Rapid Fire",
-    "Death Ray",
-    "Shockwave",
+    "",
+    "",
+    "",
     ""
   ],
   "EquippedItemsByIndex": [
-    4,
-    -1,
-    -1,
-    3
+    12,
+    7,
+    8,
+    9
   ],
   "AutoAbilities": [
-    true,
-    true,
-    true,
-    true
+    false,
+    false,
+    false,
+    false
   ],
   "AutoAbilitiesByName": {
+    "Chrono Field": true,
     "Death Ray": true,
+    "Gravity Field": true,
     "Rapid Fire": true,
     "Static Discharge": true
   },
   "Inventory": [
     {
-      "Name": "Plasma Cutter",
+      "Name": "Apex Rail Gun of Devastation",
       "Type": 0,
-      "Rarity": 1,
+      "Rarity": 4,
       "Stats": [
         {
           "StatType": "Damage",
-          "Value": 2,
-          "BaseValue": 2,
-          "Growth": 2
+          "Value": 104.8,
+          "BaseValue": 104.8
         },
         {
-          "StatType": "Haste",
-          "Value": 0.01,
-          "BaseValue": 0.01,
-          "Growth": 0.01
-        }
-      ],
-      "Description": "High-energy cutting tool",
-      "SalvageValue": 40,
-      "UniqueModifier": "",
-      "SetID": ""
-    },
-    {
-      "Name": "Force Field",
-      "Type": 1,
-      "Rarity": 0,
-      "Stats": [
-        {
-          "StatType": "MaxHP",
-          "Value": 123.44077,
-          "BaseValue": 123.44077,
-          "Growth": 123.44077
-        }
-      ],
-      "Description": "Energy Shield",
-      "SalvageValue": 200,
-      "UniqueModifier": "",
-      "SetID": ""
-    },
-    {
-      "Name": "Steel Sword",
-      "Type": 0,
-      "Rarity": 0,
-      "Stats": [
-        {
-          "StatType": "Damage",
-          "Value": 5.699014,
-          "BaseValue": 5.699014,
-          "Growth": 5.699014
-        }
-      ],
-      "Description": "Standard Issue",
-      "SalvageValue": 200,
-      "UniqueModifier": "",
-      "SetID": ""
-    },
-    {
-      "Name": "Sniper Scope",
-      "Type": 3,
-      "Rarity": 1,
-      "Stats": [
-        {
-          "StatType": "DmgDist",
-          "Value": 0.14632554,
-          "BaseValue": 0.036581386,
-          "Growth": 0.036581386
-        },
-        {
-          "StatType": "FreeUp",
-          "Value": 0.03361393,
-          "BaseValue": 0.03361393,
-          "Growth": 0
-        }
-      ],
-      "Description": "Long Shot",
-      "SalvageValue": 200,
-      "UniqueModifier": "",
-      "SetID": ""
-    },
-    {
-      "Name": "Laser Cutter",
-      "Type": 0,
-      "Rarity": 1,
-      "Stats": [
-        {
-          "StatType": "Damage",
-          "Value": 55.83583,
-          "BaseValue": 13.958958,
-          "Growth": 13.958958
+          "StatType": "CritChance",
+          "Value": 0.735,
+          "BaseValue": 0.735
         },
         {
           "StatType": "CritMult",
-          "Value": 1.1533859,
-          "BaseValue": 0.28834647,
-          "Growth": 0.28834647
+          "Value": 0.97,
+          "BaseValue": 0.97
         }
       ],
-      "Description": "High Power",
-      "SalvageValue": 200,
-      "UniqueModifier": "",
+      "Description": "Electromagnetic slug thrower",
+      "SalvageValue": 10000,
+      "UniqueModifier": "Resonance",
+      "UniqueModifierValue": 2.9,
+      "UniqueModifier2": "",
+      "UniqueModifierValue2": 0,
       "SetID": ""
     },
     {
-      "Name": "Sapphire Band",
-      "Type": 2,
-      "Rarity": 0,
+      "Name": "Titan Nano Shell of Constitution",
+      "Type": 1,
+      "Rarity": 4,
       "Stats": [
         {
-          "StatType": "CritChance",
-          "Value": 0.16895549,
-          "BaseValue": 0.16895549,
-          "Growth": 0.16895549
+          "StatType": "Armor",
+          "Value": 0.88,
+          "BaseValue": 0.88
+        },
+        {
+          "StatType": "MaxHP",
+          "Value": 392,
+          "BaseValue": 392
+        },
+        {
+          "StatType": "PureDef",
+          "Value": 38.5,
+          "BaseValue": 38.5
         }
       ],
-      "Description": "Critical Focus",
-      "SalvageValue": 200,
+      "Description": "Microscale adaptive armor mesh",
+      "SalvageValue": 10000,
+      "UniqueModifier": "ShieldSpike",
+      "UniqueModifierValue": 0.29,
+      "UniqueModifier2": "",
+      "UniqueModifierValue2": 0,
+      "SetID": ""
+    },
+    {
+      "Name": "Overdrive Power Band of Precision",
+      "Type": 2,
+      "Rarity": 4,
+      "Stats": [
+        {
+          "StatType": "Damage",
+          "Value": 100.5,
+          "BaseValue": 100.5
+        },
+        {
+          "StatType": "CritChance",
+          "Value": 0.735,
+          "BaseValue": 0.735
+        },
+        {
+          "StatType": "CDR",
+          "Value": 0.25,
+          "BaseValue": 0.25
+        }
+      ],
+      "Description": "Offensive amplification ring",
+      "SalvageValue": 10000,
+      "UniqueModifier": "LifeDrain",
+      "UniqueModifierValue": 0.098,
+      "UniqueModifier2": "",
+      "UniqueModifierValue2": 0,
+      "SetID": ""
+    },
+    {
+      "Name": "Quantum Sync Core of Mastery",
+      "Type": 3,
+      "Rarity": 4,
+      "Stats": [
+        {
+          "StatType": "CDR",
+          "Value": 0.25,
+          "BaseValue": 0.25
+        },
+        {
+          "StatType": "Haste",
+          "Value": 0.72,
+          "BaseValue": 0.72
+        },
+        {
+          "StatType": "FreeUp",
+          "Value": 0.24,
+          "BaseValue": 0.24
+        }
+      ],
+      "Description": "Cooldown reduction module",
+      "SalvageValue": 10000,
+      "UniqueModifier": "Clockwork",
+      "UniqueModifierValue": 0.098,
+      "UniqueModifier2": "",
+      "UniqueModifierValue2": 0,
+      "SetID": ""
+    },
+    {
+      "Name": "Reprisal Spike Cannon",
+      "Type": 0,
+      "Rarity": 5,
+      "Stats": [
+        {
+          "StatType": "Thorns",
+          "Value": 140,
+          "BaseValue": 140
+        },
+        {
+          "StatType": "Damage",
+          "Value": 70,
+          "BaseValue": 70
+        },
+        {
+          "StatType": "Armor",
+          "Value": 0.2,
+          "BaseValue": 0.2
+        }
+      ],
+      "Description": "Reactive-spine slug thrower",
+      "SalvageValue": 10000,
       "UniqueModifier": "",
+      "UniqueModifierValue": 0,
+      "UniqueModifier2": "",
+      "UniqueModifierValue2": 0,
+      "SetID": "bulwark_thorns"
+    },
+    {
+      "Name": "Reprisal Aegis Plate",
+      "Type": 1,
+      "Rarity": 5,
+      "Stats": [
+        {
+          "StatType": "Armor",
+          "Value": 0.88,
+          "BaseValue": 0.88
+        },
+        {
+          "StatType": "MaxHP",
+          "Value": 400,
+          "BaseValue": 400
+        },
+        {
+          "StatType": "Thorns",
+          "Value": 150,
+          "BaseValue": 150
+        }
+      ],
+      "Description": "Spined bulwark carapace",
+      "SalvageValue": 10000,
+      "UniqueModifier": "",
+      "UniqueModifierValue": 0,
+      "UniqueModifier2": "",
+      "UniqueModifierValue2": 0,
+      "SetID": "bulwark_thorns"
+    },
+    {
+      "Name": "Reprisal Thorn Band",
+      "Type": 2,
+      "Rarity": 5,
+      "Stats": [
+        {
+          "StatType": "Thorns",
+          "Value": 170,
+          "BaseValue": 170
+        },
+        {
+          "StatType": "PureDef",
+          "Value": 38,
+          "BaseValue": 38
+        },
+        {
+          "StatType": "MaxHP",
+          "Value": 250,
+          "BaseValue": 250
+        }
+      ],
+      "Description": "Retaliatory barb ring",
+      "SalvageValue": 10000,
+      "UniqueModifier": "",
+      "UniqueModifierValue": 0,
+      "UniqueModifier2": "",
+      "UniqueModifierValue2": 0,
+      "SetID": "bulwark_thorns"
+    },
+    {
+      "Name": "Tempest Barrier Plate",
+      "Type": 1,
+      "Rarity": 5,
+      "Stats": [
+        {
+          "StatType": "MaxHP",
+          "Value": 400,
+          "BaseValue": 400
+        },
+        {
+          "StatType": "Regen",
+          "Value": 16,
+          "BaseValue": 16
+        },
+        {
+          "StatType": "ShieldRate",
+          "Value": 22,
+          "BaseValue": 22
+        }
+      ],
+      "Description": "Storm-charged barrier mesh",
+      "SalvageValue": 10000,
+      "UniqueModifier": "",
+      "UniqueModifierValue": 0,
+      "UniqueModifier2": "",
+      "UniqueModifierValue2": 0,
+      "SetID": "aegis_storm"
+    },
+    {
+      "Name": "Tempest Conduit Band",
+      "Type": 2,
+      "Rarity": 5,
+      "Stats": [
+        {
+          "StatType": "Regen",
+          "Value": 15,
+          "BaseValue": 15
+        },
+        {
+          "StatType": "MaxHP",
+          "Value": 250,
+          "BaseValue": 250
+        },
+        {
+          "StatType": "PureDef",
+          "Value": 30,
+          "BaseValue": 30
+        }
+      ],
+      "Description": "Charge-cycling conduit ring",
+      "SalvageValue": 10000,
+      "UniqueModifier": "",
+      "UniqueModifierValue": 0,
+      "UniqueModifier2": "",
+      "UniqueModifierValue2": 0,
+      "SetID": "aegis_storm"
+    },
+    {
+      "Name": "Tempest Capacitor Core",
+      "Type": 3,
+      "Rarity": 5,
+      "Stats": [
+        {
+          "StatType": "Regen",
+          "Value": 12,
+          "BaseValue": 12
+        },
+        {
+          "StatType": "ShieldRate",
+          "Value": 18,
+          "BaseValue": 18
+        },
+        {
+          "StatType": "Haste",
+          "Value": 0.3,
+          "BaseValue": 0.3
+        }
+      ],
+      "Description": "Overcharged capacitor module",
+      "SalvageValue": 10000,
+      "UniqueModifier": "",
+      "UniqueModifierValue": 0,
+      "UniqueModifier2": "",
+      "UniqueModifierValue2": 0,
+      "SetID": "aegis_storm"
+    },
+    {
+      "Name": "Serrated Devastator of Precision",
+      "Type": 0,
+      "Rarity": 2,
+      "Stats": [
+        {
+          "StatType": "Damage",
+          "Value": 84.173004,
+          "BaseValue": 84.173004
+        },
+        {
+          "StatType": "CritMult",
+          "Value": 0.996517,
+          "BaseValue": 0.996517
+        },
+        {
+          "StatType": "CritChance",
+          "Value": 0.707251,
+          "BaseValue": 0.707251
+        }
+      ],
+      "Description": "Heavy impact weapon",
+      "SalvageValue": 10000,
+      "UniqueModifier": "",
+      "UniqueModifierValue": 0,
+      "UniqueModifier2": "",
+      "UniqueModifierValue2": 0,
+      "SetID": ""
+    },
+    {
+      "Name": "Quickdraw Nitro Cell of the Scholar",
+      "Type": 3,
+      "Rarity": 2,
+      "Stats": [
+        {
+          "StatType": "Haste",
+          "Value": 0.74027014,
+          "BaseValue": 0.74027014
+        },
+        {
+          "StatType": "CDR",
+          "Value": 0.23148969,
+          "BaseValue": 0.23148969
+        },
+        {
+          "StatType": "XPGain",
+          "Value": 3.9649944,
+          "BaseValue": 3.9649944
+        }
+      ],
+      "Description": "Cooldown reduction module",
+      "SalvageValue": 10000,
+      "UniqueModifier": "",
+      "UniqueModifierValue": 0,
+      "UniqueModifier2": "",
+      "UniqueModifierValue2": 0,
+      "SetID": ""
+    },
+    {
+      "Name": "Sniper Targeting Array of Brutality",
+      "Type": 0,
+      "Rarity": 4,
+      "Stats": [
+        {
+          "StatType": "DmgDist",
+          "Value": 0.29347336,
+          "BaseValue": 0.29347336
+        },
+        {
+          "StatType": "CritChance",
+          "Value": 0.7280915,
+          "BaseValue": 0.7280915
+        },
+        {
+          "StatType": "CritMult",
+          "Value": 0.99379003,
+          "BaseValue": 0.99379003
+        }
+      ],
+      "Description": "Multi-sensor aim system",
+      "SalvageValue": 10000,
+      "UniqueModifier": "PhaseBreaker",
+      "UniqueModifierValue": 1,
+      "UniqueModifier2": "",
+      "UniqueModifierValue2": 0,
+      "SetID": ""
+    },
+    {
+      "Name": "Dynamic Life Buffer of Retaliation",
+      "Type": 1,
+      "Rarity": 4,
+      "Stats": [
+        {
+          "StatType": "ShieldRate",
+          "Value": 17.81751,
+          "BaseValue": 17.81751
+        },
+        {
+          "StatType": "MaxHP",
+          "Value": 387.48203,
+          "BaseValue": 387.48203
+        },
+        {
+          "StatType": "Thorns",
+          "Value": 185.52095,
+          "BaseValue": 185.52095
+        }
+      ],
+      "Description": "Emergency HP reserve unit",
+      "SalvageValue": 10000,
+      "UniqueModifier": "AbilityEcho",
+      "UniqueModifierValue": 0.018080998,
+      "UniqueModifier2": "",
+      "UniqueModifierValue2": 0,
+      "SetID": ""
+    },
+    {
+      "Name": "Punishing Plasma Cutter of Distance",
+      "Type": 0,
+      "Rarity": 3,
+      "Stats": [
+        {
+          "StatType": "CritMult",
+          "Value": 0.9057369,
+          "BaseValue": 0.9057369
+        },
+        {
+          "StatType": "Damage",
+          "Value": 87.15762,
+          "BaseValue": 87.15762
+        },
+        {
+          "StatType": "DmgDist",
+          "Value": 0.29667723,
+          "BaseValue": 0.29667723
+        }
+      ],
+      "Description": "Military-grade cutting tool",
+      "SalvageValue": 10000,
+      "UniqueModifier": "ThornsEcho",
+      "UniqueModifierValue": 0.62792766,
+      "UniqueModifier2": "",
+      "UniqueModifierValue2": 0,
+      "SetID": ""
+    },
+    {
+      "Name": "Hardened Temper Core of Recovery",
+      "Type": 1,
+      "Rarity": 4,
+      "Stats": [
+        {
+          "StatType": "Armor",
+          "Value": 0.8603573,
+          "BaseValue": 0.8603573
+        },
+        {
+          "StatType": "PureDef",
+          "Value": 39.43413,
+          "BaseValue": 39.43413
+        },
+        {
+          "StatType": "Regen",
+          "Value": 13.974875,
+          "BaseValue": 13.974875
+        }
+      ],
+      "Description": "Hardened impact absorber",
+      "SalvageValue": 10000,
+      "UniqueModifier": "LuckyDrop",
+      "UniqueModifierValue": 0.1451868,
+      "UniqueModifier2": "",
+      "UniqueModifierValue2": 0,
       "SetID": ""
     }
   ],
-  "MetaLevel": 18,
-  "MetaXP": 4700,
-  "TalentPointsEarned": 73,
+  "MetaLevel": 40,
+  "MetaXP": 54618,
+  "TalentPointsEarned": 40,
   "TalentRanks": {
-    "ctrl_conduction": 3,
-    "ctrl_static_charge": 3,
-    "ctrl_static_unlock": 1,
-    "pas_beacon": 3,
-    "pas_drone_control": 4,
-    "pas_drone_swarm": 3,
-    "pas_efficiency": 1,
-    "pas_fire_support": 3,
-    "pas_overdrive_key": 1,
-    "pas_satellites_unlock": 1,
-    "pas_scavenger": 3,
-    "pas_sentinel": 3
+    "ctrl_anomaly_key": 1,
+    "ctrl_black_hole": 2,
+    "ctrl_crowd_control": 2,
+    "ctrl_event_collapse": 1,
+    "ctrl_event_horizon": 2,
+    "ctrl_grav_well": 2,
+    "ctrl_gravity_unlock": 1,
+    "def_adrenaline": 2,
+    "def_bulwark": 2,
+    "def_fortify": 2,
+    "def_immortal": 1,
+    "def_iron_heart": 2,
+    "def_overshield": 2,
+    "def_regen": 2,
+    "def_repulsor_key": 1,
+    "def_resilience": 2,
+    "def_restoration": 2,
+    "def_seismic": 2,
+    "def_shockwave_unlock": 1,
+    "def_toughness": 2,
+    "def_untouchable": 2,
+    "def_vital_core": 2,
+    "def_vital_plates": 2
   },
-  "TalentsMigrated": true
+  "TalentsMigrated": true,
+  "runRecords": [
+    {
+      "runTime": 2314.494,
+      "kills": 4458,
+      "bossKills": 11,
+      "metaLevel": 40,
+      "date": "2026-06-02"
+    },
+    {
+      "runTime": 2140.465,
+      "kills": 3949,
+      "bossKills": 8,
+      "metaLevel": 26,
+      "date": "2026-06-02"
+    },
+    {
+      "runTime": 1463.2284,
+      "kills": 4024,
+      "bossKills": 6,
+      "metaLevel": 40,
+      "date": "2026-06-07"
+    },
+    {
+      "runTime": 1122.7526,
+      "kills": 3487,
+      "bossKills": 3,
+      "metaLevel": 40,
+      "date": "2026-06-13"
+    },
+    {
+      "runTime": 952.44,
+      "kills": 2131,
+      "bossKills": 3,
+      "metaLevel": 40,
+      "date": "2026-06-09"
+    },
+    {
+      "runTime": 940.93036,
+      "kills": 2011,
+      "bossKills": 2,
+      "metaLevel": 40,
+      "date": "2026-06-09"
+    },
+    {
+      "runTime": 892.42786,
+      "kills": 964,
+      "bossKills": 2,
+      "metaLevel": 13,
+      "date": "2026-06-02"
+    },
+    {
+      "runTime": 808.3344,
+      "kills": 1484,
+      "bossKills": 2,
+      "metaLevel": 40,
+      "date": "2026-06-12"
+    },
+    {
+      "runTime": 785.445,
+      "kills": 815,
+      "bossKills": 2,
+      "metaLevel": 11,
+      "date": "2026-06-01"
+    }
+  ],
+  "RerollLevel": 3,
+  "LoadoutSlots": 3,
+  "Loadouts": [
+    {
+      "Used": true,
+      "Name": "Loadout 1",
+      "ItemIdx": [
+        4,
+        7,
+        8,
+        9
+      ],
+      "TalentRanks": {}
+    },
+    {
+      "Used": false,
+      "Name": "",
+      "ItemIdx": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "TalentRanks": null
+    },
+    {
+      "Used": false,
+      "Name": "",
+      "ItemIdx": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "TalentRanks": null
+    }
+  ],
+  "WeaponParts": 23,
+  "ShieldParts": 11,
+  "RingParts": 21,
+  "TrinketParts": 13,
+  "VoidShards": 9,
+  "UnlockedRecipes": {
+    "shield_t2": true,
+    "shield_t4": true
+  }
 }

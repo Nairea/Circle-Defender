@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"sort"
+	"time"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
@@ -42,66 +44,66 @@ type BaseTemplate struct {
 // ── Base templates ────────────────────────────────────────────────────────────
 
 var WeaponBaseTemplates = []BaseTemplate{
-	{"Plasma Cutter",   ItemWeapon, "Military-grade cutting tool",        "Damage"},
-	{"Rail Gun",        ItemWeapon, "Electromagnetic slug thrower",        "Damage"},
-	{"Scatter Blaster", ItemWeapon, "Wide-spread burst weapon",            "Damage"},
-	{"Pulse Emitter",   ItemWeapon, "Rapid-cycle energy emitter",          "Haste"},
-	{"Auto Pistol",     ItemWeapon, "High fire-rate sidearm",              "Haste"},
-	{"Precision Lens",  ItemWeapon, "Narrow-focus targeting optic",        "CritChance"},
-	{"Targeting Array", ItemWeapon, "Multi-sensor aim system",             "CritChance"},
-	{"Amp Core",        ItemWeapon, "Amplified discharge weapon",           "CritMult"},
-	{"Devastator",      ItemWeapon, "Heavy impact weapon",                 "CritMult"},
-	{"Beam Projector",  ItemWeapon, "Long-range focused energy beam",      "DmgDist"},
-	{"Sniper Module",   ItemWeapon, "Extended-range precision weapon",     "DmgDist"},
-	{"Wave Array",      ItemWeapon, "Broadcast-range engagement weapon",   "Range"},
-	{"Signal Cannon",   ItemWeapon, "Long-reach targeting weapon",         "Range"},
+	{"Plasma Cutter", ItemWeapon, "Military-grade cutting tool", "Damage"},
+	{"Rail Gun", ItemWeapon, "Electromagnetic slug thrower", "Damage"},
+	{"Scatter Blaster", ItemWeapon, "Wide-spread burst weapon", "Damage"},
+	{"Pulse Emitter", ItemWeapon, "Rapid-cycle energy emitter", "Haste"},
+	{"Auto Pistol", ItemWeapon, "High fire-rate sidearm", "Haste"},
+	{"Precision Lens", ItemWeapon, "Narrow-focus targeting optic", "CritChance"},
+	{"Targeting Array", ItemWeapon, "Multi-sensor aim system", "CritChance"},
+	{"Amp Core", ItemWeapon, "Amplified discharge weapon", "CritMult"},
+	{"Devastator", ItemWeapon, "Heavy impact weapon", "CritMult"},
+	{"Beam Projector", ItemWeapon, "Long-range focused energy beam", "DmgDist"},
+	{"Sniper Module", ItemWeapon, "Extended-range precision weapon", "DmgDist"},
+	{"Wave Array", ItemWeapon, "Broadcast-range engagement weapon", "Range"},
+	{"Signal Cannon", ItemWeapon, "Long-reach targeting weapon", "Range"},
 }
 
 var ShieldBaseTemplates = []BaseTemplate{
-	{"Alloy Plate",    ItemShield, "Dense layered armor plating",        "Armor"},
-	{"Nano Shell",     ItemShield, "Microscale adaptive armor mesh",      "Armor"},
-	{"Bio Matrix",     ItemShield, "Biological regeneration unit",        "Regen"},
-	{"Vital Cell",     ItemShield, "Emergency life support module",       "Regen"},
-	{"Deflector Plate",ItemShield, "Kinetic energy deflector",            "PureDef"},
-	{"Temper Core",    ItemShield, "Hardened impact absorber",            "PureDef"},
-	{"Pulse Barrier",  ItemShield, "Reactive energy barrier",             "ShieldRate"},
-	{"Reactive Mesh",  ItemShield, "Self-regenerating barrier grid",      "ShieldRate"},
-	{"Spike Grid",     ItemShield, "Retaliatory contact spike system",    "Thorns"},
-	{"Barb Matrix",    ItemShield, "Contact damage emitter array",        "Thorns"},
-	{"Capacity Core",  ItemShield, "High-volume life support module",     "MaxHP"},
-	{"Life Buffer",    ItemShield, "Emergency HP reserve unit",           "MaxHP"},
+	{"Alloy Plate", ItemShield, "Dense layered armor plating", "Armor"},
+	{"Nano Shell", ItemShield, "Microscale adaptive armor mesh", "Armor"},
+	{"Bio Matrix", ItemShield, "Biological regeneration unit", "Regen"},
+	{"Vital Cell", ItemShield, "Emergency life support module", "Regen"},
+	{"Deflector Plate", ItemShield, "Kinetic energy deflector", "PureDef"},
+	{"Temper Core", ItemShield, "Hardened impact absorber", "PureDef"},
+	{"Pulse Barrier", ItemShield, "Reactive energy barrier", "ShieldRate"},
+	{"Reactive Mesh", ItemShield, "Self-regenerating barrier grid", "ShieldRate"},
+	{"Spike Grid", ItemShield, "Retaliatory contact spike system", "Thorns"},
+	{"Barb Matrix", ItemShield, "Contact damage emitter array", "Thorns"},
+	{"Capacity Core", ItemShield, "High-volume life support module", "MaxHP"},
+	{"Life Buffer", ItemShield, "Emergency HP reserve unit", "MaxHP"},
 }
 
 var RingBaseTemplates = []BaseTemplate{
-	{"Power Band",    ItemRing, "Offensive amplification ring",    "Damage"},
-	{"Force Loop",    ItemRing, "Kinetic force booster ring",      "Damage"},
-	{"Vital Ring",    ItemRing, "Regeneration enhancer ring",      "Regen"},
-	{"Life Circuit",  ItemRing, "HP recovery loop",                "Regen"},
-	{"Bulwark Band",  ItemRing, "Defense enhancement ring",        "PureDef"},
-	{"Guard Loop",    ItemRing, "Impact absorption ring",          "PureDef"},
-	{"Endurance Ring",ItemRing, "HP capacity ring",                "MaxHP"},
-	{"Health Circuit",ItemRing, "Life force amplifier ring",       "MaxHP"},
-	{"Focus Band",    ItemRing, "Targeting accuracy ring",         "CritChance"},
-	{"Precision Loop",ItemRing, "Critical focus ring",             "CritChance"},
-	{"Timer Ring",    ItemRing, "Cooldown optimization ring",      "CDR"},
-	{"Signal Band",   ItemRing, "Ability timing ring",             "CDR"},
-	{"Thorn Band",    ItemRing, "Retaliatory damage ring",         "Thorns"},
-	{"Spike Loop",    ItemRing, "Contact damage ring",             "Thorns"},
+	{"Power Band", ItemRing, "Offensive amplification ring", "Damage"},
+	{"Force Loop", ItemRing, "Kinetic force booster ring", "Damage"},
+	{"Vital Ring", ItemRing, "Regeneration enhancer ring", "Regen"},
+	{"Life Circuit", ItemRing, "HP recovery loop", "Regen"},
+	{"Bulwark Band", ItemRing, "Defense enhancement ring", "PureDef"},
+	{"Guard Loop", ItemRing, "Impact absorption ring", "PureDef"},
+	{"Endurance Ring", ItemRing, "HP capacity ring", "MaxHP"},
+	{"Health Circuit", ItemRing, "Life force amplifier ring", "MaxHP"},
+	{"Focus Band", ItemRing, "Targeting accuracy ring", "CritChance"},
+	{"Precision Loop", ItemRing, "Critical focus ring", "CritChance"},
+	{"Timer Ring", ItemRing, "Cooldown optimization ring", "CDR"},
+	{"Signal Band", ItemRing, "Ability timing ring", "CDR"},
+	{"Thorn Band", ItemRing, "Retaliatory damage ring", "Thorns"},
+	{"Spike Loop", ItemRing, "Contact damage ring", "Thorns"},
 }
 
 var TrinketBaseTemplates = []BaseTemplate{
-	{"Data Chip",       ItemTrinket, "RP extraction module",                 "RPGain"},
-	{"Research Module", ItemTrinket, "RP amplification chip",                "RPGain"},
-	{"Learning Core",   ItemTrinket, "XP amplification module",              "XPGain"},
-	{"XP Catalyst",     ItemTrinket, "Experience acceleration chip",         "XPGain"},
-	{"Blast Module",    ItemTrinket, "Explosive projectile injector",         "Explosive"},
-	{"Charge Cell",     ItemTrinket, "Detonation primer module",             "Explosive"},
-	{"Nitro Cell",      ItemTrinket, "Cooldown reduction module",            "CDR"},
-	{"Cooldown Core",   ItemTrinket, "Ability reset accelerator",            "CDR"},
-	{"Lucky Charm",     ItemTrinket, "Fortune enhancement module",           "FreeUp"},
-	{"Fortune Chip",    ItemTrinket, "Random upgrade chance chip",           "FreeUp"},
-	{"Speed Core",      ItemTrinket, "Attack speed amplifier",               "Haste"},
-	{"Velocity Chip",   ItemTrinket, "Fire rate enhancement module",         "Haste"},
+	{"Data Chip", ItemTrinket, "RP extraction module", "RPGain"},
+	{"Research Module", ItemTrinket, "RP amplification chip", "RPGain"},
+	{"Learning Core", ItemTrinket, "XP amplification module", "XPGain"},
+	{"XP Catalyst", ItemTrinket, "Experience acceleration chip", "XPGain"},
+	{"Blast Module", ItemTrinket, "Explosive projectile injector", "Explosive"},
+	{"Charge Cell", ItemTrinket, "Detonation primer module", "Explosive"},
+	{"Nitro Cell", ItemTrinket, "Cooldown reduction module", "CDR"},
+	{"Cooldown Core", ItemTrinket, "Ability reset accelerator", "CDR"},
+	{"Lucky Charm", ItemTrinket, "Fortune enhancement module", "FreeUp"},
+	{"Fortune Chip", ItemTrinket, "Random upgrade chance chip", "FreeUp"},
+	{"Speed Core", ItemTrinket, "Attack speed amplifier", "Haste"},
+	{"Velocity Chip", ItemTrinket, "Fire rate enhancement module", "Haste"},
 }
 
 // ── Prefix and suffix component tables ───────────────────────────────────────
@@ -109,43 +111,43 @@ var TrinketBaseTemplates = []BaseTemplate{
 // Rolling filters to those whose StatType is valid for the item being crafted.
 
 var PrefixComponents = []NameComponent{
-	{"Damage",     []string{"Serrated", "Overcharged", "Heavy-Gauge", "Volatile"}},
-	{"Haste",      []string{"Swift", "Rapid", "Fleet", "Quickdraw"}},
+	{"Damage", []string{"Serrated", "Overcharged", "Heavy-Gauge", "Volatile"}},
+	{"Haste", []string{"Swift", "Rapid", "Fleet", "Quickdraw"}},
 	{"CritChance", []string{"Keen", "Precise", "Focused", "Calibrated"}},
-	{"CritMult",   []string{"Brutal", "Savage", "Punishing"}},
-	{"DmgDist",    []string{"Long-Range", "Sniper", "Reaching"}},
-	{"Range",      []string{"Extended", "Broadcast", "Far-Reaching"}},
-	{"Armor",      []string{"Reinforced", "Hardened", "Plated"}},
-	{"Regen",      []string{"Vital", "Regenerative", "Restorative"}},
-	{"PureDef",    []string{"Fortified", "Stalwart", "Bulwark"}},
+	{"CritMult", []string{"Brutal", "Savage", "Punishing"}},
+	{"DmgDist", []string{"Long-Range", "Sniper", "Reaching"}},
+	{"Range", []string{"Extended", "Broadcast", "Far-Reaching"}},
+	{"Armor", []string{"Reinforced", "Hardened", "Plated"}},
+	{"Regen", []string{"Vital", "Regenerative", "Restorative"}},
+	{"PureDef", []string{"Fortified", "Stalwart", "Bulwark"}},
 	{"ShieldRate", []string{"Reactive", "Pulsing", "Dynamic"}},
-	{"Thorns",     []string{"Barbed", "Spiked", "Thorned"}},
-	{"MaxHP",      []string{"Bolstered", "Expanded", "Massive"}},
-	{"CDR",        []string{"Efficient", "Optimized", "Responsive"}},
-	{"RPGain",     []string{"Lucrative", "Enriched", "Prosperous"}},
-	{"XPGain",     []string{"Accelerated", "Awakened", "Enlightened"}},
-	{"Explosive",  []string{"Primed", "Detonating", "Volatile"}},
-	{"FreeUp",     []string{"Lucky", "Fortunate", "Serendipitous"}},
+	{"Thorns", []string{"Barbed", "Spiked", "Thorned"}},
+	{"MaxHP", []string{"Bolstered", "Expanded", "Massive"}},
+	{"CDR", []string{"Efficient", "Optimized", "Responsive"}},
+	{"RPGain", []string{"Lucrative", "Enriched", "Prosperous"}},
+	{"XPGain", []string{"Accelerated", "Awakened", "Enlightened"}},
+	{"Explosive", []string{"Primed", "Detonating", "Volatile"}},
+	{"FreeUp", []string{"Lucky", "Fortunate", "Serendipitous"}},
 }
 
 var SuffixComponents = []NameComponent{
-	{"Damage",     []string{"of Power", "of Force", "of Destruction"}},
-	{"Haste",      []string{"of Speed", "of Swiftness", "of Agility"}},
+	{"Damage", []string{"of Power", "of Force", "of Destruction"}},
+	{"Haste", []string{"of Speed", "of Swiftness", "of Agility"}},
 	{"CritChance", []string{"of Precision", "of Accuracy", "of Focus"}},
-	{"CritMult",   []string{"of Brutality", "of Devastation", "of Ruin"}},
-	{"DmgDist",    []string{"of Distance", "of the Sniper", "of Reach"}},
-	{"Range",      []string{"of Reach", "of the Horizon", "of Extension"}},
-	{"Armor",      []string{"of Protection", "of Resilience", "of Defense"}},
-	{"Regen",      []string{"of Vitality", "of Recovery", "of Regeneration"}},
-	{"PureDef",    []string{"of Fortitude", "of Endurance", "of the Bulwark"}},
+	{"CritMult", []string{"of Brutality", "of Devastation", "of Ruin"}},
+	{"DmgDist", []string{"of Distance", "of the Sniper", "of Reach"}},
+	{"Range", []string{"of Reach", "of the Horizon", "of Extension"}},
+	{"Armor", []string{"of Protection", "of Resilience", "of Defense"}},
+	{"Regen", []string{"of Vitality", "of Recovery", "of Regeneration"}},
+	{"PureDef", []string{"of Fortitude", "of Endurance", "of the Bulwark"}},
 	{"ShieldRate", []string{"of Reactivity", "of the Pulse", "of Deflection"}},
-	{"Thorns",     []string{"of Thorns", "of the Bramble", "of Retaliation"}},
-	{"MaxHP",      []string{"of Health", "of Constitution", "of Endurance"}},
-	{"CDR",        []string{"of Efficiency", "of Readiness", "of the Clock"}},
-	{"RPGain",     []string{"of Wealth", "of Research", "of Discovery"}},
-	{"XPGain",     []string{"of Growth", "of Learning", "of the Scholar"}},
-	{"Explosive",  []string{"of Detonation", "of Explosion", "of the Blast"}},
-	{"FreeUp",     []string{"of Luck", "of Fortune", "of Serendipity"}},
+	{"Thorns", []string{"of Thorns", "of the Bramble", "of Retaliation"}},
+	{"MaxHP", []string{"of Health", "of Constitution", "of Endurance"}},
+	{"CDR", []string{"of Efficiency", "of Readiness", "of the Clock"}},
+	{"RPGain", []string{"of Wealth", "of Research", "of Discovery"}},
+	{"XPGain", []string{"of Growth", "of Learning", "of the Scholar"}},
+	{"Explosive", []string{"of Detonation", "of Explosion", "of the Blast"}},
+	{"FreeUp", []string{"of Luck", "of Fortune", "of Serendipity"}},
 }
 
 // ── Naming system helpers ─────────────────────────────────────────────────────
@@ -220,40 +222,40 @@ type ItemStats struct {
 // offense and defense stats to help push builds, and trinkets are
 // utility stats and possible special stats to augment gameplay.
 var WeaponStatPool = []ItemStats{
-	{"Damage",     3.4,   0.5},
-	{"Haste",      0.025, 0.005},
-	{"CritChance", 0.05,  0.01},  // investment-floor formula; base = statMin for display
-	{"CritMult",   0.20,  0.05},  // investment-floor formula
-	{"DmgDist",    0.01,  0.001}, // investment-floor formula
-	{"Range",      20.0,  2.0},   // investment-floor formula
+	{"Damage", 3.4, 0.5},
+	{"Haste", 0.025, 0.005},
+	{"CritChance", 0.05, 0.01}, // investment-floor formula; base = statMin for display
+	{"CritMult", 0.20, 0.05},   // investment-floor formula
+	{"DmgDist", 0.01, 0.001},   // investment-floor formula
+	{"Range", 20.0, 2.0},       // investment-floor formula
 }
 
 var ShieldStatPool = []ItemStats{
-	{"Armor",      0.04,  0.002}, // investment-floor formula
-	{"Regen",      0.56,  0.1},
-	{"PureDef",    1.25,  0.5},
-	{"ShieldRate", 0.69,  0.1},
-	{"Thorns",     5.6,   0.5},
-	{"MaxHP",      15.0,  5.0},   // investment-floor formula
+	{"Armor", 0.04, 0.002}, // investment-floor formula
+	{"Regen", 0.56, 0.1},
+	{"PureDef", 1.25, 0.5},
+	{"ShieldRate", 0.69, 0.1},
+	{"Thorns", 5.6, 0.5},
+	{"MaxHP", 15.0, 5.0}, // investment-floor formula
 }
 
 var RingStatPool = []ItemStats{
-	{"Damage",     3.4,   0.5},
-	{"Regen",      0.56,  0.1},
-	{"PureDef",    1.25,  0.5},
-	{"MaxHP",      15.0,  5.0},   // investment-floor formula
-	{"CritChance", 0.05,  0.01},  // investment-floor formula
-	{"CDR",        0.05,  0.01},  // investment-floor formula
-	{"Thorns",     5.6,   0.5},
+	{"Damage", 3.4, 0.5},
+	{"Regen", 0.56, 0.1},
+	{"PureDef", 1.25, 0.5},
+	{"MaxHP", 15.0, 5.0},       // investment-floor formula
+	{"CritChance", 0.05, 0.01}, // investment-floor formula
+	{"CDR", 0.05, 0.01},        // investment-floor formula
+	{"Thorns", 5.6, 0.5},
 }
 
 var TrinketStatPool = []ItemStats{
-	{"RPGain",    0.125, 0.02},
-	{"XPGain",    0.14,  0.02},
-	{"Explosive", 0.05,  0.01},   // investment-floor formula
-	{"CDR",       0.05,  0.01},   // investment-floor formula
-	{"FreeUp",    0.02,  0.005},  // investment-floor formula
-	{"Haste",     0.025, 0.005},
+	{"RPGain", 0.125, 0.02},
+	{"XPGain", 0.14, 0.02},
+	{"Explosive", 0.05, 0.01}, // investment-floor formula
+	{"CDR", 0.05, 0.01},       // investment-floor formula
+	{"FreeUp", 0.02, 0.005},   // investment-floor formula
+	{"Haste", 0.025, 0.005},
 }
 
 // spawnDyingEnemy captures an enemy's visual state at moment of death and
@@ -307,16 +309,6 @@ func updateDyingEnemies(realDt float32) {
 		}
 	}
 	state.DyingEnemies = out
-}
-
-// Deprecated: items are now flat bonuses; Growth is always 0. Kept for safe deserialization of old saves.
-func isStatStatic(statType string) bool {
-	switch statType {
-	case "RPGain", "CDR", "Explosive", "FreeUp", "XPGain":
-		return true
-	default:
-		return false
-	}
 }
 
 // ── Rarity helpers ────────────────────────────────────────────────────────────
@@ -658,11 +650,24 @@ func buyItem(amount int, targetType int) {
 	// all others use the standard scaleMult formula.
 	rollStatVal := func(statType string, baseVal float32) float32 {
 		investFloor := func(statMin, statMax float32) float32 {
-			floorFrac := float32(amount) / float32(MaxFabricatorInvestment)
-			if floorFrac > 0.80 {
-				floorFrac = 0.80
+			frac := float32(amount) / float32(MaxFabricatorInvestment)
+			if frac > 1 {
+				frac = 1
 			}
-			rolled := floorFrac + rand.Float32()*(1.0-floorFrac)
+			// Investment-driven band: BOTH the ceiling and the floor rise with RP.
+			// Ceiling climbs from 15% of the range at minimum investment to the
+			// full cap at half the max investment, so a lucky low-RP roll can't
+			// skip the progression. Past the halfway point the floor rises toward
+			// the top, tightening the band so heavy investment is near-deterministic.
+			ceilFrac := 0.15 + frac*1.7
+			if ceilFrac > 1 {
+				ceilFrac = 1
+			}
+			floorFrac := float32(0)
+			if frac > 0.5 {
+				floorFrac = (frac - 0.5) / 0.5 * 0.85
+			}
+			rolled := floorFrac + rand.Float32()*(ceilFrac-floorFrac)
 			return statMin + (statMax-statMin)*rolled
 		}
 		switch statType {
@@ -681,9 +686,14 @@ func buyItem(amount int, targetType int) {
 		case "MaxHP":
 			return investFloor(15, 400)
 		case "CDR":
-			return investFloor(0.05, 0.75)
+			return investFloor(0.05, 0.25)
 		case "FreeUp":
 			return investFloor(0.02, 0.25)
+		case "Damage":
+			// Shifted-base formula: starts ~5-7 at 100 RP, scales to ~80-110 at 50k RP.
+			// Uses scaleMult and rarityMult from outer scope directly.
+			randFactor := 0.9 + rand.Float32()*0.2
+			return (3.0 + 3.2*scaleMult) * randFactor * rarityMult
 		default:
 			return baseVal
 		}
@@ -705,7 +715,6 @@ func buyItem(amount int, targetType int) {
 			StatType:  s.statType,
 			BaseValue: val,
 			Value:     val,
-			Growth:    0,
 		})
 	}
 
@@ -729,21 +738,39 @@ func buyItem(amount int, targetType int) {
 		}
 	}
 
-	// Set items always carry a SetID.  For now set items come from the normal
-	// template pool but are flagged; actual named sets live in SetRegistry.
-	// When real set templates exist, assign their SetID here instead.
-	if rarity == RaritySet {
-		newItem.SetID = "placeholder_set" // replace with real set logic when sets are designed
-	}
+	// Set pieces are hand-authored items (see SetRegistry), not fabricator rolls,
+	// so the fab never stamps a SetID — a RaritySet roll is just a teal-tier item.
 
 	state.Player.Inventory = append(state.Player.Inventory, newItem)
 }
 
 func salvageItem(item *Item) {
-	//refunds some RP
+	// Crafted items use a special refund path that returns parts + fixed RP.
+	if item.IsCrafted {
+		salvageCraftedItem(item)
+		return
+	}
+
+	// ── Normal item salvage ───────────────────────────────────────────────
+	// Refund RP (20% of investment, already baked into SalvageValue).
 	meta.ResearchPoints += item.SalvageValue
 
-	//finds index and removes itemfrom inventory.
+	// Award parts based on rarity. Own-type part gets a bonus.
+	ownParts, otherParts, voidChance, voidBonus := salvagePartYield(item.Rarity)
+	addParts(item.Type, ownParts)
+	for _, t := range []int{ItemWeapon, ItemShield, ItemRing, ItemTrinket} {
+		if t != item.Type {
+			addParts(t, otherParts)
+		}
+	}
+	if voidBonus > 0 {
+		meta.VoidShards += voidBonus
+	}
+	if voidChance > 0 && rand.Float32() < voidChance {
+		meta.VoidShards++
+	}
+
+	// Remove from inventory.
 	index := -1
 	for i, invItem := range state.Player.Inventory {
 		if invItem == item {
@@ -755,6 +782,7 @@ func salvageItem(item *Item) {
 		state.Player.Inventory = append(state.Player.Inventory[:index], state.Player.Inventory[index+1:]...)
 		unequipItem(&state.Player, item)
 	}
+	SaveMetaProg()
 }
 
 func equipItem(p *Player, item *Item) {
@@ -923,31 +951,57 @@ func CheckSetBonuses(p *Player) {
 		}
 	}
 
-	for setID, def := range SetRegistry {
-		equipped := counts[setID]
-
-		// 4-piece bonus.
-		if equipped >= 4 {
-			if !def.Active4 && def.Bonus4 != nil {
-				def.Bonus4(p)
-				def.Active4 = true
-			}
-		} else if def.Active4 {
-			// TODO: reverse the 4-piece bonus when pieces are un-equipped.
-			def.Active4 = false
-		}
-
-		// 2-piece bonus (independent of 4-piece).
-		if equipped >= 2 {
-			if !def.Active2 && def.Bonus2 != nil {
-				def.Bonus2(p)
-				def.Active2 = true
-			}
-		} else if def.Active2 {
-			// TODO: reverse the 2-piece bonus when pieces are un-equipped.
-			def.Active2 = false
-		}
+	// Effect flags are recomputed from scratch each call (reset, then enable for
+	// fully-equipped sets) so removing a piece cleanly turns the bonus off.
+	// Per-piece stats are carried by the items themselves (applied in equipItem).
+	p.SetThornsShockwave = false
+	p.SetLightningGuard = false
+	if def, ok := SetRegistry["bulwark_thorns"]; ok && counts["bulwark_thorns"] >= def.Pieces {
+		p.SetThornsShockwave = true
 	}
+	if def, ok := SetRegistry["aegis_storm"]; ok && counts["aegis_storm"] >= def.Pieces {
+		p.SetLightningGuard = true
+	}
+}
+
+// finalizePlayerStats applies the talent percentage multipliers AFTER gear is
+// equipped, so "+10% Max HP" scales item HP too. Called once per run start.
+func finalizePlayerStats(p *Player) {
+	if p.MaxHPPct > 0 {
+		p.MaxHP *= 1.0 + p.MaxHPPct
+		p.HP = p.MaxHP
+	}
+	if p.RangePct > 0 {
+		p.Range *= 1.0 + p.RangePct
+	}
+	if p.ThornsPct > 0 {
+		p.ThornsDamage *= 1.0 + p.ThornsPct
+	}
+	if p.DamageReductionPct > 0.40 {
+		p.DamageReductionPct = 0.40 // hard cap the second mitigation layer
+	}
+}
+
+// effectiveRegenRate is the player's total HP regen per second, combining the
+// flat rate (items) with the talent %-of-MaxHP component.
+func effectiveRegenRate(p *Player) float32 {
+	return p.RegenRate + p.MaxHP*p.RegenPctHP
+}
+
+// effectiveOSRate is the total overshield regen per second (flat + % MaxHP).
+func effectiveOSRate(p *Player) float32 {
+	return p.OvershieldRate + p.MaxHP*p.OSRegenPctHP
+}
+
+// overshieldCap is the max overshield: the base ratio plus any talent bonus.
+func overshieldCap(p *Player) float32 {
+	return p.MaxHP * (MaxOvershieldRatio + p.OvershieldCapPct)
+}
+
+// effectiveSatelliteDamage adds the talent %-of-Damage component so satellite
+// output keeps scaling with mid-run Damage growth.
+func effectiveSatelliteDamage(p *Player) float32 {
+	return p.SatelliteDamage + p.Damage*p.SatelliteDmgPct
 }
 
 // state MGMT. like the band, but instead of dancing I want to die.
@@ -966,7 +1020,6 @@ func startRun() {
 				}
 				// Items are flat bonuses — reset to crafted BaseValue each run.
 				item.Stats[i].Value = item.Stats[i].BaseValue
-				item.Stats[i].Growth = 0
 			}
 		}
 	}
@@ -980,6 +1033,8 @@ func startRun() {
 			equipItem(&p, item)
 		}
 	}
+	// Apply talent % multipliers on top of base + gear totals.
+	finalizePlayerStats(&p)
 
 	camera := rl.NewCamera2D(
 		rl.NewVector2(float32(ScreenWidth)/2, float32(ScreenHeight)/2),
@@ -992,6 +1047,8 @@ func startRun() {
 	// Reset the tutorial tip queue so stale tips from a previous run never carry over.
 	tutTipQueue = nil
 
+	negativeBlend = 0
+
 	state = GameState{
 		CurrentScreen:           ScreenLoading,
 		LoadScreenTimer:         LoadScreenDuration,
@@ -1003,10 +1060,14 @@ func startRun() {
 		LightningArcs:           make([]*LightningArc, 0),
 		GravityZones:            make([]*GravityZone, 0),
 		LingerZones:             make([]*LingerZone, 0),
+		FloatingTexts:           make([]*FloatingText, 0),
+		Airdrops:                make([]*Airdrop, 0),
+		AirdropSpawnTimer:       airdropRollTimer(),
 		SpawnTimer:              0.0,
 		EnemiesAlive:            0,
 		Camera:                  camera,
 		IsLeveling:              false,
+		LevelUpRerollsLeft:      meta.RerollLevel,
 		GameOver:                false,
 		LevelUpOptions:          make([]LevelOption, 0),
 		GameSpeedMultiplier:     1.0,
@@ -1018,6 +1079,9 @@ func startRun() {
 		SFXVolume:               meta.SFXVolume,
 		MenuClickSound:          cachedSound,
 		TutEnemySeen:            make(map[int]bool),
+		MissionNextAlert:        MissionAlertInterval,
+		MegaBossNextSpawn:       MegaBossSpawnInterval,
+		DamageBySource:          make(map[string]float32),
 	}
 }
 
@@ -1138,14 +1202,16 @@ func playerShoot() {
 
 	// ── Cursor targeting (LMB held) ────────────────────────────────────────────
 	// When the left mouse button is held, snap the primary target to whichever
-	// hittable, in-range enemy is closest to the cursor (within cursorSnapRadius).
+	// hittable enemy is closest to the cursor (within cursorSnapRadius).
+	// Without the Extended Range Targeting perk, cursor targeting is limited to
+	// player.Range just like auto-aim. With it, any visible enemy can be clicked.
 	// state.CursorAimTarget is written every call so the draw code can show the
 	// reticle; it is cleared when LMB is not held.
-	const cursorSnapRadius = float32(60) // world-space units
+	const cursorSnapRadius = float32(90) // world-space units
 	state.CursorAimTarget = nil
-	if rl.IsMouseButtonDown(rl.MouseButtonLeft) {
-		mouseWorld := rl.GetScreenToWorld2D(rl.GetMousePosition(), state.Camera)
-		cursorBestSq := cursorSnapRadius * cursorSnapRadius
+	if inputIsDown() {
+		mouseWorld := rl.GetScreenToWorld2D(inputGetPos(), state.Camera)
+		cursorBest := cursorSnapRadius
 		for _, enemy := range state.Enemies {
 			if enemy.HP <= 0 {
 				continue
@@ -1156,18 +1222,23 @@ func playerShoot() {
 			if enemy.Type == EnemyPhaser && enemy.IsPhased {
 				continue
 			}
-			// Must be within player range.
-			pdx := enemy.X - state.Player.X
-			pdy := enemy.Y - state.Player.Y
-			if pdx*pdx+pdy*pdy > state.Player.Range*state.Player.Range {
-				continue
+			// Without the perk, respect the player's range circle.
+			if !meta.ExtendedRangeUnlocked {
+				pdx := enemy.X - state.Player.X
+				pdy := enemy.Y - state.Player.Y
+				if pdx*pdx+pdy*pdy > state.Player.Range*state.Player.Range {
+					continue
+				}
 			}
-			// Pick the one closest to the cursor within the snap radius.
+			// Measure distance to the enemy's edge (not center) for a forgiving hitbox.
 			cdx := enemy.X - mouseWorld.X
 			cdy := enemy.Y - mouseWorld.Y
-			distSq := cdx*cdx + cdy*cdy
-			if distSq < cursorBestSq {
-				cursorBestSq = distSq
+			dist := float32(math.Sqrt(float64(cdx*cdx+cdy*cdy))) - enemy.Size/2
+			if dist < 0 {
+				dist = 0
+			}
+			if dist < cursorBest {
+				cursorBest = dist
 				state.CursorAimTarget = enemy
 			}
 		}
@@ -1177,7 +1248,9 @@ func playerShoot() {
 	}
 
 	// ── Normal auto-aim (only runs when cursor isn't near a valid target) ──────
-	if primaryTarget == nil {
+	// Requires the Auto-Targeting research upgrade. Without it the player must
+	// hold LMB near enemies; this block is skipped entirely.
+	if primaryTarget == nil && meta.AutoAimUnlocked {
 		//prevents shooting at enemies who will already die. was cool to make.
 		excludedIDs := make(map[int]bool)
 
@@ -1247,6 +1320,13 @@ func playerShoot() {
 			}
 		}
 	} // end normal auto-aim block
+
+	// Mission: No cursor aim — fail if the player manually targets with cursor (LMB).
+	if state.MissionState == MissionStateActive && state.MissionActiveKind == MissionNoAutoAim {
+		if state.CursorAimTarget != nil {
+			failMission()
+		}
+	}
 
 	if primaryTarget == nil {
 		return
@@ -1420,19 +1500,78 @@ func moveProjectiles(dt float32) {
 					if enemy.Type == EnemyPhaser && enemy.IsPhased {
 						continue
 					}
+					// Bulwark mega boss: the rotating shielded front arc blocks
+					// projectiles outright — only the exposed rear arc takes hits.
+					// Ability/DoT damage isn't a projectile, so it bypasses this.
+					if enemy.Type == EnemyMegaBossBulwark && !isEnemyProtected(enemy) {
+						angTo := float32(math.Atan2(float64(p.Y-enemy.Y), float64(p.X-enemy.X)))
+						if absF(angleNorm(angTo-enemy.ShieldAngle)) < MegaBossBulwarkHalfArc {
+							// Spark + bounce off the shield, no damage dealt.
+							state.Explosions = append(state.Explosions, &Explosion{
+								X: p.X, Y: p.Y, Radius: 6,
+								VisualTimer: 0.12, MaxDuration: 0.12,
+							})
+							nx := p.X - enemy.X
+							ny := p.Y - enemy.Y
+							nlen := float32(math.Sqrt(float64(nx*nx + ny*ny)))
+							if nlen == 0 {
+								nlen = 0.01
+								nx = 0.01
+							}
+							nx /= nlen
+							ny /= nlen
+							// Ricochet in a random direction within the hemisphere facing
+							// away from the shield (same scatter as the Reflector enemy),
+							// so deflected shots spray off rather than mirroring back.
+							speed := float32(math.Sqrt(float64(p.VelX*p.VelX + p.VelY*p.VelY)))
+							normalAngle := math.Atan2(float64(ny), float64(nx))
+							randAngle := normalAngle + (float64(rand.Float32())*2-1)*(math.Pi/2)
+							p.VelX = float32(math.Cos(randAngle)) * speed
+							p.VelY = float32(math.Sin(randAngle)) * speed
+							p.X = enemy.X + nx*(collisionRadius+1)
+							p.Y = enemy.Y + ny*(collisionRadius+1)
+							p.TargetID = 0
+							break // bullet ricochets off the shield (hit unset → survives)
+						}
+					}
 					//deflection check
 					if enemy.Type == EnemyReflector && !isEnemyProtected(enemy) {
 						if rand.Float32() < ReflectorChance {
-							// Play a "clink" effect?
+							// Spark at the contact point.
 							state.Explosions = append(state.Explosions, &Explosion{
 								X: p.X, Y: p.Y, Radius: 5,
 								VisualTimer: 0.1, MaxDuration: 0.1,
 							})
-							// Deflect bullet (reverse velocity, harmless)
-							p.VelX = -p.VelX
-							p.VelY = -p.VelY
-							p.Damage = 0
-							hit = true
+							// Ricochet: reflect the velocity about the surface normal
+							// (the direction from the enemy's center to the bullet) and
+							// keep the bullet alive + dangerous so it caroms into the
+							// crowd instead of just vanishing.
+							nx := p.X - enemy.X
+							ny := p.Y - enemy.Y
+							nlen := float32(math.Sqrt(float64(nx*nx + ny*ny)))
+							if nlen == 0 {
+								nlen = 0.01
+								nx = 0.01
+							}
+							nx /= nlen
+							ny /= nlen
+							// Ricochet in a random direction within the hemisphere facing
+							// away from the reflector -- keeps the bounce varied (not always
+							// straight back at the player) while guaranteeing it travels
+							// outward so it can't re-collide with this same enemy.
+							speed := float32(math.Sqrt(float64(p.VelX*p.VelX + p.VelY*p.VelY)))
+							normalAngle := math.Atan2(float64(ny), float64(nx))
+							randAngle := normalAngle + (float64(rand.Float32())*2-1)*(math.Pi/2)
+							p.VelX = float32(math.Cos(randAngle)) * speed
+							p.VelY = float32(math.Sin(randAngle)) * speed
+							// Nudge it just outside the body so it doesn't re-collide
+							// with this same reflector on the next frame.
+							p.X = enemy.X + nx*(collisionRadius+1)
+							p.Y = enemy.Y + ny*(collisionRadius+1)
+							// Drop any homing lock so it flies straight along the bounce.
+							p.TargetID = 0
+							// Do NOT set hit -- leaving hit=false lets the projectile fall
+							// through to remainingProjectiles instead of the drop path.
 							break
 						}
 					}
@@ -1459,7 +1598,14 @@ func moveProjectiles(dt float32) {
 							if state.Player.GlassCannonDmgMult > 0 {
 								finalDmg *= (1.0 + state.Player.GlassCannonDmgMult)
 							}
+							finalDmg *= shotConditionalMult(&state.Player, enemy)
+							finalDmg *= enemyDamageMult(enemy)
 							enemy.HP -= finalDmg
+							if p.IsSatellite {
+								recordDamage("Satellites", finalDmg)
+							} else {
+								recordDamage("Basic Shots", finalDmg)
+							}
 							// Basic shots are Physical damage.
 							spawnDamageText(enemy.X, enemy.Y-enemy.Size, finalDmg, DmgPhysical, p.IsCrit)
 
@@ -1525,7 +1671,8 @@ func moveProjectiles(dt float32) {
 						colRad := VolatileRadius + e.Size/2
 						if distSq < colRad*colRad {
 							if !isEnemyProtected(e) {
-								e.HP -= bombDmg
+								e.HP -= bombDmg * enemyDamageMult(e)
+								recordDamage("Explosive Shots", bombDmg)
 								spawnDamageText(e.X, e.Y-e.Size, bombDmg, DmgFire, false)
 							}
 						}
@@ -1548,7 +1695,8 @@ func moveProjectiles(dt float32) {
 						colRad := modRadius + e.Size/2
 						if distSq < colRad*colRad {
 							if !isEnemyProtected(e) {
-								e.HP -= bombDmg
+								e.HP -= bombDmg * enemyDamageMult(e)
+								recordDamage("Explosive Shots", bombDmg)
 								spawnDamageText(e.X, e.Y-e.Size, bombDmg, DmgFire, false)
 							}
 						}
@@ -1596,10 +1744,13 @@ func moveProjectiles(dt float32) {
 
 				//armor capped at 90%.
 				armor := state.Player.Armor
-				if armor > 0.90 {
-					armor = 0.90
+				if armor > ArmorCap {
+					armor = ArmorCap
 				}
 				damage *= (1.0 - armor)
+				if state.Player.DamageReductionPct > 0 {
+					damage *= (1.0 - state.Player.DamageReductionPct)
+				}
 				if state.Player.GlassCannonDamageTakenMult > 0 {
 					damage *= (1.0 + state.Player.GlassCannonDamageTakenMult)
 				}
@@ -1628,6 +1779,15 @@ func moveProjectiles(dt float32) {
 					DmgType:  DmgPure,
 					Position: rl.Vector2{X: p.X, Y: p.Y},
 				})
+
+				// Bulwark set: taking a ranged hit has a 30% chance to set off the
+				// shockwave (CD-gated, same as melee contact).
+				if state.Player.SetThornsShockwave && state.Player.ShockwaveUnlocked && state.Player.ShockwaveCooldown <= 0 && rand.Float32() < 0.30 {
+					triggerShockwave()
+				}
+
+				// Talent/set retaliation nova (scales with the raw incoming hit).
+				retaliateOnDamage(p.Damage)
 
 				for _, e := range state.Enemies {
 					if e.ID == p.SourceID {
@@ -1688,7 +1848,8 @@ func moveMines(dt float32) {
 						VisualTimer: 0.4,
 						MaxDuration: 0.4,
 					})
-					enemy.HP -= mine.Damage
+					enemy.HP -= mine.Damage * enemyDamageMult(enemy)
+					recordDamage("Mines", mine.Damage)
 					spawnDamageText(enemy.X, enemy.Y-enemy.Size, mine.Damage, DmgFire, false)
 
 					// Hellfire branch: spawn a lingering fire zone
@@ -1746,6 +1907,7 @@ func updateVisuals(dt float32) {
 			remainingArcs = append(remainingArcs, arc)
 			continue
 		}
+		arc.Age += dt
 		arc.VisualTimer -= dt
 		if arc.VisualTimer > 0 {
 			remainingArcs = append(remainingArcs, arc)
@@ -1775,6 +1937,31 @@ func moveEnemies(dt float32) {
 
 	for i := 0; i < len(state.Enemies); i++ {
 		enemy := state.Enemies[i]
+
+		// Tick the spawn "spit out" scale-up animation regardless of any
+		// movement-state continues below (knockback/stun/slide).
+		if enemy.SpawnAnimTimer > 0 {
+			enemy.SpawnAnimTimer -= dt
+			if enemy.SpawnAnimTimer < 0 {
+				enemy.SpawnAnimTimer = 0
+			}
+		}
+
+		// Tick the shockwave hit-flash overlay.
+		if enemy.HitFlashTimer > 0 {
+			enemy.HitFlashTimer -= dt
+			if enemy.HitFlashTimer < 0 {
+				enemy.HitFlashTimer = 0
+			}
+		}
+
+		// Tick the melee lunge jab animation.
+		if enemy.AttackLungeTimer > 0 {
+			enemy.AttackLungeTimer -= dt
+			if enemy.AttackLungeTimer < 0 {
+				enemy.AttackLungeTimer = 0
+			}
+		}
 
 		if enemy.DodgeCooldown > 0 {
 			enemy.DodgeCooldown -= dt
@@ -1860,14 +2047,17 @@ func moveEnemies(dt float32) {
 		if enemy.Type == EnemyBerserker {
 			speedMult += float32(enemy.RageStacks) * 0.10 // +10% speed per stack
 			// Recompute the damage scale from RunTime (same formula as initEnemy).
-			waveNum := int(state.RunTime/15) + 1
-			waveDmgScale := 1.0 + 0.05*float32(waveNum-1)
-			if waveNum > 19 {
-				waveDmgScale *= float32(math.Pow(1.03, float64(waveNum-19)))
+			timeTier := int(state.RunTime / 15)
+			dmgScale := 1.0 + 0.05*float32(timeTier)
+			if timeTier > 18 {
+				dmgScale *= float32(math.Pow(1.03, float64(timeTier-18)))
 			}
-			enemy.Damage = 5.0 * waveDmgScale * (1.0 + float32(enemy.RageStacks)*0.08)
+			enemy.Damage = 5.0 * dmgScale * (1.0 + float32(enemy.RageStacks)*0.08)
 		}
-		if !state.Player.IsChronoActive && state.Player.ChronoPassiveSlow > 0 && isAbilityEquipped(AbilityChrono) {
+		if state.Player.PassiveEnemySlow > 0 {
+			speedMult -= state.Player.PassiveEnemySlow
+		}
+		if !state.Player.IsChronoActive && state.Player.ChronoPassiveSlow > 0 {
 			speedMult -= state.Player.ChronoPassiveSlow
 		} else if state.Player.IsChronoActive {
 			if enemy.IsBoss {
@@ -1881,9 +2071,11 @@ func moveEnemies(dt float32) {
 				}
 			}
 
-			if state.Player.ChronoDoT > 0 {
+			chronoDPS := state.Player.ChronoDoT + state.Player.Damage*state.Player.ChronoDoTPct
+			if chronoDPS > 0 {
 				if !isEnemyProtected(enemy) {
-					enemy.HP -= state.Player.ChronoDoT * dt
+					enemy.HP -= chronoDPS * dt * enemyDamageMult(enemy)
+					recordDamage("Chrono", chronoDPS*dt)
 				}
 			}
 		}
@@ -1891,6 +2083,54 @@ func moveEnemies(dt float32) {
 		dx := playerX - enemy.X
 		dy := playerY - enemy.Y
 		dist := float32(math.Sqrt(float64(dx*dx + dy*dy)))
+
+		// Orbiter mega boss: circle the player at a standoff ring (just beyond
+		// auto-aim range) and fire periodically. Movement blends a radial
+		// correction toward/away from the ring with a tangential orbit sweep.
+		if enemy.Type == EnemyMegaBossOrbiter {
+			// Fires only at the two extremes of its in/out oscillation: the
+			// closest "in range" peak (your punish window -- it halts there and
+			// is easy to hit) and the farthest "out of range" peak (a safe shot).
+			// |sin| ~1 marks a peak; it halts to charge while near one and fires
+			// the instant the oscillation turns over (cos crosses zero).
+			phase := float64(state.RunTime) * 0.5
+			s := math.Sin(phase)
+			aiming := math.Abs(s) > float64(MegaBossOrbiterAimThreshold)
+			if !aiming {
+				desired := state.Player.Range - 30 + MegaBossOrbiterStandoff*float32(s)
+				step := enemy.Speed * speedMult * dt
+				if dist > 0.001 && step > 0 {
+					ux, uy := dx/dist, dy/dist // unit toward player
+					tx, ty := -uy, ux          // tangent (orbit direction)
+					radial := (dist - desired) / 200.0
+					if radial > 1 {
+						radial = 1
+					}
+					if radial < -1 {
+						radial = -1
+					}
+					// radial>0: too far, move toward player; <0: too close, move away.
+					mvX := ux*radial + tx*(1-absF(radial))
+					mvY := uy*radial + ty*(1-absF(radial))
+					ml := float32(math.Sqrt(float64(mvX*mvX + mvY*mvY)))
+					if ml > 0.001 {
+						enemy.X += (mvX / ml) * step
+						enemy.Y += (mvY / ml) * step
+					}
+				}
+			}
+			// Fire exactly when the oscillation hits a peak (cos sign change).
+			if cosNow, cosPrev := math.Cos(phase), math.Cos(float64(state.RunTime-dt)*0.5); cosNow*cosPrev < 0 {
+				enemyShoot(enemy)
+			}
+			continue
+		}
+
+		// Bulwark mega boss: rotate the shield facing; advance toward the player
+		// via the standard slow chase below.
+		if enemy.Type == EnemyMegaBossBulwark {
+			enemy.ShieldAngle = angleNorm(enemy.ShieldAngle + MegaBossBulwarkSpin*dt)
+		}
 
 		if enemy.Type == EnemyDodger && enemy.DodgeCooldown <= 0 {
 			for _, p := range state.Projectiles {
@@ -1992,12 +2232,28 @@ func moveEnemies(dt float32) {
 						dx = 0.01
 					}
 					overlap := minDist - dist
-					pushX := (dx / dist) * (overlap / 2.0)
-					pushY := (dy / dist) * (overlap / 2.0)
-					e1.X += pushX
-					e1.Y += pushY
-					e2.X -= pushX
-					e2.Y -= pushY
+					nx := dx / dist
+					ny := dy / dist
+					// Mega bosses act as immovable anchors so they don't get jittered
+					// around by the offspring they spit out or by enemies bumping them.
+					// The other enemy absorbs the full overlap instead of a 50/50 split.
+					e1Boss := isMegaBoss(e1.Type)
+					e2Boss := isMegaBoss(e2.Type)
+					switch {
+					case e1Boss && !e2Boss:
+						e2.X -= nx * overlap
+						e2.Y -= ny * overlap
+					case e2Boss && !e1Boss:
+						e1.X += nx * overlap
+						e1.Y += ny * overlap
+					default:
+						pushX := nx * (overlap / 2.0)
+						pushY := ny * (overlap / 2.0)
+						e1.X += pushX
+						e1.Y += pushY
+						e2.X -= pushX
+						e2.Y -= pushY
+					}
 				}
 			}
 		}
@@ -2018,9 +2274,11 @@ func moveEnemies(dt float32) {
 				if distSq < (SatelliteRadius+enemy.Size/2.0)*(SatelliteRadius+enemy.Size/2.0) {
 					if enemy.SatelliteHitTimers[k] <= 0 {
 						if !isEnemyProtected(enemy) {
-							enemy.HP -= state.Player.SatelliteDamage
+							satDmg := effectiveSatelliteDamage(&state.Player)
+							enemy.HP -= satDmg * enemyDamageMult(enemy)
+							recordDamage("Satellites", satDmg)
 							enemy.SatelliteHitTimers[k] = SatelliteDamageRate
-							spawnDamageText(enemy.X, enemy.Y-enemy.Size, state.Player.SatelliteDamage, DmgPhysical, false)
+							spawnDamageText(enemy.X, enemy.Y-enemy.Size, satDmg, DmgPhysical, false)
 						}
 					}
 				}
@@ -2033,7 +2291,8 @@ func moveEnemies(dt float32) {
 			enemy.AttackTimer -= dt
 			if enemy.AttackTimer <= 0 {
 				if state.Player.ThornsDamage > 0 {
-					enemy.HP -= state.Player.ThornsDamage
+					enemy.HP -= state.Player.ThornsDamage * enemyDamageMult(enemy)
+					recordDamage("Thorns", state.Player.ThornsDamage)
 					spawnDamageText(enemy.X, enemy.Y-enemy.Size, state.Player.ThornsDamage, DmgPhysical, false)
 				}
 				if state.Player.ShockwaveUnlocked && state.Player.ShockwaveCooldown <= 0 {
@@ -2050,10 +2309,13 @@ func moveEnemies(dt float32) {
 
 				//armor capped at 90%
 				armor := state.Player.Armor
-				if armor > 0.90 {
-					armor = 0.90
+				if armor > ArmorCap {
+					armor = ArmorCap
 				}
 				actualDamage := damage * (1.0 - armor)
+				if state.Player.DamageReductionPct > 0 {
+					actualDamage *= (1.0 - state.Player.DamageReductionPct)
+				}
 
 				if state.Player.Overshield > 0 {
 					if state.Player.Overshield >= actualDamage {
@@ -2066,6 +2328,22 @@ func moveEnemies(dt float32) {
 				}
 				state.Player.HP -= actualDamage
 				enemy.ConsecutiveHits++
+
+				// Melee feedback: enemy jabs toward the player, an impact spark
+				// pops at the contact point, and the player flashes red.
+				enemy.AttackLungeTimer = MeleeLungeDuration
+				state.PlayerHurtFlash = PlayerHurtFlashDuration
+				if d := dist; d > 0 {
+					contactX := enemy.X + (dx/d)*enemy.Size/2.0
+					contactY := enemy.Y + (dy/d)*enemy.Size/2.0
+					state.Explosions = append(state.Explosions, &Explosion{
+						X: contactX, Y: contactY, Radius: 9,
+						VisualTimer: 0.16, MaxDuration: 0.16,
+					})
+				}
+
+				// Talent/set retaliation nova (scales with the raw incoming hit).
+				retaliateOnDamage(rawDamage)
 
 				enemy.AttackTimer = 1.0
 				if state.Player.HP <= 0 {
@@ -2137,57 +2415,140 @@ func isPositionBlocked(x, y float32, self *Enemy) bool {
 //   - Player inside any zone can hit enemies inside any zone (even a
 //     different shielder's zone), but enemies outside all zones become
 //     untouchable until the player leaves.
-//   - The Shielder itself is "inside its own zone", so it can only be
-//     killed by a player who has entered at least one zone.
+//
+// isEnemyInDeadZone returns true when the Dead Zone mission is active and
+// the given enemy falls inside the spinning 30° cone. The cone is defined by
+// its center angle (MissionDeadZoneDeg) ± MissionDeadZoneHalfAngle.
+func isEnemyInDeadZone(target *Enemy) bool {
+	if state.MissionState != MissionStateActive || state.MissionActiveKind != MissionDeadZone {
+		return false
+	}
+	dx := target.X - state.Player.X
+	dy := target.Y - state.Player.Y
+	if dx == 0 && dy == 0 {
+		return false
+	}
+	angleDeg := float32(math.Atan2(float64(dy), float64(dx)) * 180 / math.Pi)
+	diff := angleDeg - state.MissionDeadZoneDeg
+	// Wrap diff into [-180, 180].
+	for diff > 180 {
+		diff -= 360
+	}
+	for diff < -180 {
+		diff += 360
+	}
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff <= MissionDeadZoneHalfAngle
+}
+
+// initDuelBoss creates the heavily-scaled boss enemy for a Duel mission.
+// The enemy type is drawn from the pre-committed data argument so the
+// player can see which type they are dueling at the choice screen.
+func initDuelBoss(runTime float32, enemyType int) *Enemy {
+	e := initEnemyOfType(runTime, enemyType)
+	e.IsBoss = true
+	e.HP *= 5
+	e.MaxHP = e.HP
+	e.Speed *= 1.5
+	e.Size = BossSize + 12 // visibly larger than a normal boss
+	e.Damage *= 2
+	return e
+}
+
+// isEnemyProtected returns true only when the target is FULLY untargetable.
+// Currently that's just the Dead Zone mission cone. Shielder zones no longer
+// block hits outright — they apply a heavy damage *reduction* (see
+// enemyDamageMult), so shielded enemies, and the Shielder itself, stay
+// targetable. This keeps the player from ever being hard-walled off a target.
 func isEnemyProtected(target *Enemy) bool {
 	if target == nil {
 		return false
 	}
-	// PhaseBreaker modifier bypasses all zone protection.
-	if state.Player.ShieldPiercing {
-		return false
-	}
-	// Fast path: no live Shielders means no zones exist.
-	hasAnyShielder := false
-	for _, s := range state.Enemies {
-		if s.Type == EnemyShielder && s.HP > 0 {
-			hasAnyShielder = true
-			break
-		}
-	}
-	if !hasAnyShielder {
-		return false
-	}
+	// Dead Zone mission: the spinning blind-spot cone is a player-side
+	// restriction and cannot be bypassed by any modifier.
+	return isEnemyInDeadZone(target)
+}
 
+// isInShielderZone reports whether the enemy stands inside any live Shielder's
+// zone. Shielders themselves are excluded — they use their own armor value.
+func isInShielderZone(e *Enemy) bool {
 	radSq := float32(ShielderRadius * ShielderRadius)
-
-	playerInAnyZone := false
 	for _, s := range state.Enemies {
-		if s.Type != EnemyShielder || s.HP <= 0 {
+		if s.Type != EnemyShielder || s.HP <= 0 || s.ID == e.ID {
 			continue
 		}
-		pdx := state.Player.X - s.X
-		pdy := state.Player.Y - s.Y
-		if pdx*pdx+pdy*pdy < radSq {
-			playerInAnyZone = true
-			break
-		}
-	}
-
-	targetInAnyZone := false
-	for _, s := range state.Enemies {
-		if s.Type != EnemyShielder || s.HP <= 0 {
-			continue
-		}
-		dx := target.X - s.X
-		dy := target.Y - s.Y
+		dx := e.X - s.X
+		dy := e.Y - s.Y
 		if dx*dx+dy*dy < radSq {
-			targetInAnyZone = true
-			break
+			return true
 		}
 	}
+	return false
+}
 
-	return playerInAnyZone != targetInAnyZone
+// enemyDamageMult returns the fraction of incoming damage an enemy takes:
+//   - Shielders are armored — 50% (hits deal half).
+//   - Any other enemy inside a live Shielder zone is heavily protected — 10%
+//     (90% reduction), unless the player has the PhaseBreaker modifier.
+//   - Everything else — 100%.
+func enemyDamageMult(e *Enemy) float32 {
+	if e == nil {
+		return 1.0
+	}
+	if e.Type == EnemyShielder {
+		return ShielderSelfDamageMult
+	}
+	if state.Player.ShieldPiercing {
+		return 1.0
+	}
+	if isInShielderZone(e) {
+		return ShielderZoneDamageMult
+	}
+	return 1.0
+}
+
+// shotConditionalMult returns the basic-shot damage multiplier from talent
+// conditional bonuses (opener vs full HP, execute vs low HP, slow-amp vs CC'd).
+// Applied only to basic/satellite shots in the bullet-hit path.
+func shotConditionalMult(p *Player, e *Enemy) float32 {
+	m := float32(1.0)
+	if p.OpenerBonus > 0 && e.HP >= e.MaxHP {
+		m += p.OpenerBonus
+	}
+	if p.ExecuteBonus > 0 && e.HP < e.MaxHP*ExecuteThreshold {
+		m += p.ExecuteBonus
+	}
+	if p.SlowAmpBonus > 0 && (e.StunTimer > 0 || e.KnockbackTimer > 0 || (p.IsChronoActive && !e.IsBoss)) {
+		m += p.SlowAmpBonus
+	}
+	return m
+}
+
+// retaliateOnDamage deals a fraction of the damage the player just took back to
+// nearby enemies as a thorns-type nova (talent/set ReflectPct). rawDmg is the
+// pre-mitigation hit, so the reflect auto-scales with enemy power.
+func retaliateOnDamage(rawDmg float32) {
+	p := &state.Player
+	if p.ReflectPct <= 0 || rawDmg <= 0 {
+		return
+	}
+	reflect := rawDmg * p.ReflectPct
+	const radius = float32(220)
+	for _, e := range state.Enemies {
+		if e.HP <= 0 || isEnemyProtected(e) {
+			continue
+		}
+		dx := e.X - p.X
+		dy := e.Y - p.Y
+		if dx*dx+dy*dy <= radius*radius {
+			d := reflect * enemyDamageMult(e)
+			e.HP -= d
+			recordDamage("Reflect", d)
+			spawnDamageText(e.X, e.Y-e.Size, d, DmgPhysical, false)
+		}
+	}
 }
 
 func accumulateDamage(e *Enemy, source string, amount float32) {
@@ -2275,8 +2636,8 @@ func setupLevelUpOptions() {
 
 			switch meta.RapidFireBranch {
 			case BranchRapidFireBulletStorm:
-				addOpt("RapidFireSpeed", 5, "Bullet Storm: Overclock", "Shoots faster and comes back sooner. (+0.5x fire rate, -0.6s cooldown)", func(p *Player) {
-					p.RapidFireMultiplier += 0.5
+				addOpt("RapidFireSpeed", 5, "Bullet Storm: Overclock", "Shoots faster and comes back sooner. (+0.1x fire rate, -0.6s cooldown)", func(p *Player) {
+					p.RapidFireMultiplier += 0.1
 					p.BulletStormCDR += 0.6
 				})
 				addOpt("RapidFireBSDur", 5, "Bullet Storm: Sustained", "Each shot during the burst hits harder. (+5% burst damage per shot)", func(p *Player) {
@@ -2284,10 +2645,10 @@ func setupLevelUpOptions() {
 				})
 			case BranchRapidFireOvercharge:
 				addOpt("RapidFireSpeed", 5, "Overcharge: Amplifier", "Fires faster during the burst window. (+0.25x fire rate)", func(p *Player) { p.RapidFireMultiplier += 0.25 })
-				addOpt("RapidFireOCCrit", 8, "Overcharge: Hot Shots", "Higher chance to land critical hits during the burst. (+5% crit chance)", func(p *Player) { p.CritChance += 0.05 })
-				addOpt("RapidFireOCMulti", 5, "Overcharge: Scatter", "More shots hit secondary targets during the burst. (+10% multishot chance)", func(p *Player) { p.MultishotChance += 0.10 })
+				addOpt("RapidFireOCMulti", 4, "Overcharge: Scatter", "More shots hit secondary targets during the burst window only. (+5% burst multishot chance)", func(p *Player) { p.OverchargeMultiBonus += 0.05 })
+				addOpt("RapidFireOCVolley", 3, "Overcharge: Volley", "Each burst shot strikes one additional enemy during the window. (+1 burst multishot count)", func(p *Player) { p.OverchargeVolleyBonus++ })
 			default:
-				addOpt("RapidFireSpeed", 10, "Rapid Fire: Overclock", "Fires noticeably faster during the burst. (+0.5x fire rate)", func(p *Player) { p.RapidFireMultiplier += 0.5 })
+				addOpt("RapidFireSpeed", 10, "Rapid Fire: Overclock", "Fires noticeably faster during the burst. (+0.1x fire rate)", func(p *Player) { p.RapidFireMultiplier += 0.1 })
 			}
 
 		// ── Death Ray ────────────────────────────────────────────────────────
@@ -2363,14 +2724,14 @@ func setupLevelUpOptions() {
 			switch meta.StaticBranch {
 			case BranchStaticChain:
 				addOpt("StaticChain", 5, "Chain Lightning: Conductor", "Each hop in the chain deals more damage than the last. (+0.2x arc damage)", func(p *Player) { p.StaticDmgMult += 0.2 })
-				addOpt("StaticCDR", 7, "Chain Lightning: Overcharge", "Recharges faster when already ready -- rewards quick timing. (+0.1 passive CDR)", func(p *Player) { p.StaticPassiveCDR += 0.1 })
+				addOpt("StaticCDR", 7, "Chain Lightning: Overcharge", "While Static is charged, it recharges your OTHER abilities faster. (+0.1/s CDR to others while Static is ready)", func(p *Player) { p.StaticPassiveCDR += 0.1 })
 			case BranchStaticOverload:
 				addOpt("StaticShield", 20, "Overload: Capacitor", "Spending more overshield charges an extra target into the blast. (+5 shield cost, +1 target)", func(p *Player) { p.StaticShieldCost += 5.0 })
-				addOpt("StaticCDR", 5, "Overload: Surge", "Recharges faster when ready -- punishes hesitation. (+0.15 passive CDR)", func(p *Player) { p.StaticPassiveCDR += 0.15 })
+				addOpt("StaticCDR", 5, "Overload: Surge", "While Static is charged, it recharges your OTHER abilities faster. (+0.15/s CDR to others while Static is ready)", func(p *Player) { p.StaticPassiveCDR += 0.15 })
 				addOpt("StaticOverloadDmg", 5, "Overload: Critical Voltage", "The concentrated blast hits much harder per target. (+1x damage multiplier)", func(p *Player) { p.StaticDmgMult += 1.0 })
 			default:
 				addOpt("StaticShield", 20, "Static: Capacitor", "Spending overshield adds more targets to each discharge. (+5 shield cost, +1 target)", func(p *Player) { p.StaticShieldCost += 5.0 })
-				addOpt("StaticCDR", 7, "Static: Overcharge", "Recharges faster when ready -- rewards aggressive use. (+0.1 passive CDR)", func(p *Player) { p.StaticPassiveCDR += 0.1 })
+				addOpt("StaticCDR", 7, "Static: Overcharge", "While Static is charged, it recharges your OTHER abilities faster. (+0.1/s CDR to others while Static is ready)", func(p *Player) { p.StaticPassiveCDR += 0.1 })
 			}
 
 		// ── Chrono Field ─────────────────────────────────────────────────────
@@ -2400,97 +2761,79 @@ func setupLevelUpOptions() {
 
 	// ── Passive module in-run upgrades ────────────────────────────────────────
 	if meta.SatellitesUnlocked {
-		if p.SatelliteCount == 0 {
-			addOpt("UnlockSat", 1, "Unlock: Satellites", "A damage orb begins orbiting you, attacking nearby enemies. (1 orb, 5 base damage)", func(p *Player) {
-				p.SatelliteCount = 1
-				p.SatelliteDamage = 5.0
-				if meta.SatellitesBranch == BranchSatSentry {
-					p.SatelliteShooting = true
-					p.SatelliteOverdrive = false
-				} else if meta.SatellitesBranch == BranchSatOverdrive {
-					p.SatelliteOverdrive = true
-					p.SatelliteShooting = false
-				}
-			})
-		} else {
-			addOpt("Satellite", 8, "Satellite Upgrade", "Adds another orbiting orb and boosts all orb damage. (+1 orb, +2 damage per orb)", func(p *Player) {
-				p.SatelliteCount++
-				p.SatelliteDamage += 2.0
-			})
+		// Satellites are innate once the talent is taken (granted in setAbilityUnlocked),
+		// so level-ups only offer upgrades — no in-run unlock pick.
+		addOpt("Satellite", 8, "Satellite Upgrade", "Adds another orbiting orb and boosts all orb damage. (+1 orb, +2 damage per orb)", func(p *Player) {
+			p.SatelliteCount++
+			p.SatelliteDamage += 2.0
+		})
 
-			switch meta.SatellitesBranch {
-			case BranchSatSentry:
-				addOpt("SatSentryDmg", 8, "Sentry: Calibration", "Sentry bullets hit harder -- more orbs means more bullets. (+3 bullet damage per orb)", func(p *Player) { p.SatelliteDamage += 3.0 })
-			case BranchSatOverdrive:
-				addOpt("SatOverdriveDmg", 8, "Overdrive: Supercharge", "Contact damage on each pass hits harder. (+4 contact damage per orb)", func(p *Player) { p.SatelliteDamage += 4.0 })
-			default:
-				addOpt("SatDmg", 8, "Satellite: Power Cell", "All orbs deal more damage. (+2 damage per orb)", func(p *Player) { p.SatelliteDamage += 2.0 })
-			}
+		switch meta.SatellitesBranch {
+		case BranchSatSentry:
+			addOpt("SatSentryDmg", 8, "Sentry: Calibration", "Sentry bullets hit harder -- more orbs means more bullets. (+3 bullet damage per orb)", func(p *Player) { p.SatelliteDamage += 3.0 })
+		case BranchSatOverdrive:
+			addOpt("SatOverdriveDmg", 8, "Overdrive: Supercharge", "Contact damage on each pass hits harder. (+4 contact damage per orb)", func(p *Player) { p.SatelliteDamage += 4.0 })
+		default:
+			addOpt("SatDmg", 8, "Satellite: Power Cell", "All orbs deal more damage. (+2 damage per orb)", func(p *Player) { p.SatelliteDamage += 2.0 })
 		}
 	}
 
 	if meta.ShockwaveUnlocked {
-		if !p.ShockwaveUnlocked {
-			addOpt("UnlockShock", 1, "Unlock: Shockwave", "You periodically release a blast that stuns and pushes back nearby enemies. (auto passive)", func(p *Player) {
-				p.ShockwaveUnlocked = true
-				p.ShockwaveCooldown = 0
-			})
-		} else {
-			addOpt("ShockwaveCD", 5, "Shockwave: Faster", "Shockwave recharges faster -- more frequent crowd control. (-1s cooldown)", func(p *Player) {
-				if p.ShockwaveCooldown > 2.0 {
-					p.ShockwaveCooldown -= 1.0
-				}
-			})
-			switch meta.ShockwaveBranch {
-			case BranchShockwaveRepulsor:
-				addOpt("RepulsorRange", 3, "Repulsor: Reach", "Blast pushes enemies back from further away. (+30 blast radius)", func(p *Player) { _ = p })
-				addOpt("RepulsorStun", 4, "Repulsor: Concussive", "Enemies stay stunned longer after each blast. (+0.5s stun duration)", func(p *Player) { _ = p })
-			case BranchShockwaveShatter:
-				addOpt("ShatterDebuff", 5, "Shatter: Fracture", "Each blast strips away enemy armor -- stacks with every hit. (+10% armor reduction per hit)", func(p *Player) { _ = p })
-			}
+		// Shockwave is innate once the talent is taken (granted in setAbilityUnlocked),
+		// so level-ups only offer upgrades — no in-run unlock pick.
+		addOpt("ShockwaveCD", 5, "Shockwave: Faster", "Shockwave recharges faster -- more frequent crowd control. (-1s cooldown)", func(p *Player) {
+			p.ShockwaveCDReduction += 1.0
+		})
+		switch meta.ShockwaveBranch {
+		case BranchShockwaveRepulsor:
+			addOpt("RepulsorRange", 3, "Repulsor: Reach", "Blast pushes enemies back from further away. (+30 blast radius)", func(p *Player) { p.ShockwaveBonusRadius += 30.0 })
+			addOpt("RepulsorStun", 4, "Repulsor: Concussive", "Enemies stay stunned longer after each blast. (+0.5s stun duration)", func(p *Player) { p.ShockwaveBonusStun += 0.5 })
+		case BranchShockwaveShatter:
+			addOpt("ShatterDebuff", 5, "Shatter: Fracture", "Each blast strips away enemy armor -- stacks with every hit. (+10% armor reduction per hit)", func(p *Player) { p.ShockwaveShatterAdd += 0.10 })
 		}
 	}
 
 	if meta.MinesUnlocked {
-		if !p.MinesUnlocked {
-			addOpt("UnlockMines", 1, "Unlock: Prox. Mines", "You periodically scatter explosive mines that detonate on contact. (auto passive)", func(p *Player) {
-				p.MinesUnlocked = true
-				p.MineMaxCooldown = MineBaseCD
-				p.MineCount = MinesToPlace
-				p.MinesCooldown = 2.0
-				if meta.MinesBranch == BranchMinesHellfire {
-					p.MineHellfireRadius = 100.0
-					p.MineLingerDamage = p.Damage * 0.5
-					p.MineCount = 1
-				} else if meta.MinesBranch == BranchMinesCluster {
-					p.MineCount += 2
-					p.MineMaxCooldown *= 0.75
-				}
+		// Mines are innate once the talent is taken (granted in setAbilityUnlocked),
+		// so level-ups only offer upgrades — no in-run unlock pick.
+		addOpt("MinesCD", 5, "Mines: Fabricator", "New mine batches arrive more frequently. (-15% production time)", func(p *Player) {
+			p.MineMaxCooldown *= 0.85
+		})
+		switch meta.MinesBranch {
+		case BranchMinesCluster:
+			addOpt("MinesCount", 5, "Cluster: Stockpile", "Each batch contains one more mine. (+1 mine per batch)", func(p *Player) { p.MineCount++ })
+		case BranchMinesHellfire:
+			addOpt("HellfireRadius", 4, "Hellfire: Inferno", "Explosion and lingering fire cover a much wider area. (+20 blast and linger radius)", func(p *Player) {
+				p.MineHellfireRadius += 20.0
 			})
-		} else {
-			addOpt("MinesCD", 5, "Mines: Fabricator", "New mine batches arrive more frequently. (-15% production time)", func(p *Player) {
-				p.MineMaxCooldown *= 0.85
+			addOpt("HellfireDPS", 5, "Hellfire: Scorched Earth", "The lingering fire burns enemies more aggressively. (+30% linger DPS)", func(p *Player) {
+				p.MineLingerDamage += p.Damage * 0.3
 			})
-			switch meta.MinesBranch {
-			case BranchMinesCluster:
-				addOpt("MinesCount", 5, "Cluster: Stockpile", "Each batch contains one more mine. (+1 mine per batch)", func(p *Player) { p.MineCount++ })
-			case BranchMinesHellfire:
-				addOpt("HellfireRadius", 4, "Hellfire: Inferno", "Explosion and lingering fire cover a much wider area. (+20 blast and linger radius)", func(p *Player) {
-					p.MineHellfireRadius += 20.0
-				})
-				addOpt("HellfireDPS", 5, "Hellfire: Scorched Earth", "The lingering fire burns enemies more aggressively. (+30% linger DPS)", func(p *Player) {
-					p.MineLingerDamage += p.Damage * 0.3
-				})
-			default:
-				addOpt("MinesCount", 5, "Mines: Stockpile", "Each batch contains one more mine. (+1 mine per batch)", func(p *Player) { p.MineCount++ })
-			}
+		default:
+			addOpt("MinesCount", 5, "Mines: Stockpile", "Each batch contains one more mine. (+1 mine per batch)", func(p *Player) { p.MineCount++ })
 		}
 	}
 
-	addOpt("Research", -1, "Research Grant", "Enemies drop more Research Points -- compounds across the whole run. (+10% RP drop rate)", func(p *Player) { p.RPRate += 0.1 })
+	// Non-ability options scaled to match the 5x base XP requirement —
+	// levels are rarer now, so each pick lands much harder.
 	addOpt("XP", -1, "XP Efficiency", "You gain XP faster -- levels come sooner and more often. (+10% XP gain)", func(p *Player) { p.XPRate += 0.1 })
-	addOpt("FreeUp", 20, "Lucky Break", "Small chance each level-up grants a bonus free upgrade automatically. (+1% free upgrade chance)", func(p *Player) { p.FreeUpgradeChance += 0.01 })
-	addOpt("CDR", 10, "Cooldown Haste", "All ability cooldowns tick down faster -- everything comes back sooner. (+5% cooldown reduction)", func(p *Player) { p.CooldownRate += 0.05 })
+	addOpt("FreeUp", 5, "Lucky Break", "Chance each level-up grants a bonus free upgrade automatically. (+5% free upgrade chance)", func(p *Player) { p.FreeUpgradeChance += 0.05 })
+	addOpt("CDR", 5, "Cooldown Haste", "All ability cooldowns tick down faster -- everything comes back sooner. (+3% cooldown reduction)", func(p *Player) { p.CooldownRate += 0.03 })
+
+	// ── Passive stat boosts — fill the pool so non-ability runs stay interesting ──
+	addOpt("StatDamage", 10, "Firepower", "Raw offensive output climbs. (+10% damage)", func(p *Player) { p.Damage *= 1.10 })
+	addOpt("StatHaste", 15, "Quick Hands", "Shots fly out faster. (+10% attack speed)", func(p *Player) { p.Haste += 0.10 })
+	addOpt("StatCrit", 5, "Sharp Eye", "Much easier to land a critical hit. (+15% crit chance)", func(p *Player) { p.CritChance += 0.15 })
+	addOpt("StatCritMult", 2, "Killshot", "Critical hits strike considerably harder. (+0.75x crit multiplier)", func(p *Player) { p.CritMultiplier += 0.75 })
+	addOpt("StatArmor", 5, "Hardened", "Incoming damage is reduced. (+15% armor)", func(p *Player) { p.Armor += 0.15 })
+	addOpt("StatMaxHP", 10, "Vital Boost", "Far more room to take a hit. (+100 max HP, +100 HP)", func(p *Player) {
+		p.MaxHP += 100
+		p.HP += 100
+		if p.HP > p.MaxHP {
+			p.HP = p.MaxHP
+		}
+	})
+	addOpt("StatRegen", 10, "Life Flow", "Regenerate a portion of your max HP every second. (+1% max HP/s regeneration)", func(p *Player) { p.RegenPctHP += 0.01 })
 
 	//if somehow completely maxed you should have the option of xp, RP, or heal.
 	if len(allOptions) == 0 {
@@ -2514,6 +2857,99 @@ func setupLevelUpOptions() {
 	}
 }
 
+// spawnMegaBossOffspring ejects one standard enemy from the given boss position
+// in a random direction. Called every time a player projectile hits an EnemyMegaBossSpawner.
+func spawnMegaBossOffspring(boss *Enemy) {
+	if state.EnemiesAlive >= MaxEnemiesAlive {
+		return
+	}
+	timeTier := int(state.RunTime / 15)
+	hpScale := enemyHPScale(state.RunTime)
+	speedScale := float32(1.0) + 0.02*float32(timeTier)
+	dmgScale := float32(1.0) + 0.05*float32(timeTier)
+	if timeTier > 18 {
+		dmgScale *= float32(math.Pow(1.03, float64(timeTier-18)))
+	}
+
+	angle := rand.Float32() * 2 * math.Pi
+	dirX := float32(math.Cos(float64(angle)))
+	dirY := float32(math.Sin(float64(angle)))
+	hp := 7 * hpScale
+	nextEnemyID++
+	e := &Enemy{
+		ID:   nextEnemyID,
+		Type: EnemyStandard,
+		// Born at the boss's core, then flung outward so it looks "spat out".
+		X:           boss.X,
+		Y:           boss.Y,
+		Size:        20.0,
+		HP:          hp,
+		MaxHP:       hp,
+		LastHP:      hp,
+		Speed:       36.0 * speedScale * EnemySpeedMult,
+		Damage:      5.0 * dmgScale,
+		XPGiven:     float32(10 + timeTier/5),
+		IsBoss:      false,
+		AttackTimer: 0.0,
+		// Ride the knockback system outward for the spit animation, then settle
+		// into normal pathing. 250u/s over the anim window clears the boss body.
+		KnockbackTimer:     MegaBossSpitAnimDuration,
+		KnockbackVelX:      dirX * 250,
+		KnockbackVelY:      dirY * 250,
+		SpawnAnimTimer:     MegaBossSpitAnimDuration,
+		SatelliteHitTimers: make(map[int]float32),
+		DeathRayHitStatus:  make(map[int]bool),
+		DamageAccumulator:  make(map[string]float32),
+		DamageShowTimer:    0.1,
+	}
+	state.Enemies = append(state.Enemies, e)
+	state.EnemiesAlive++
+}
+
+// updateMegaBossSpit makes every mega boss eject a standard enemy whenever it
+// has lost HP since the previous frame — from ANY damage source (basic shots,
+// abilities, DoT, thorns, satellites, explosions, etc.). A short per-boss
+// cooldown rate-limits ejection so continuous damage can't flood the field.
+func updateMegaBossSpit(dt float32) {
+	for _, e := range state.Enemies {
+		if e.Type != EnemyMegaBossSpawner {
+			continue
+		}
+		if e.SpitCooldown > 0 {
+			e.SpitCooldown -= dt
+		}
+		if e.HP > 0 && e.HP < e.LastHP && e.SpitCooldown <= 0 {
+			spawnMegaBossOffspring(e)
+			e.SpitCooldown = MegaBossSpitCooldown
+		}
+		e.LastHP = e.HP
+	}
+}
+
+// isMegaBoss reports whether an enemy type is any mega boss (contiguous range).
+func isMegaBoss(t int) bool {
+	return t >= MegaBossFirst && t <= MegaBossLast
+}
+
+// absF returns the absolute value of a float32.
+func absF(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// angleNorm wraps an angle (radians) into [-π, π].
+func angleNorm(a float32) float32 {
+	for a > math.Pi {
+		a -= 2 * math.Pi
+	}
+	for a < -math.Pi {
+		a += 2 * math.Pi
+	}
+	return a
+}
+
 func spawnFragments(x, y, runTime float32) {
 	// Spawns 3 mini enemies
 	for i := 0; i < 3; i++ {
@@ -2532,22 +2968,27 @@ func spawnFragments(x, y, runTime float32) {
 }
 
 func updateGame(dt float32) {
+	inputUpdate() // snapshot mouse/touch state once; all input helpers read from this
 	if state.CurrentScreen != ScreenGame {
 		if state.CurrentScreen == ScreenStart {
 			handleStartInput()
 		} else if state.CurrentScreen == ScreenResearch {
-			handleResearchInput()
+			handleTalentsInput()
+		} else if state.CurrentScreen == ScreenRPShop {
+			handleRPShopInput()
 		} else if state.CurrentScreen == ScreenItems {
 			handleItemsInput()
+		} else if state.CurrentScreen == ScreenEncyclopedia {
+			handleEncyclopediaInput()
 		} else if state.CurrentScreen == ScreenLoading {
 			// Tick the load screen countdown. Enemies spawn and move so they're
 			// already approaching when the overlay lifts -- no empty-arena feeling.
 			state.LoadScreenTimer -= dt
-			spawnInterval := 1.25 / (1.0 + ((state.RunTime / 5.0) / 100.0))
+			spawnInterval := 1.0 / (1.0 + ((state.RunTime / 5.0) / 100.0))
 			state.SpawnTimer += dt
 			for state.SpawnTimer >= spawnInterval {
 				state.SpawnTimer -= spawnInterval
-				if state.EnemiesAlive < 150 {
+				if state.EnemiesAlive < MaxEnemiesAlive {
 					state.Enemies = append(state.Enemies, initEnemy(state.RunTime))
 					state.EnemiesAlive++
 				}
@@ -2564,6 +3005,10 @@ func updateGame(dt float32) {
 	if rl.IsKeyPressed(rl.KeyEscape) {
 		if state.InOptions {
 			state.InOptions = false
+		} else if state.MissionState == MissionStateChoice {
+			// ESC cancels the choice modal instead of pausing.
+			state.MissionState = MissionStateNone
+			state.MissionNextAlert = MissionAlertInterval
 		} else {
 			state.IsPaused = !state.IsPaused
 		}
@@ -2581,12 +3026,32 @@ func updateGame(dt float32) {
 			// Award MetaXP for the run. SaveMetaProg flushes the grant to disk
 			// so it survives a crash-at-game-over.
 			if !state.MetaXPAwarded {
-				wavesCleared := int(state.RunTime / 15)
 				gained := state.RunKills*MetaXPPerKill +
-					state.RunBossKills*MetaXPPerBossKill +
-					wavesCleared*MetaXPPerWave
+					state.RunBossKills*MetaXPPerBossKill
 				awardMetaXP(gained)
+				state.RunMetaXPGained = gained
 				state.MetaXPAwarded = true
+
+				// Record this run in the persistent run history.
+				prevBest := float32(0)
+				if len(meta.RunRecords) > 0 {
+					prevBest = meta.RunRecords[0].RunTime
+				}
+				meta.RunRecords = append(meta.RunRecords, RunRecord{
+					RunTime:   state.RunTime,
+					Kills:     state.RunKills,
+					BossKills: state.RunBossKills,
+					MetaLevel: meta.MetaLevel,
+					Date:      time.Now().Format("2006-01-02"),
+				})
+				sort.Slice(meta.RunRecords, func(i, j int) bool {
+					return meta.RunRecords[i].RunTime > meta.RunRecords[j].RunTime
+				})
+				if len(meta.RunRecords) > 10 {
+					meta.RunRecords = meta.RunRecords[:10]
+				}
+				state.RunIsNewBest = state.RunTime > prevBest
+
 				SaveMetaProg()
 			}
 			return
@@ -2617,6 +3082,19 @@ func updateGame(dt float32) {
 		return
 	}
 
+	// Mission choice pauses the world while the player picks an option.
+	// Countdown uses real dt so it's always 8 real seconds regardless of game speed.
+	if state.MissionState == MissionStateChoice {
+		state.MissionChoiceTimer -= dt
+		if state.MissionChoiceTimer <= 0 {
+			state.MissionState = MissionStateNone
+			state.MissionNextAlert = MissionAlertInterval
+		} else {
+			handleMissionInput()
+		}
+		return
+	}
+
 	// Aim tutorial pseudo-pause: freeze the world but let the cursor-snap
 	// logic run so the player can see the reticle snap to enemies.
 	if state.TutAimActive {
@@ -2624,8 +3102,16 @@ func updateGame(dt float32) {
 		return
 	}
 
+	// Airdrop tutorial pseudo-pause: any click dismisses it.
+	if state.TutAirdropActive {
+		if inputIsPressed() {
+			state.TutAirdropActive = false
+		}
+		return
+	}
+
 	speedMult := state.GameSpeedMultiplier
-	if meta.OpeningSprintUnlocked && state.RunTime < 300.0 {
+	if meta.OpeningSprintUnlocked && meta.OpeningSprintEnabled && state.RunTime < 300.0 {
 		speedMult *= 10.0
 	}
 
@@ -2635,6 +3121,31 @@ func updateGame(dt float32) {
 	updateGravityZones(effectiveDt)
 	updateLingerZones(effectiveDt)
 	handleAbilityInput()
+	handleMissionInput()
+
+	// Player hurt flash fades with real dt so it's a quick blink at any speed.
+	if state.PlayerHurtFlash > 0 {
+		state.PlayerHurtFlash -= dt
+		if state.PlayerHurtFlash < 0 {
+			state.PlayerHurtFlash = 0
+		}
+	}
+
+	// Camera kick: decay the shake (real dt so it's snappy at any game speed) and
+	// jitter the camera offset around its fixed screen-center base.
+	baseOffX := float32(ScreenWidth) / 2
+	baseOffY := float32(ScreenHeight) / 2
+	if state.CameraShake > 0 {
+		state.CameraShake -= dt * ShockwaveCamShakeDecay
+		if state.CameraShake < 0 {
+			state.CameraShake = 0
+		}
+		state.Camera.Offset.X = baseOffX + (rand.Float32()*2-1)*state.CameraShake
+		state.Camera.Offset.Y = baseOffY + (rand.Float32()*2-1)*state.CameraShake
+	} else {
+		state.Camera.Offset.X = baseOffX
+		state.Camera.Offset.Y = baseOffY
+	}
 
 	for _, name := range getActiveAbilities() {
 		if !state.Player.AutoAbilities[name] {
@@ -2735,13 +3246,16 @@ func updateGame(dt float32) {
 			}
 		} else {
 			triggerAbility(name)
+			if name == AbilityRapidFire {
+				state.Player.RapidFireAutoTriggered = true
+			}
 		}
 	}
 
 	//targetting reticle for grav field.
 	if state.Player.IsGravityTargeting {
-		if rl.IsMouseButtonPressed(rl.MouseButtonLeft) {
-			mouse := rl.GetScreenToWorld2D(rl.GetMousePosition(), state.Camera)
+		if inputIsPressed() {
+			mouse := rl.GetScreenToWorld2D(inputGetPos(), state.Camera)
 			state.Player.GravityX = mouse.X
 			state.Player.GravityY = mouse.Y
 			state.Player.IsGravityTargeting = false
@@ -2754,13 +3268,60 @@ func updateGame(dt float32) {
 
 	//update hp/overshield values.
 	if state.Player.HP < state.Player.MaxHP {
-		state.Player.HP += state.Player.RegenRate * effectiveDt
+		state.Player.HP += effectiveRegenRate(&state.Player) * effectiveDt
 		if state.Player.HP > state.Player.MaxHP {
 			state.Player.HP = state.Player.MaxHP
 		}
 	}
-	if state.Player.Overshield < state.Player.MaxHP*MaxOvershieldRatio {
-		state.Player.Overshield += state.Player.OvershieldRate * effectiveDt
+	if state.Player.Overshield < overshieldCap(&state.Player) {
+		state.Player.Overshield += effectiveOSRate(&state.Player) * effectiveDt
+	}
+
+	// Aegis set: while topped off on HP AND overshield, periodically zap enemies
+	// in range with lightning for 200% of combined HP + overshield regen rates.
+	if state.Player.SetLightningGuard {
+		p := &state.Player
+		maxOS := overshieldCap(p)
+		if p.HP >= p.MaxHP && p.Overshield >= maxOS-0.5 {
+			p.SetLightningTimer -= effectiveDt
+			if p.SetLightningTimer <= 0 {
+				p.SetLightningTimer = 0.4 // pulse interval
+				dmg := (effectiveRegenRate(p) + effectiveOSRate(p)) * 2.0
+				if dmg > 0 {
+					rangeSq := p.Range * p.Range
+					// Collect every valid target in range, then strike just one
+					// at random per pulse (single-bolt, not a chain to all).
+					var inRange []*Enemy
+					for _, e := range state.Enemies {
+						if e.HP <= 0 || isEnemyProtected(e) {
+							continue
+						}
+						dx := e.X - p.X
+						dy := e.Y - p.Y
+						if dx*dx+dy*dy <= rangeSq {
+							inRange = append(inRange, e)
+						}
+					}
+					if len(inRange) > 0 {
+						e := inRange[rand.Intn(len(inRange))]
+						d := dmg * enemyDamageMult(e)
+						e.HP -= d
+						recordDamage("Lightning Guard", d)
+						spawnDamageText(e.X, e.Y-e.Size, d, DmgLightning, false)
+						state.LightningArcs = append(state.LightningArcs, &LightningArc{
+							SourceX: p.X, SourceY: p.Y,
+							TargetX: e.X, TargetY: e.Y,
+							VisualTimer: 0.45,
+							IsChain:     true,
+							Bright:      true,
+							Seed:        rand.Int31(),
+						})
+					}
+				}
+			}
+		} else {
+			p.SetLightningTimer = 0 // ready to fire the instant we're topped off again
+		}
 	}
 
 	// CrisisAura: activate haste bonus below 40% HP, remove it when HP recovers.
@@ -2783,6 +3344,9 @@ func updateGame(dt float32) {
 	//add to runtime, update spawn rate.
 	state.RunTime += effectiveDt
 
+	// Advance the live-DPS rolling window in step with game time.
+	advanceDPSWindow(effectiveDt)
+
 	// Passive RP trickle -- 1 point every 5 seconds of in-run time.
 	prevTicks := int(state.RunTime-effectiveDt) / 5
 	currTicks := int(state.RunTime) / 5
@@ -2790,41 +3354,42 @@ func updateGame(dt float32) {
 		meta.ResearchPoints++
 		state.RunRP++
 	}
-	spawnInterval := 1.25 / (1.0 + ((state.RunTime / 5.0) / 100.0))
+
+	updateAirdrops(dt)
+	spawnInterval := 1.0 / (1.0 + ((state.RunTime / 5.0) / 100.0))
 	state.SpawnTimer += effectiveDt
 	for state.SpawnTimer >= spawnInterval {
 		state.SpawnTimer -= spawnInterval
-		if state.EnemiesAlive < 150 {
+		if state.EnemiesAlive < MaxEnemiesAlive {
 			state.Enemies = append(state.Enemies, initEnemy(state.RunTime))
+			state.EnemiesAlive++
+		}
+	}
+
+	// Mega boss spawn timer. A new Spawner boss arrives every MegaBossSpawnInterval
+	// game-seconds starting 5 minutes in. Uses effectiveDt so it scales with game speed.
+	state.MegaBossNextSpawn -= effectiveDt
+	if state.MegaBossNextSpawn <= 0 {
+		state.MegaBossNextSpawn = MegaBossSpawnInterval
+		if state.EnemiesAlive < MaxEnemiesAlive {
+			state.Enemies = append(state.Enemies, spawnMegaBoss(state.RunTime))
 			state.EnemiesAlive++
 		}
 	}
 
 	effectiveASDelay := state.Player.ASDelay
 	if state.Player.IsRapidFiring || state.Player.PassiveRapidFireTimer > 0 {
-		effectiveASDelay /= state.Player.RapidFireMultiplier
-
-		// Overcharge branch: temporary crit chance + multishot bonus while firing
-		if meta.RapidFireBranch == BranchRapidFireOvercharge {
-			state.Player.CritChance += 0.40
-			state.Player.MultishotChance += 0.50
+		rfMult := state.Player.RapidFireMultiplier
+		if state.Player.RapidFireAutoTriggered {
+			rfMult *= 0.7
 		}
+		effectiveASDelay /= rfMult
+
 	}
 	state.Player.ASCooldown -= effectiveDt
 	if state.Player.ASCooldown <= 0 {
 		playerShoot()
 		state.Player.ASCooldown = effectiveASDelay
-	}
-	// Remove Overcharge bonus after shot is taken so it doesn't stack permanently
-	if meta.RapidFireBranch == BranchRapidFireOvercharge && (state.Player.IsRapidFiring || state.Player.PassiveRapidFireTimer > 0) {
-		state.Player.CritChance -= 0.40
-		state.Player.MultishotChance -= 0.50
-		if state.Player.CritChance < 0 {
-			state.Player.CritChance = 0
-		}
-		if state.Player.MultishotChance < 0 {
-			state.Player.MultishotChance = 0
-		}
 	}
 
 	moveProjectiles(effectiveDt)
@@ -2832,7 +3397,9 @@ func updateGame(dt float32) {
 	updateVisuals(effectiveDt)
 	updateFloatingTexts(dt)
 	moveEnemies(effectiveDt)
+	updateMegaBossSpit(effectiveDt)
 	updateDyingEnemies(dt)
+	updateMissionAlert(dt, effectiveDt)
 	checkXP()
 
 	// Update in-run tutorial last so new tips set this frame are visible immediately.
@@ -2864,6 +3431,370 @@ func pushTutTip(text string, duration float32) {
 // updateInRunTutorial manages the sequence of contextual tips shown during
 // the player's first run. Each tip fires exactly once, keyed by a bool flag
 // on GameState. Tips auto-dismiss when TutTipTimer reaches zero.
+// ── Mission Alert system ──────────────────────────────────────────────────────
+
+// updateMissionAlert ticks mission state.
+// gameDt is effectiveDt (game time) — used for the 90s trigger timer.
+// realDt is wall-clock dt — used for mission active/complete timers.
+func updateMissionAlert(realDt, gameDt float32) {
+	if !meta.MissionsUnlocked {
+		return
+	}
+	switch state.MissionState {
+	case MissionStateNone:
+		state.MissionNextAlert -= gameDt
+		if state.MissionNextAlert <= 0 {
+			state.MissionNextAlert = MissionAlertInterval
+			state.MissionState = MissionStateChoice
+			state.MissionChoiceTimer = MissionChoiceWindow
+			types := []int{
+				MissionNoEnemiesNear, MissionNoAbilities,
+				MissionKillCount, MissionUntouchable, MissionGlassWall,
+				MissionCriticalMass, MissionDuel, MissionDeadZone,
+			}
+			// NoAutoAim only makes sense when auto-aim is purchased — without it
+			// the player is already aiming manually, so the mission is nonsensical.
+			if meta.AutoAimUnlocked {
+				types = append(types, MissionNoAutoAim)
+			}
+			rand.Shuffle(len(types), func(i, j int) { types[i], types[j] = types[j], types[i] })
+			state.MissionChoiceA = types[0]
+			state.MissionChoiceB = types[1]
+			state.MissionChoiceAData = 0
+			state.MissionChoiceBData = 0
+			// Pre-commit per-choice data so the choice buttons can show specifics.
+			if state.MissionChoiceA == MissionKillCount {
+				state.MissionChoiceAData = pickRandomKillableEnemyType(state.RunTime)
+			}
+			if state.MissionChoiceB == MissionKillCount {
+				state.MissionChoiceBData = pickRandomKillableEnemyType(state.RunTime)
+			}
+			if state.MissionChoiceA == MissionDuel {
+				state.MissionChoiceAData = pickRandomKillableEnemyType(state.RunTime)
+			}
+			if state.MissionChoiceB == MissionDuel {
+				state.MissionChoiceBData = pickRandomKillableEnemyType(state.RunTime)
+			}
+		}
+
+	case MissionStateActive:
+		// Untimed missions (those driven purely by accumulation) skip the timer decrement.
+		isUntimed := state.MissionActiveKind == MissionKillCount ||
+			state.MissionActiveKind == MissionCriticalMass
+		if !isUntimed {
+			state.MissionActiveTimer -= gameDt
+		}
+		switch state.MissionActiveKind {
+		case MissionNoEnemiesNear:
+			for _, e := range state.Enemies {
+				if e.HP <= 0 {
+					continue
+				}
+				dx := e.X - state.Player.X
+				dy := e.Y - state.Player.Y
+				if dx*dx+dy*dy < MissionNoEnemyRadius*MissionNoEnemyRadius {
+					failMission()
+					return
+				}
+			}
+		case MissionKillCount:
+			// Drip-spawn the swarm over the first 80% of the mission duration.
+			if state.MissionSwarmRemaining > 0 {
+				state.MissionSwarmSpawnTimer += gameDt
+				for state.MissionSwarmSpawnTimer >= state.MissionSwarmInterval &&
+					state.MissionSwarmRemaining > 0 {
+					if state.EnemiesAlive < MaxEnemiesAlive {
+						state.Enemies = append(state.Enemies,
+							initEnemyOfType(state.RunTime, state.MissionKillType))
+						state.EnemiesAlive++
+						state.MissionSwarmRemaining--
+						state.MissionSwarmSpawnTimer -= state.MissionSwarmInterval
+					} else {
+						// Enemy cap hit — hold the timer and retry next frame.
+						break
+					}
+				}
+			}
+			// Complete as soon as the kill goal is reached (may happen before
+			// all swarm enemies have finished spawning).
+			if state.MissionKillCount >= state.MissionKillGoal {
+				completeMission()
+				return
+			}
+		case MissionGlassWall:
+			// Enforce zero armor every frame so level-up grants can't sneak through.
+			state.Player.Armor = 0
+		case MissionCriticalMass:
+			if state.MissionCritCount >= MissionCriticalMassGoal {
+				completeMission()
+				return
+			}
+		case MissionDuel:
+			// Complete the moment the duel boss dies; fail when time runs out.
+			bossAlive := false
+			for _, e := range state.Enemies {
+				if e.ID == state.MissionDuelID && e.HP > 0 {
+					bossAlive = true
+					break
+				}
+			}
+			if !bossAlive {
+				completeMission()
+				return
+			}
+		case MissionDeadZone:
+			// Spin the cone each frame.
+			state.MissionDeadZoneDeg += MissionDeadZoneSpinSpeed * gameDt
+			if state.MissionDeadZoneDeg >= 360 {
+				state.MissionDeadZoneDeg -= 360
+			}
+		}
+		// Untimed missions (Kill Count, Critical Mass) complete via their own goal
+		// checks above — never via timer expiry. Without this guard, Critical Mass
+		// (whose timer starts at 0) would auto-complete on its first active frame.
+		if !isUntimed && state.MissionActiveTimer <= 0 {
+			// Timed missions expire → complete on success (timer reaching 0 = survived).
+			// Duel is the exception: if we reach here with Duel active the boss outlived
+			// the timer, so that's a failure.
+			if state.MissionActiveKind == MissionDuel {
+				failMission()
+			} else {
+				completeMission()
+			}
+		}
+
+	case MissionStateComplete:
+		state.MissionSuccessTimer -= realDt
+		if state.MissionSuccessTimer <= 0 {
+			state.MissionState = MissionStateNone
+			state.MissionNextAlert = MissionAlertInterval
+		}
+	}
+}
+
+func handleMissionInput() {
+	if state.MissionState != MissionStateChoice {
+		return
+	}
+	if inputIsPressed() {
+		mp := inputGetPos()
+		ax, ay, aw, ah := missionChoiceBtnScreenRect(0)
+		bx, by, bw, bh := missionChoiceBtnScreenRect(1)
+		if mp.X >= ax && mp.X <= ax+aw && mp.Y >= ay && mp.Y <= ay+ah {
+			startMission(state.MissionChoiceA, state.MissionChoiceAData)
+		} else if mp.X >= bx && mp.X <= bx+bw && mp.Y >= by && mp.Y <= by+bh {
+			startMission(state.MissionChoiceB, state.MissionChoiceBData)
+		} else {
+			// Click outside the buttons → decline
+			state.MissionState = MissionStateNone
+			state.MissionNextAlert = MissionAlertInterval
+		}
+	}
+}
+
+func startMission(kind int, data int) {
+	state.MissionState = MissionStateActive
+	state.MissionActiveKind = kind
+	switch kind {
+	case MissionNoAbilities:
+		state.MissionActiveTimer = MissionNoAbilitiesDuration
+	case MissionKillCount:
+		state.MissionActiveTimer = MissionKillCountDuration
+		state.MissionKillType = data
+		state.MissionKillCount = 0
+		state.MissionKillGoal = killGoalForType(data)
+		state.MissionSwarmRemaining = state.MissionKillGoal
+		goal := state.MissionKillGoal
+		if goal < 1 {
+			goal = 1
+		}
+		// Drip enemies in over the first 80% of the duration; the last 20% is a
+		// pure kill window so the player isn't racing the final spawn.
+		state.MissionSwarmInterval = (MissionKillCountDuration * 0.8) / float32(goal)
+		state.MissionSwarmSpawnTimer = 0
+	case MissionUntouchable:
+		state.MissionActiveTimer = MissionUntouchableDuration
+	case MissionGlassWall:
+		state.MissionArmorSaved = state.Player.Armor
+		state.Player.Armor = 0
+		state.MissionActiveTimer = MissionGlassWallDuration
+	case MissionCriticalMass:
+		state.MissionCritCount = 0
+		state.MissionActiveTimer = 0 // not used; completion is event-driven
+	case MissionDuel:
+		boss := initDuelBoss(state.RunTime, data)
+		state.Enemies = append(state.Enemies, boss)
+		state.EnemiesAlive++
+		state.MissionDuelID = boss.ID
+		state.MissionActiveTimer = MissionDuelDuration
+	case MissionDeadZone:
+		state.MissionDeadZoneDeg = rand.Float32() * 360
+		state.MissionActiveTimer = MissionDeadZoneDuration
+	default:
+		state.MissionActiveTimer = MissionDuration
+	}
+}
+
+// onMissionEnd handles any per-mission cleanup that must run whether the
+// mission completes successfully or fails. Call before transitioning state.
+func onMissionEnd() {
+	if state.MissionActiveKind == MissionGlassWall {
+		state.Player.Armor = state.MissionArmorSaved
+	}
+}
+
+func completeMission() {
+	onMissionEnd()
+	meta.ResearchPoints += MissionReward
+	state.MissionState = MissionStateComplete
+	state.MissionSuccessTimer = MissionSuccessDuration
+	state.MissionActiveKind = MissionNone
+	SaveMetaProg()
+}
+
+func failMission() {
+	onMissionEnd()
+	state.MissionState = MissionStateNone
+	state.MissionNextAlert = MissionAlertInterval
+	state.MissionActiveKind = MissionNone
+}
+
+func missionLabel(kind int, data int) string {
+	switch kind {
+	case MissionNoEnemiesNear:
+		return "Safe Zone"
+	case MissionNoAutoAim:
+		return "Manual Fire"
+	case MissionNoAbilities:
+		return "Iron Will"
+	case MissionKillCount:
+		return "Swarm: " + enemyTypeName(data)
+	case MissionUntouchable:
+		return "Untouchable"
+	case MissionGlassWall:
+		return "Glass Wall"
+	case MissionCriticalMass:
+		return "Critical Mass"
+	case MissionDuel:
+		return "Duel: " + enemyTypeName(data)
+	case MissionDeadZone:
+		return "Dead Zone"
+	}
+	return "Unknown"
+}
+
+func missionDesc(kind int, data int) []string {
+	switch kind {
+	case MissionNoEnemiesNear:
+		return []string{"Keep enemies outside a", "200-unit radius for 15s."}
+	case MissionNoAutoAim:
+		return []string{"Don't click to aim for 15s.", "Let auto-aim do the work."}
+	case MissionNoAbilities:
+		return []string{"Don't use any abilities for 20s.", "Passive effects still apply."}
+	case MissionKillCount:
+		goal := killGoalForType(data)
+		return []string{
+			fmt.Sprintf("%d %ss will spawn.", goal, enemyTypeName(data)),
+			"Kill them all to earn the reward.",
+		}
+	case MissionUntouchable:
+		return []string{"Don't take any damage for 20s.", "One hit ends the mission."}
+	case MissionGlassWall:
+		return []string{"Your armor drops to 0 for 20s.", "Survive without mitigation."}
+	case MissionCriticalMass:
+		return []string{
+			fmt.Sprintf("Land %d critical hits.", MissionCriticalMassGoal),
+			"No time limit.",
+		}
+	case MissionDuel:
+		return []string{
+			fmt.Sprintf("A powerful %s boss spawns.", enemyTypeName(data)),
+			fmt.Sprintf("Kill it within %ds.", int(MissionDuelDuration)),
+		}
+	case MissionDeadZone:
+		return []string{"A spinning 30 deg cone blocks fire.", "Enemies inside it are untargetable."}
+	}
+	return nil
+}
+
+// pickRandomKillableEnemyType returns a random enemy type from those that have
+// had a chance to spawn given the current run time. Fragments are excluded since
+// they are not independently spawned.
+func pickRandomKillableEnemyType(runTime float32) int {
+	pool := []int{EnemyStandard}
+	if runTime >= 20 {
+		pool = append(pool, EnemyDodger)
+	}
+	if runTime >= 40 {
+		pool = append(pool, EnemyRanger)
+	}
+	if runTime >= 60 {
+		pool = append(pool, EnemyShielder)
+	}
+	if runTime >= 80 {
+		pool = append(pool, EnemyPhaser)
+	}
+	if runTime >= 100 {
+		pool = append(pool, EnemyReflector)
+	}
+	if runTime >= 120 {
+		pool = append(pool, EnemyDivider)
+	}
+	if runTime >= 140 {
+		pool = append(pool, EnemyBerserker)
+	}
+	return pool[rand.Intn(len(pool))]
+}
+
+// killGoalForType returns how many kills of the given enemy type are required
+// to complete a MissionKillCount, scaled down for tankier enemies.
+func killGoalForType(enemyType int) int {
+	// HP multipliers (from initializers.go): Shielder 6×, Berserker 5×,
+	// Divider 2.5×, Reflector 1.5×, all others ≤1×.
+	// Goal = clamp(round(25 / hpMult), 4, 25).
+	switch enemyType {
+	case EnemyShielder:
+		return 4
+	case EnemyBerserker:
+		return 5
+	case EnemyDivider:
+		return 10
+	case EnemyReflector:
+		return 17
+	default: // Standard, Dodger, Ranger, Phaser
+		return 25
+	}
+}
+
+// enemyTypeName returns a display-friendly name for an enemy type constant.
+func enemyTypeName(enemyType int) string {
+	switch enemyType {
+	case EnemyStandard:
+		return "Standard"
+	case EnemyDodger:
+		return "Dodger"
+	case EnemyRanger:
+		return "Ranger"
+	case EnemyShielder:
+		return "Shielder"
+	case EnemyPhaser:
+		return "Phaser"
+	case EnemyReflector:
+		return "Reflector"
+	case EnemyDivider:
+		return "Divider"
+	case EnemyBerserker:
+		return "Berserker"
+	case EnemyMegaBossSpawner:
+		return "Spawner"
+	case EnemyMegaBossOrbiter:
+		return "Orbiter"
+	case EnemyMegaBossBulwark:
+		return "Bulwark"
+	}
+	return "Enemy"
+}
+
 func updateInRunTutorial(dt float32) {
 	// Tick the front tip's timer.
 	if state.TutTipTimer > 0 {
@@ -2925,8 +3856,8 @@ func handleTutAimInput() {
 	const cursorSnapRadius = float32(60)
 	state.CursorAimTarget = nil
 
-	if rl.IsMouseButtonDown(rl.MouseButtonLeft) {
-		mouseWorld := rl.GetScreenToWorld2D(rl.GetMousePosition(), state.Camera)
+	if inputIsDown() {
+		mouseWorld := rl.GetScreenToWorld2D(inputGetPos(), state.Camera)
 		cursorBestSq := cursorSnapRadius * cursorSnapRadius
 		for _, enemy := range state.Enemies {
 			if enemy.HP <= 0 {
